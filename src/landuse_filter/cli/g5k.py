@@ -33,7 +33,7 @@ def g5k_inventory(
 ) -> None:
     """Refresh the GPU cluster inventory of all sites (Reference API)."""
     from landuse_filter.adapters import g5k
-    from landuse_filter.application.controller import admission, eligible, load_clusters
+    from landuse_filter.application.inventory import admission, eligible, load_clusters
 
     script = Path(__file__).parent / "adapters" / "remote" / "inventory.py"
     store = _store(work)
@@ -161,7 +161,8 @@ def g5k_calibrate_job(
 ) -> None:
     """Submit one GPU calibration job on ``cluster`` (1 h, starts now or is cancelled)."""
     from landuse_filter.adapters import g5k
-    from landuse_filter.application.controller import commit, git_archive, load_clusters
+    from landuse_filter.application.controller import commit, git_archive
+    from landuse_filter.application.inventory import load_clusters
     from landuse_filter.domain.capacity import oarsub_arguments
 
     target = next(c for c in load_clusters(_store(work)) if c.site == site and c.name == cluster)
