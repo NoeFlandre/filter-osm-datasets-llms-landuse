@@ -7,6 +7,7 @@ import typer
 
 from landuse_filter.cli import (
     JSON_OUT,
+    OPS,
     WORK,
     _emit,
     _store,
@@ -58,12 +59,15 @@ def bench_admit(
 
     from landuse_filter import config
     from landuse_filter.adapters.benchmark import read_reference
+    from landuse_filter.adapters.remote import BucketRemote
     from landuse_filter.application.bench import compare
-    from landuse_filter.application.results import decisions_by_sha
+    from landuse_filter.application.results import gathered_decisions
 
     store = _store(work)
     item_sha = store.read_json(f"plans/benchmark/{config.GENERATION_FP}/items.json")
-    by_sha = decisions_by_sha(store, f"{config.GENERATION_FP}-gpu-{gpu}")
+    by_sha = gathered_decisions(
+        store, BucketRemote(OPS.bucket), f"{config.GENERATION_FP}-gpu-{gpu}"
+    )
     candidate = {i: by_sha[s] for i, s in item_sha.items() if s in by_sha}
     if len(candidate) < len(item_sha):
         typer.echo(f"incomplete: {len(candidate)}/{len(item_sha)}", err=True)
@@ -111,14 +115,15 @@ def bench_compare(
 
     from landuse_filter import config
     from landuse_filter.adapters.benchmark import read_reference
+    from landuse_filter.adapters.remote import BucketRemote
     from landuse_filter.application.bench import compare, macro_scores
-    from landuse_filter.application.results import decisions_by_sha
+    from landuse_filter.application.results import gathered_decisions
 
     store = _store(work)
     reference = list(read_reference(_bench_root(work)))
     item_sha = store.read_json(f"plans/benchmark/{config.GENERATION_FP}/items.json")
     fp = f"{config.GENERATION_FP}-{namespace}" if namespace else config.GENERATION_FP
-    by_sha = decisions_by_sha(store, fp)
+    by_sha = gathered_decisions(store, BucketRemote(OPS.bucket), fp)
     candidate = {item: by_sha[sha] for item, sha in item_sha.items() if sha in by_sha}
     if len(candidate) < len(item_sha):
         typer.echo(f"incomplete: {len(candidate)}/{len(item_sha)} items generated", err=True)

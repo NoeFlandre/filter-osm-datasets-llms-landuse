@@ -101,4 +101,4 @@ def main() -> None:  # pragma: no cover
 
 
 # Command groups register themselves on the apps above when imported.
-from landuse_filter.cli import bench, data, g5k, node, store  # noqa: E402, F401
+from landuse_filter.cli import bench, data, g5k, node  # noqa: E402, F401

@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 
 from landuse_filter import config
 from landuse_filter.adapters import g5k
+from landuse_filter.adapters.remote import BucketRemote, Remote
 from landuse_filter.adapters.store import WorkStore
 from landuse_filter.application.inventory import admission, eligible, load_clusters, profile_for
 from landuse_filter.application.memory import ClusterMemory
@@ -58,7 +59,7 @@ class Settings:
     gpu_models: list[str] = field(default_factory=list)  # allow-list of gpu keys; empty = admitted
     window: int | None = None  # candidate concurrency (tuning, issue #17); None = GPU profile
     namespace: str | None = None  # results of a candidate config live under <fp>-<namespace>
-    bucket: str | None = None  # private HF Bucket holding chunks and parts (no bulk data locally)
+    bucket: str = "NoeFlandre/landuse-filter-work"  # private HF Bucket: chunks, parts (ADR-0009)
     paused: bool = False
 
 
@@ -88,6 +89,7 @@ class Controller:
         settings: Settings,
         log: Callable[[str], None] = print,
         sites: "SiteCache | None" = None,
+        remote: "Remote | None" = None,
     ) -> None:
         self.store = store
         self.sites = sites  # shared per-cycle view when several controllers run together
@@ -97,7 +99,9 @@ class Controller:
         self.fp = config_fingerprint(self.cfg)
         self.now = datetime.now(PARIS)
         self.memory = ClusterMemory(store)
-        self.transport = Transport(store, settings.bucket, log)
+        self.transport = Transport(
+            store, remote or BucketRemote(settings.bucket), settings.bucket, log
+        )
         self.progress = WorkProgress(
             store,
             plan_fp=self.fp,
@@ -205,7 +209,7 @@ class Controller:
                 self.log(f"{site}: job {job.job_id} start drifted; cancelled and backing off")
 
     def pull(self) -> None:
-        self.transport.pull(self.settings.sites, self.ledger(), self.progress)
+        self.transport.pull(self.progress)
 
     # --- submission -----------------------------------------------------------------
 

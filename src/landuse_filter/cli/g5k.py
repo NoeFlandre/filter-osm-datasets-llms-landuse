@@ -68,9 +68,7 @@ def g5k_run(
     namespace: str | None = typer.Option(
         None, help="Store a candidate config's results under <fp>-<namespace>."
     ),
-    bucket: str | None = typer.Option(
-        None, help="Private HF Bucket for chunks and parts (keeps local disks empty)."
-    ),
+    bucket: str = typer.Option(OPS.bucket, help="Private HF Bucket for chunks and parts."),
     interval: int = typer.Option(OPS.interval_seconds, help="Seconds between cycles."),
     once: bool = typer.Option(False, help="Run a single cycle and exit."),
 ) -> None:
@@ -123,6 +121,7 @@ def g5k_run_admission(
                 besteffort=True,
                 gpu_models=[g],
                 namespace=f"gpu-{g}",
+                bucket=OPS.bucket,
             ),
             log=lambda m: typer.echo(m, err=True),
             sites=cache,

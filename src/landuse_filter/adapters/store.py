@@ -1,6 +1,6 @@
 """The work store: a local directory mirrored to a private Hugging Face Bucket.
 
-Layout (identical locally, on site spools and in the bucket)::
+Layout (identical locally, on node scratch and in the bucket)::
 
     plans/<dataset>/<fp>/chunks.jsonl        chunk id, order, size (append-only)
     chunks/<chunk_id>.parquet                text_sha256, text, input_ids
@@ -114,30 +114,3 @@ class WorkStore:
         if hashlib.sha256(data).hexdigest() != path.stem:
             raise CorruptPartError(str(path))
         return pq.read_table(pa.BufferReader(data))
-
-
-class Bucket:
-    """Mirror of a ``WorkStore`` in a private Hugging Face Bucket (ADR-0009)."""
-
-    def __init__(self, bucket_id: str) -> None:
-        self.bucket_id = bucket_id
-
-    def ensure(self) -> None:
-        from huggingface_hub import HfApi
-
-        HfApi().create_bucket(self.bucket_id, private=True, exist_ok=True)
-
-    def push(self, store: WorkStore, prefix: str = "") -> None:
-        from huggingface_hub import HfApi
-
-        HfApi().sync_bucket(
-            str(store.path(prefix)), f"hf://buckets/{self.bucket_id}/{prefix}", quiet=True
-        )
-
-    def pull(self, store: WorkStore, prefix: str = "") -> None:
-        from huggingface_hub import HfApi
-
-        store.path(prefix).mkdir(parents=True, exist_ok=True)
-        HfApi().sync_bucket(
-            f"hf://buckets/{self.bucket_id}/{prefix}", str(store.path(prefix)), quiet=True
-        )
