@@ -118,3 +118,7 @@ def main() -> int:
         return 1
     print(f"\nmutation gate passed: {len(results)} exact mutant id(s) checked")
     return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
