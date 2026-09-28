@@ -114,6 +114,7 @@ def run(assignment_id: str) -> int:
             "load_seconds": round(load_seconds, 1),
             "completed": stats.completed,
             "generated_tokens": stats.generated_tokens,
+            "failed": stats.failed,
             "sentences_per_second": round(stats.sentences_per_second, 3),
             "chunks_done": stats.chunks_done,
             "stopped": stop.requested,

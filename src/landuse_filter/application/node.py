@@ -18,7 +18,9 @@ import pyarrow as pa
 from landuse_filter.adapters.schema import generation_table
 from landuse_filter.adapters.store import CorruptPartError, WorkStore
 from landuse_filter.domain.completion import Part
+from landuse_filter.domain.parsing import parse_generation
 from landuse_filter.domain.records import Generation, from_sglang
+from landuse_filter.domain.sentences import Decision
 
 
 class AsyncEngine(Protocol):
@@ -30,6 +32,7 @@ class RunStats:
     completed: int = 0
     generated_tokens: int = 0
     parts: int = 0
+    failed: int = 0  # generations whose verdict failed to parse (drift signal)
     chunks_done: list[str] = field(default_factory=list)
     started: float = field(default_factory=time.monotonic)
 
@@ -135,6 +138,10 @@ class Runner:
         self.stats.completed += len(rows)
         self.stats.generated_tokens += sum(r.generated_tokens for r in rows)
         self.stats.parts += 1
+        self.stats.failed += sum(
+            parse_generation(r.raw_output, truncated=r.truncated).decision is Decision.FAILED
+            for r in rows
+        )
 
 
 def _utc_now() -> str:
