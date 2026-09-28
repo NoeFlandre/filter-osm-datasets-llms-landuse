@@ -39,6 +39,10 @@ SETUP = timedelta(minutes=8)
 LATE_START = timedelta(minutes=15)
 BACKOFF = timedelta(minutes=30)
 POST_SUBMIT_WAIT = 20.0
+# Bounded queue (#20): when nothing is free, a site may hold a few of our waiting jobs
+# predicted to start within QUEUED_START; they rank below free slots.
+QUEUED_START = timedelta(hours=2)
+QUEUED_WAIT = timedelta(hours=1)
 
 
 @dataclass
@@ -181,15 +185,15 @@ class Controller:
         return jobs
 
     def drop_drifted(self, jobs: dict[str, list[g5k.Job]]) -> None:
-        """Cancel waiting jobs whose predicted start slipped past LATE_START."""
-        clusters = {a["name"]: (a["site"], a["cluster"]) for a in self.live()}
-        horizon = self.now.timestamp() + LATE_START.total_seconds()
+        """Cancel waiting jobs whose predicted start slipped past their tolerance."""
+        mine = {a["name"]: a for a in self.live()}
         for site, site_jobs in jobs.items():
             for job in list(site_jobs):
-                late = (
-                    job.state == "Waiting" and job.scheduled_start and job.scheduled_start > horizon
-                )
-                if not late or job.name not in clusters:
+                a = mine.get(job.name)
+                if a is None or job.state != "Waiting" or not job.scheduled_start:
+                    continue
+                tolerance = a.get("late_after_s", LATE_START.total_seconds())
+                if job.scheduled_start <= self.now.timestamp() + tolerance:
                     continue
                 try:
                     g5k.cancel(site, job.job_id)
@@ -197,7 +201,7 @@ class Controller:
                     self.log(f"{site}: could not cancel drifted job {job.job_id}: {exc}")
                     continue
                 site_jobs.remove(job)
-                self.memory.back_off(site, clusters[job.name][1], self.now + BACKOFF)
+                self.memory.back_off(site, a["cluster"], self.now + BACKOFF)
                 self.log(f"{site}: job {job.job_id} start drifted; cancelled and backing off")
 
     def pull(self) -> None:
@@ -242,7 +246,10 @@ class Controller:
                     now=now.timestamp(),
                     walltime_s=wall.total_seconds() if wall else 0.0,
                 )
-                if free <= 0 or wall is None:
+                if wall is None:
+                    continue
+                queued = free <= 0
+                if queued and (self.memory.besteffort_only(c) or not self.queue_room(site, jobs)):
                     continue
                 prof = profile_for(self.store, c.gpu)
                 out.append(
@@ -252,12 +259,13 @@ class Controller:
                             c.name,
                             c.gpu,
                             1,
-                            free,
-                            timedelta(0),
+                            1 if queued else free,
+                            QUEUED_WAIT if queued else timedelta(0),
                             wall,
                             job_type,
                             prof.sentences_per_second,
                             besteffort=self.memory.besteffort_only(c),
+                            queued=queued,
                         ),
                         c,
                     )
@@ -266,7 +274,11 @@ class Controller:
         by_key = {(s.site, s.cluster): c for s, c in out}
         return [(s, by_key[(s.site, s.cluster)]) for s in ranked]
 
-    def starts_soon(self, site: str, job_id: str) -> bool:
+    def queue_room(self, site: str, jobs: dict[str, list[g5k.Job]]) -> bool:
+        waiting = sum(j.state == "Waiting" for j in jobs.get(site, []))
+        return waiting < self.settings.max_queued_per_site
+
+    def starts_soon(self, site: str, job_id: str, tolerance: timedelta = LATE_START) -> bool:
         """OAR is the oracle: a job predicted to start > LATE_START from now is not a free slot."""
         import time
 
@@ -274,7 +286,7 @@ class Controller:
         state, start = g5k.scheduled_start(site, job_id)
         if state in ("Running", "Launching", "toLaunch", "Finishing", "Terminated"):
             return True
-        return start is not None and start - time.time() <= LATE_START.total_seconds()
+        return start is not None and start - time.time() <= tolerance.total_seconds()
 
     def accessible(self, cluster: Cluster) -> bool:
         """False for clusters that only admit us in besteffort, unless besteffort is on."""
@@ -359,6 +371,7 @@ class Controller:
             "engine_kwargs": config.engine_kwargs(self.cfg, speed),
             "sampling": self.cfg["sampling"],
             "walltime_s": int(slot.walltime.total_seconds()),
+            "late_after_s": int((QUEUED_START if slot.queued else LATE_START).total_seconds()),
             "provenance": {
                 "config_fingerprint": self.fp,
                 "serving_fingerprint": serving_fingerprint(
@@ -402,7 +415,7 @@ class Controller:
                 self.sites.invalidate(site)
             a["state"] = "submitted"
             self.store.write_json(f"assignments/{a['id']}.json", a)
-            if not self.starts_soon(site, a["job_id"]):
+            if not self.starts_soon(site, a["job_id"], QUEUED_START if slot.queued else LATE_START):
                 g5k.cancel(site, a["job_id"])
                 a["state"] = "cancelled_late_start"
                 self.store.write_json(f"assignments/{a['id']}.json", a)
