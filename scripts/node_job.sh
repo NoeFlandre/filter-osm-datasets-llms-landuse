@@ -8,8 +8,8 @@
 set -euo pipefail
 CODE=$1
 shift
-if [[ "${1:-}" == "plan" ]]; then
-  MODE=plan
+if [[ "${1:-}" == "plan" || "${1:-}" == "publish" ]]; then
+  MODE=$1
   shift
 else
   MODE=run
@@ -68,9 +68,9 @@ fi
 # (regression: job 4165509, "No such file or directory: 'ninja'").
 export PATH="$venv/bin:$PATH"
 echo "luf: env ready in $(( $(date +%s) - t0 ))s ($venv)"
-if [[ "$MODE" == "plan" ]]; then
-  # Input shards are large: download them to node-local scratch, never to NFS.
+if [[ "$MODE" != "run" ]]; then
+  # Input shards and parts are large: keep them on node-local scratch, never on NFS.
   export HF_HOME="$LUF_SCRATCH/hf"
-  exec "$venv/bin/luf" node plan --dataset "$1" --revision "$2"
+  exec "$venv/bin/luf" node "$MODE" --dataset "$1" --revision "$2"
 fi
 exec "$venv/bin/luf" node run --assignment "$ASSIGNMENT"

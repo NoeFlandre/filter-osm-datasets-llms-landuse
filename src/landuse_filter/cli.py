@@ -283,6 +283,24 @@ def node_plan(
     typer.echo(json.dumps(report))
 
 
+@node_app.command("publish")
+def node_publish(
+    dataset: str = typer.Option(...),
+    revision: str = typer.Option(...),
+    bucket: str = typer.Option("NoeFlandre/landuse-filter-work"),
+) -> None:
+    """Build and upload the -landuse dataset on this node's scratch."""
+    from dataclasses import asdict
+
+    from landuse_filter import config
+    from landuse_filter.adapters.remote import BucketRemote
+    from landuse_filter.application.remote_publish import run_publish
+
+    scratch = _store(Path(os.environ.get("LUF_SCRATCH", "/tmp/luf-scratch")))  # noqa: S108
+    report = run_publish(BucketRemote(bucket), scratch, dataset, revision, config.GENERATION_FP)
+    typer.echo(json.dumps(asdict(report)))
+
+
 # --- grid'5000 ------------------------------------------------------------------
 
 SITES = "grenoble,lille,lyon,nancy,rennes,sophia,toulouse,luxembourg"
@@ -366,14 +384,17 @@ def g5k_run(
         time.sleep(interval)
 
 
-@g5k_app.command("plan-job")
-def g5k_plan_job(
-    site: str = typer.Option(..., help="Site to run the CPU planning job on."),
+@g5k_app.command("cpu-job")
+def g5k_cpu_job(
+    mode: str = typer.Argument(..., help="plan or publish"),
+    site: str = typer.Option(..., help="Site to run the CPU job on."),
     dataset: str = typer.Option(...),
     revision: str = typer.Option(...),
     walltime_minutes: int = typer.Option(60),
 ) -> None:
-    """Submit one resumable planning job (default queue, one CPU node)."""
+    """Submit one resumable planning or publishing job (default queue, one CPU node)."""
+    if mode not in ("plan", "publish"):
+        raise typer.BadParameter("mode must be plan or publish")
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
@@ -408,12 +429,12 @@ def g5k_plan_job(
             f"{g5k.REMOTE_ROOT}/logs/%jobid%.out",
             "-E",
             f"{g5k.REMOTE_ROOT}/logs/%jobid%.err",
-            f"{code}/scripts/node_job.sh {code} plan {dataset} {revision}",
+            f"{code}/scripts/node_job.sh {code} {mode} {dataset} {revision}",
         ]
     )
     job_id = g5k.submit(site, args)
     g5k.policy_check(site)
-    typer.echo(f"planning job {job_id} on {site} ({walltime_text(wall)})")
+    typer.echo(f"{mode} job {job_id} on {site} ({walltime_text(wall)})")
 
 
 @g5k_app.command("pause")
