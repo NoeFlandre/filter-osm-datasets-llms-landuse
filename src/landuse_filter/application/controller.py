@@ -210,9 +210,10 @@ class Controller:
 
     def pull(self) -> None:
         for site in self.settings.sites:
-            if not any(a["site"] == site for a in self.ledger()):
+            if not any(a["site"] == site and a.get("job_id") for a in self.ledger()):
                 continue
             for sub in ("parts", "jobs"):
+                self.store.path(sub).mkdir(parents=True, exist_ok=True)
                 try:
                     g5k.rsync(
                         f"{site}:{g5k.REMOTE_ROOT}/work/{sub}/",

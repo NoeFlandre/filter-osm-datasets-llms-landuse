@@ -291,7 +291,7 @@ def g5k_pause(
     if cancel:
         from landuse_filter.application.controller import Settings
 
-        sites: list[str] = SITES.split(",")
+        sites = [str(s) for s in SITES.split(",")]
         ctl = _controller(work, Settings(datasets=[], sites=sites))
         typer.echo("\n".join(ctl.cancel_all()) or "no live jobs")
 

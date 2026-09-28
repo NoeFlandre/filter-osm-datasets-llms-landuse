@@ -16,7 +16,7 @@ from typing import Protocol
 import pyarrow as pa
 
 from landuse_filter.adapters.schema import generation_table
-from landuse_filter.adapters.store import WorkStore
+from landuse_filter.adapters.store import CorruptPartError, WorkStore
 from landuse_filter.domain.completion import Part, progress
 from landuse_filter.domain.records import Generation, from_sglang
 
@@ -51,11 +51,19 @@ class Runner:
     should_stop: Callable[[], bool] = lambda: False
     stats: RunStats = field(default_factory=RunStats)
 
-    def done_shas(self, chunk_id: str) -> set[str]:
-        shas: set[str] = set()
+    def valid_parts(self, chunk_id: str) -> list[Part]:
+        """Parts whose bytes still match their name; corrupt ones are ignored (redone)."""
+        parts = []
         for path in self.store.part_paths(self.fp, chunk_id):
-            shas.update(self.store.read_part(path).column("text_sha256").to_pylist())
-        return shas
+            try:
+                shas = self.store.read_part(path).column("text_sha256").to_pylist()
+            except CorruptPartError:
+                continue
+            parts.append(Part(path.stem, tuple(shas)))
+        return parts
+
+    def done_shas(self, chunk_id: str) -> set[str]:
+        return {sha for part in self.valid_parts(chunk_id) for sha in part.text_sha256s}
 
     async def run(self, chunk_ids: list[str]) -> RunStats:
         for chunk_id in chunk_ids:
@@ -70,11 +78,7 @@ class Runner:
         done = self.done_shas(chunk_id)
         todo = iter([i for i, sha in enumerate(expected) if sha not in done])
         await self._stream(chunk_id, table, todo)
-        parts = [
-            Part(p.stem, tuple(self.store.read_part(p).column("text_sha256").to_pylist()))
-            for p in self.store.part_paths(self.fp, chunk_id)
-        ]
-        if not progress(expected, parts).missing:
+        if not progress(expected, self.valid_parts(chunk_id)).missing:
             self.stats.chunks_done.append(chunk_id)
 
     async def _stream(self, chunk_id: str, table: pa.Table, todo: Iterator[int]) -> None:
