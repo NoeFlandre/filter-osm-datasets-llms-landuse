@@ -49,7 +49,7 @@ def publish(
     done = {r["path"] for r in store.read_jsonl(f"published/{dataset}.jsonl")}
     if not dry_run:
         hub.ensure_dataset(repo)
-        _mirror(store, dataset, source.repo_id, revision, repo, done)
+        _mirror(store, dataset, input_repo=source.repo_id, revision=revision, repo=repo, done=done)
     resolved = resolve_all(store, fp)
     db = sqlite3.connect(store.path(f"index/{dataset}.sqlite"))
     files = [p for (p,) in db.execute("SELECT path FROM files WHERE done = 1 ORDER BY idx")]
@@ -89,12 +89,20 @@ def publish(
     if new and not dry_run:
         hub.upload(repo, new, f"Add land-use labels ({fp})")
         store.append_jsonl(f"published/{dataset}.jsonl", [{"path": d} for _, d in new])
-        _card(store, dataset, repo, revision, labelled, len(files), decisions)
+        _card(
+            store,
+            dataset,
+            repo=repo,
+            revision=revision,
+            labelled=labelled,
+            total=len(files),
+            decisions=decisions,
+        )
     return PublishReport(labelled, len(files), len(new), decisions)
 
 
 def _mirror(
-    store: WorkStore, dataset: str, input_repo: str, revision: str, repo: str, done: set[str]
+    store: WorkStore, dataset: str, *, input_repo: str, revision: str, repo: str, done: set[str]
 ) -> None:
     marker = f"mirror:{revision}"
     if marker in done:
@@ -122,6 +130,7 @@ def _decision_counts(out: Path) -> dict[str, int]:
 def _card(
     store: WorkStore,
     dataset: str,
+    *,
     repo: str,
     revision: str,
     labelled: int,
@@ -164,7 +173,8 @@ Status: **{status}** — {labelled:,} / {total:,} input files labelled.
 Nothing from the input is removed. Prompt and serving configuration are those of the
 benchmark [`NoeFlandre/benchmark-llms-landuse-relevance`](https://huggingface.co/datasets/NoeFlandre/benchmark-llms-landuse-relevance);
 the implementation passed its non-inferiority gate before any production run.
-Code: https://github.com/NoeFlandre/filter-osm-datasets-llms-landuse · config fingerprint `{config.GENERATION_FP}`.
+Code: https://github.com/NoeFlandre/filter-osm-datasets-llms-landuse ·
+config fingerprint `{config.GENERATION_FP}`.
 """
     path = store.path(f"publish/{dataset}/README.md")
     path.write_text(text, encoding="utf-8")

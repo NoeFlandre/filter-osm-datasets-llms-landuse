@@ -315,6 +315,25 @@ def g5k_storage(sites: str = typer.Option(SITES)) -> None:
 
 
 @app.command()
+def publish(
+    dataset: str = typer.Option(..., help="Input dataset name."),
+    revision: str = typer.Option(..., help="Pinned input revision (same as planning)."),
+    work: Path = WORK,
+    dry_run: bool = typer.Option(False, help="Build labels locally; upload nothing."),
+    as_json: bool = JSON_OUT,
+) -> None:
+    """Mirror the input and upload labels/generations for every fully generated file."""
+    from dataclasses import asdict
+
+    from landuse_filter.application.publish import publish as run_publish
+
+    report = run_publish(_store(work), dataset, revision, dry_run=dry_run)
+    _emit(asdict(report), as_json)
+    if report.new_files == 0:
+        raise typer.Exit(4)
+
+
+@app.command()
 def status(
     work: Path = WORK, datasets: str = typer.Option("benchmark"), as_json: bool = JSON_OUT
 ) -> None:
