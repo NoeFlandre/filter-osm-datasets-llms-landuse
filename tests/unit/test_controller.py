@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pyarrow as pa
@@ -329,3 +329,50 @@ def test_run_many_drops_finished_namespaces(world):
     run_many([done], SiteCache(), interval=1, sleep=sleeps.append, emit=out.append)
     assert len(out) == 1
     assert sleeps == []
+
+
+BUSY = {
+    "gres-1.nancy.grid5000.fr": {
+        "hard": "alive",
+        "free_slots": 0,
+        "freeable_slots": 0,
+        "busy_slots": 48,
+    }
+}
+
+
+def test_no_queueing_by_default_when_nothing_is_free(world, monkeypatch):
+    c, fake = world
+    monkeypatch.setattr(g5k, "site_status", lambda site: {"nodes": BUSY})
+    assert c.cycle(NOW)["submitted"] == []
+
+
+def test_bounded_queue_submits_one_waiting_job_with_a_longer_tolerance(world, monkeypatch):
+    c, fake = world
+    monkeypatch.setattr(g5k, "site_status", lambda site: {"nodes": BUSY})
+    c.settings.max_queued_per_site = 1
+    fake.late = False
+    submitted = c.cycle(NOW)["submitted"]
+    assert len(submitted) == 1
+    a = c.live()[0]
+    assert a["late_after_s"] == 7200
+    # the job waits, predicted to start in 1 h: within its tolerance, so it is kept
+    job = fake.jobs["nancy"][0]
+    fake.jobs["nancy"][0] = g5k.Job(
+        job.site, job.job_id, job.name, "Waiting", "abaca", int(NOW.timestamp()) + 3600
+    )
+    c.now = NOW
+    c.reconcile()
+    assert job.job_id not in fake.cancelled
+    # the site's queue is full: no second waiting job
+    assert c.cycle(NOW)["submitted"] == []
+
+
+def test_free_slots_outrank_queued_ones():
+    from landuse_filter.domain.scheduling import Slot, rank_slots
+
+    free = Slot("a", "c", "g", 1, 1, timedelta(0), timedelta(hours=1), None, 1.0)
+    queued = Slot(
+        "b", "c", "g", 1, 1, timedelta(hours=1), timedelta(hours=1), None, 1.0, queued=True
+    )
+    assert rank_slots([queued, free], timedelta(minutes=8))[0] is free

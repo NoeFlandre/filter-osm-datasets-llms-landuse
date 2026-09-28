@@ -19,6 +19,7 @@ class Slot:
     job_type: str | None
     sentences_per_second: float  # per GPU, from the calibrated profile
     besteffort: bool = False  # submit as a preemptible besteffort job
+    queued: bool = False  # no GPU free now: a bounded queue entry that may wait a while
 
 
 def useful_sentences(slot: Slot, setup: timedelta) -> float:

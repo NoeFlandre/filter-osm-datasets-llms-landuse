@@ -59,6 +59,9 @@ def g5k_run(
     max_jobs_per_site: int = typer.Option(OPS.max_jobs_per_site),
     walltime_minutes: int = typer.Option(OPS.walltime_minutes),
     besteffort: bool = typer.Option(False),
+    max_queued_per_site: int = typer.Option(
+        1, help="Waiting jobs allowed per site when nothing is free (start predicted < 2 h)."
+    ),
     window: int | None = typer.Option(
         None, help="Candidate concurrency (tuning); default: GPU profile."
     ),
@@ -79,6 +82,7 @@ def g5k_run(
         sites=sites.split(","),
         max_jobs_total=max_jobs,
         max_jobs_per_site=max_jobs_per_site,
+        max_queued_per_site=max_queued_per_site,
         walltime=timedelta(minutes=walltime_minutes),
         besteffort=besteffort,
         gpu_models=[g for g in gpu_models.split(",") if g],
