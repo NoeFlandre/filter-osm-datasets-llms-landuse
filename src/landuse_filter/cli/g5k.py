@@ -58,6 +58,9 @@ def g5k_run(
     max_jobs: int = typer.Option(OPS.max_jobs),
     max_jobs_per_site: int = typer.Option(OPS.max_jobs_per_site),
     walltime_minutes: int = typer.Option(OPS.walltime_minutes),
+    night_walltime_minutes: int = typer.Option(
+        OPS.night_walltime_minutes, help="Walltime cap for night/weekend jobs."
+    ),
     besteffort: bool = typer.Option(False),
     max_queued_per_site: int = typer.Option(
         1, help="Waiting jobs allowed per site when nothing is free (start predicted < 2 h)."
@@ -82,6 +85,7 @@ def g5k_run(
         max_jobs_per_site=max_jobs_per_site,
         max_queued_per_site=max_queued_per_site,
         walltime=timedelta(minutes=walltime_minutes),
+        night_walltime=timedelta(minutes=night_walltime_minutes),
         besteffort=besteffort,
         gpu_models=[g for g in gpu_models.split(",") if g],
         window=window,
@@ -101,6 +105,10 @@ def g5k_run_admission(
     sites: str = typer.Option(SITES),
     max_jobs: int = typer.Option(5, help="Per GPU type."),
     max_jobs_per_site: int = typer.Option(3),
+    walltime_minutes: int = typer.Option(OPS.walltime_minutes),
+    night_walltime_minutes: int = typer.Option(
+        OPS.night_walltime_minutes, help="Walltime cap for night/weekend jobs."
+    ),
     interval: int = typer.Option(OPS.interval_seconds),
 ) -> None:
     """One process for every GPU-type admission run (namespace gpu-<key>), sharing one
@@ -118,6 +126,8 @@ def g5k_run_admission(
                 sites=sites.split(","),
                 max_jobs_total=max_jobs,
                 max_jobs_per_site=max_jobs_per_site,
+                walltime=timedelta(minutes=walltime_minutes),
+                night_walltime=timedelta(minutes=night_walltime_minutes),
                 besteffort=True,
                 gpu_models=[g],
                 namespace=f"gpu-{g}",
