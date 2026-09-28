@@ -60,19 +60,26 @@ if [[ ! -f "$venv/.ready" ]]; then
   # ~8 GB onto a slow NFS home can outlast the walltime (regression: Grenoble job
   # 3122433 spent its whole hour copying), and it would eat into the home quota.
   venv="/tmp/$USER-venv-${OAR_JOB_ID:-local}"
-  UV_PROJECT_ENVIRONMENT="$venv" UV_LINK_MODE=copy uv sync --frozen --no-dev --extra gpu --python 3.12
+  UV_PROJECT_ENVIRONMENT="$venv" UV_LINK_MODE=copy uv sync --frozen --no-dev --no-install-project --extra gpu --python 3.12
   trap 'rm -rf "$UV_CACHE_DIR" "$LUF_SCRATCH" "$venv"' EXIT
 fi
 # FlashInfer JIT-compiles with the venv's ninja: the venv's bin must be on PATH
 # (regression: job 4165509, "No such file or directory: 'ninja'").
 export PATH="$venv/bin:$PATH"
+# Always run this job's code, never a copy installed in a shared environment: a site
+# venv keeps the package from whenever it was built (regression: Lyon job 2070636
+# ran stale code without `node plan`).
+export PYTHONPATH="$CODE/src${PYTHONPATH:+:$PYTHONPATH}"
+luf() { "$venv/bin/python" -c 'import sys; from landuse_filter.cli import app; sys.exit(app())' "$@"; }
 echo "luf: env ready in $(( $(date +%s) - t0 ))s ($venv)"
 if [[ "$MODE" == "calibrate" ]]; then
-  exec "$venv/bin/luf" node calibrate --chunk "$1"
+  luf node calibrate --chunk "$1"
+  exit $?
 fi
 if [[ "$MODE" != "run" ]]; then
   # Input shards and parts are large: keep them on node-local scratch, never on NFS.
   export HF_HOME="$LUF_SCRATCH/hf"
-  exec "$venv/bin/luf" node "$MODE" --dataset "$1" --revision "$2"
+  luf node "$MODE" --dataset "$1" --revision "$2"
+  exit $?
 fi
-exec "$venv/bin/luf" node run --assignment "$ASSIGNMENT"
+luf node run --assignment "$ASSIGNMENT"

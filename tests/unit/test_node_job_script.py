@@ -5,7 +5,7 @@ SCRIPT = (Path(__file__).parents[2] / "scripts" / "node_job.sh").read_text()
 
 def test_cuda_home_is_exported_before_sglang_starts():
     """Regression (job 4165500): DeepEP asserts CUDA_HOME at SGLang import time."""
-    assert SCRIPT.index("export CUDA_HOME") < SCRIPT.index('exec "$venv/bin/luf"')
+    assert SCRIPT.index("export CUDA_HOME") < SCRIPT.index("luf node run")
     assert "module load" in SCRIPT
 
 
@@ -29,4 +29,11 @@ def test_scratch_is_node_local_and_removed():
 
 def test_venv_bin_is_on_path_for_flashinfer_jit():
     """Regression (job 4165509): FlashInfer shells out to the venv's ninja."""
-    assert SCRIPT.index('export PATH="$venv/bin:$PATH"') < SCRIPT.index('exec "$venv/bin/luf"')
+    assert SCRIPT.index('export PATH="$venv/bin:$PATH"') < SCRIPT.index("luf node run")
+
+
+def test_job_runs_its_own_code_not_a_stale_installed_copy():
+    """Regression (Lyon job 2070636): the shared site venv had an old package installed."""
+    assert 'export PYTHONPATH="$CODE/src' in SCRIPT
+    assert "--no-install-project" in SCRIPT
+    assert '"$venv/bin/luf"' not in SCRIPT
