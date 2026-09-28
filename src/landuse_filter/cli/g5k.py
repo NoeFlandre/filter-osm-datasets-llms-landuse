@@ -160,14 +160,13 @@ def g5k_calibrate_job(
     work: Path = WORK,
 ) -> None:
     """Submit one GPU calibration job on ``cluster`` (1 h, starts now or is cancelled)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
     from landuse_filter.adapters import g5k
     from landuse_filter.application.controller import commit, git_archive
     from landuse_filter.application.inventory import load_clusters
     from landuse_filter.domain.capacity import oarsub_arguments
-
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-
     from landuse_filter.domain.policy import allowed_window
 
     target = next(c for c in load_clusters(_store(work)) if c.site == site and c.name == cluster)
