@@ -1,5 +1,6 @@
 """Print the `luf` command reference (every command's --help) as Markdown."""
 
+import re
 from collections.abc import Iterator
 
 import click
@@ -7,6 +8,9 @@ from typer.main import get_command
 from typer.testing import CliRunner
 
 from landuse_filter.cli import app
+
+# Rich colours output when it detects CI; the reference must be identical everywhere.
+ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
 def _walk(group: click.Command, path: list[str]) -> Iterator[list[str]]:
@@ -24,7 +28,7 @@ def main() -> None:
         result = runner.invoke(
             app, [*path, "--help"], terminal_width=100, env={"COLUMNS": "100", "NO_COLOR": "1"}
         )
-        print(f"## `luf {' '.join(path)}`\n\n```text\n{result.output.strip()}\n```\n")
+        print(f"## `luf {' '.join(path)}`\n\n```text\n{ANSI.sub('', result.output).strip()}\n```\n")
 
 
 if __name__ == "__main__":

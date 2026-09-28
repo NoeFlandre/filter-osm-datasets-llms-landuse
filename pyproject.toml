@@ -163,4 +163,4 @@ layers = [
 [tool.mutmut]
 source_paths = ["src/landuse_filter/domain/"]
 pytest_add_cli_args_test_selection = ["tests/unit/", "tests/property/"]
-also_copy = ["src/landuse_filter/", "tests/", "data/", "scripts/", "pyproject.toml", "README.md"]
+also_copy = ["src/landuse_filter/", "tests/", "data/", "scripts/", "docs/", "pyproject.toml", "README.md"]
