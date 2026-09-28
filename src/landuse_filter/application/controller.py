@@ -329,7 +329,8 @@ class Controller:
                 free = free_gpus(
                     c,
                     nodes,
-                    besteffort_counts=False,
+                    # A regular job preempts besteffort ones; a besteffort job needs free GPUs.
+                    besteffort_counts=not self.besteffort_only(c),
                     now=now.timestamp(),
                     walltime_s=wall.total_seconds() if wall else 0.0,
                 )
@@ -348,6 +349,7 @@ class Controller:
                             wall,
                             job_type,
                             prof.sentences_per_second,
+                            besteffort=self.besteffort_only(c),
                         ),
                         c,
                     )
@@ -381,9 +383,10 @@ class Controller:
 
     def accessible(self, cluster: Cluster) -> bool:
         """False for clusters that only admit us in besteffort, unless besteffort is on."""
-        return self.settings.besteffort or not self.store.exists(
-            f"access/{cluster.site}_{cluster.name}.json"
-        )
+        return self.settings.besteffort or not self.besteffort_only(cluster)
+
+    def besteffort_only(self, cluster: Cluster) -> bool:
+        return self.store.exists(f"access/{cluster.site}_{cluster.name}.json")
 
     def allowed_gpu(self, gpu: str) -> bool:
         if self.settings.gpu_models:
@@ -533,7 +536,7 @@ class Controller:
                 slot.job_type,
                 a["name"],
                 command=command,
-                besteffort=self.settings.besteffort,
+                besteffort=slot.besteffort,
             )
             a["job_id"] = g5k.submit(site, args)
             a["state"] = "submitted"

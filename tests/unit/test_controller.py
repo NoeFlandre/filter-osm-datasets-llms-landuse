@@ -224,3 +224,26 @@ def test_candidate_namespace_and_window(world):
     assert a["window"] == 128
     assert a["engine_kwargs"]["max_running_requests"] == 128
     assert a["provenance"]["config_fingerprint"] == c.fp  # same generation identity
+
+
+def test_regular_access_counts_besteffort_held_gpus(world, monkeypatch):
+    c, fake = world
+    held = {
+        "gres-1.nancy.grid5000.fr": {
+            "hard": "alive",
+            "free_slots": 0,
+            "freeable_slots": 48,
+            "busy_slots": 0,
+        }
+    }
+    monkeypatch.setattr(g5k, "site_status", lambda site: {"nodes": held})
+    assert len(c.cycle(NOW)["submitted"]) == 2  # regular jobs preempt besteffort ones
+    assert "besteffort" not in fake.submitted[0]
+
+
+def test_besteffort_only_cluster_gets_besteffort_jobs_on_free_gpus(world):
+    c, fake = world
+    c.store.write_json("access/nancy_gres.json", {"besteffort_only": True})
+    c.settings.besteffort = True
+    c.cycle(NOW)
+    assert fake.submitted[0][:2] == ["-t", "besteffort"]
