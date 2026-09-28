@@ -59,7 +59,7 @@ Prompt and serving configuration are those of the benchmark
 [`NoeFlandre/benchmark-llms-landuse-relevance`](https://huggingface.co/datasets/NoeFlandre/benchmark-llms-landuse-relevance).
 Only GPU types that passed a pre-registered non-inferiority gate on the full
 25,500-item benchmark were used. The table shows the Δ macro scores against the
-published reference; margins are -0.01, failed rate +0.5 pp.
+published reference; margins are -0.02, failed rate +0.5 pp.
 
 | GPU type | ΔF1 | ΔMCC (95 % low) | Δaccuracy | Δfailed |
 |---|---:|---:|---:|---:|

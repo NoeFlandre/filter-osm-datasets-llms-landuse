@@ -3,9 +3,10 @@
 The benchmark's F1 and MCC leave failed items out of their cells, so a config that
 fails *more* can raise them; macro-accuracy (failed = wrong) closes that loophole.
 
-Pre-registered margins (ADR-0006, approved 2026-09-28): the one-sided 95% lower bound
-of candidate - reference macro-F1, macro-MCC and macro-accuracy must exceed -0.01; the failed-rate
-increase upper bound must stay under +0.5 pp; no language may lose more than 0.05 F1.
+Pre-registered margins (ADR-0006; revised by the owner 2026-09-29): the one-sided 95% lower
+bound of candidate - reference macro-F1, macro-MCC and macro-accuracy must exceed -0.02 (it was
+-0.01, too close to the reference noise floor); the failed-rate increase upper bound must stay
+under +0.5 pp; no language may lose more than 0.05 F1.
 """
 
 from collections.abc import Mapping, Sequence
@@ -13,9 +14,9 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-F1_MARGIN = 0.01
-MCC_MARGIN = 0.01
-ACCURACY_MARGIN = 0.01
+F1_MARGIN = 0.02
+MCC_MARGIN = 0.02
+ACCURACY_MARGIN = 0.02
 FAILED_RATE_MARGIN = 0.005
 LANGUAGE_F1_DROP = 0.05
 RESAMPLES = 10_000

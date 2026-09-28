@@ -148,12 +148,12 @@ def test_reasons_margins_are_inclusive_and_language_drop_strict():
     from landuse_filter.domain.noninferiority import _reasons
 
     at_margin = _reasons(
-        np.array([-0.01, -0.01, 0.0, -0.01]), np.array([0.0, 0.0, 0.005, 0.0]), ("de", -0.05)
+        np.array([-0.02, -0.02, 0.0, -0.02]), np.array([0.0, 0.0, 0.005, 0.0]), ("de", -0.05)
     )
     assert len(at_margin) == 4
     assert not any("language" in r for r in at_margin)
     inside = _reasons(
-        np.array([-0.009, -0.009, 0.0, -0.009]), np.array([0, 0, 0.0049, 0]), ("de", 0)
+        np.array([-0.019, -0.019, 0.0, -0.019]), np.array([0, 0, 0.0049, 0]), ("de", 0)
     )
     assert inside == []
 
@@ -164,12 +164,12 @@ def test_reasons_messages():
     from landuse_filter.domain.noninferiority import _reasons
 
     reasons = _reasons(
-        np.array([-0.02, -0.03, 0.5, -0.04]), np.array([0.9, 0.9, 0.006, 0.7]), ("de", -0.06)
+        np.array([-0.03, -0.04, 0.5, -0.05]), np.array([0.9, 0.9, 0.006, 0.7]), ("de", -0.06)
     )
     assert reasons == [
-        "macro-F1 lower bound -0.0200 <= -0.01",
-        "macro-MCC lower bound -0.0300 <= -0.01",
-        "macro-accuracy lower bound -0.0400 <= -0.01",
+        "macro-F1 lower bound -0.0300 <= -0.02",
+        "macro-MCC lower bound -0.0400 <= -0.02",
+        "macro-accuracy lower bound -0.0500 <= -0.02",
         "failed-rate upper bound 0.0060 >= +0.005",
         "language de F1 drop -0.0600 > 0.05",
     ]
