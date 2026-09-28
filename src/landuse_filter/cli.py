@@ -283,6 +283,60 @@ def node_plan(
     typer.echo(json.dumps(report))
 
 
+@node_app.command("calibrate")
+def node_calibrate(
+    chunk: str = typer.Option(..., help="Chunk id whose prompts drive the sweep."),
+    windows: str = typer.Option("16,32,64,128,256"),
+    bucket: str = typer.Option("NoeFlandre/landuse-filter-work"),
+) -> None:
+    """Sweep concurrency on this GPU; write a candidate profile (speed only)."""
+    from dataclasses import asdict
+
+    from landuse_filter import config
+    from landuse_filter.adapters.engine import SGLangEngine
+    from landuse_filter.adapters.remote import BucketRemote
+    from landuse_filter.application.calibrate import best, sweep
+    from landuse_filter.application.node_main import detect_gpu
+    from landuse_filter.application.sync import fetch
+    from landuse_filter.domain.gpu import gpu_key
+
+    levels = [int(w) for w in windows.split(",")]
+    scratch = _store(Path(os.environ.get("LUF_SCRATCH", "/tmp/luf-scratch")))  # noqa: S108
+    remote = BucketRemote(bucket)
+    fetch(remote, scratch, [f"chunks/{chunk}.parquet"])
+    prompts = scratch.read_chunk(chunk).column("input_ids").to_pylist()
+    spec = detect_gpu()
+    cfg = config.reference_config()
+    engine = SGLangEngine(
+        config.engine_kwargs(cfg, {"max_running_requests": max(levels)}), cfg["sampling"]
+    )
+    try:
+        points = sweep(engine, prompts, levels)
+    finally:
+        engine.shutdown()
+    pick = best(points)
+    key = gpu_key(spec.model)
+    profile = {
+        "gpu": key,
+        "max_running_requests": pick.window,
+        "mem_fraction_static": 0.75,
+        "sentences_per_second": round(pick.sentences_per_second, 3),
+        "calibrated": True,
+    }
+    path = f"profiles/{key}.json"
+    scratch.write_json(path, profile)
+    scratch.write_json(
+        f"calibration/{key}.json", {"points": [asdict(p) for p in points], "gpu": spec.model}
+    )
+    remote.put(
+        [
+            (scratch.path(path), path),
+            (scratch.path(f"calibration/{key}.json"), f"calibration/{key}.json"),
+        ]
+    )
+    typer.echo(json.dumps(profile))
+
+
 @node_app.command("publish")
 def node_publish(
     dataset: str = typer.Option(...),
@@ -435,6 +489,35 @@ def g5k_cpu_job(
     job_id = g5k.submit(site, args)
     g5k.policy_check(site)
     typer.echo(f"{mode} job {job_id} on {site} ({walltime_text(wall)})")
+
+
+@g5k_app.command("calibrate-job")
+def g5k_calibrate_job(
+    site: str = typer.Option(...),
+    cluster: str = typer.Option(...),
+    chunk: str = typer.Option(..., help="A benchmark chunk id (prompts for the sweep)."),
+    work: Path = WORK,
+) -> None:
+    """Submit one GPU calibration job on ``cluster`` (1 h, starts now or is cancelled)."""
+    from landuse_filter.adapters import g5k
+    from landuse_filter.application.controller import commit, git_archive, load_clusters
+    from landuse_filter.domain.capacity import oarsub_arguments
+
+    target = next(c for c in load_clusters(_store(work)) if c.site == site and c.name == cluster)
+    code_commit = commit()
+    code = g5k.deploy_code(site, code_commit, git_archive(code_commit))
+    g5k.ssh(site, f"mkdir -p {g5k.REMOTE_ROOT}/logs")
+    g5k.policy_check(site)
+    args = oarsub_arguments(
+        target,
+        timedelta(hours=1),
+        None,
+        f"{g5k.JOB_PREFIX}calib-{cluster}",
+        command=f"{code}/scripts/node_job.sh {code} calibrate {chunk}",
+    )
+    job_id = g5k.submit(site, args)
+    g5k.policy_check(site)
+    typer.echo(f"calibration job {job_id} on {site}/{cluster}")
 
 
 @g5k_app.command("pause")
