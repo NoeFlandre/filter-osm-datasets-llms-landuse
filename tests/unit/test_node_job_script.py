@@ -14,8 +14,15 @@ def test_env_is_built_once_under_a_lock():
     assert ".ready" in SCRIPT
 
 
-def test_no_credentials_are_used_on_nodes():
-    assert "HF_TOKEN" not in SCRIPT
+def test_token_is_read_from_a_private_file_never_echoed():
+    assert 'HF_TOKEN="$(<"$HOME/luf/hf_token")"' in SCRIPT
+    assert "echo $HF_TOKEN" not in SCRIPT
+    assert "set -x" not in SCRIPT
+
+
+def test_scratch_is_node_local_and_removed():
+    assert 'LUF_SCRATCH="/tmp/' in SCRIPT
+    assert '"$LUF_SCRATCH"\' EXIT' in SCRIPT
 
 
 def test_venv_bin_is_on_path_for_flashinfer_jit():

@@ -98,7 +98,9 @@ class WorkStore:
         data = table_bytes(table)
         part = hashlib.sha256(data).hexdigest()
         target = self.path(f"parts/{fp}/{chunk_id}/{part}.parquet")
-        if not target.exists():
+        # An existing file with the same name is only kept if its bytes still match:
+        # regenerating identical content must repair a corrupt copy (regression).
+        if not target.exists() or hashlib.sha256(target.read_bytes()).hexdigest() != part:
             write_atomic(target, data)
         return part
 

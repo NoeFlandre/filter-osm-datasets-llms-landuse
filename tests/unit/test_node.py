@@ -74,3 +74,18 @@ def test_decisions_from_parts(tmp_path):
     chunk(store, n=3)
     asyncio.run(runner(store, FakeEngine()).run(["c1"]))
     assert set(decisions_by_sha(store, "fp").values()) == {"yes"}
+
+
+def test_identical_part_repairs_a_corrupt_copy(tmp_path):
+    """Regression (flaky resume scenario): identical content reuses the name; repair it."""
+    import pyarrow as pa
+
+    from landuse_filter.adapters.store import WorkStore
+
+    store = WorkStore(tmp_path)
+    table = pa.table({"text_sha256": ["a"]})
+    part = store.write_part("fp", "c", table)
+    path = next(store.part_paths("fp", "c"))
+    path.write_bytes(b"torn")
+    assert store.write_part("fp", "c", table) == part
+    assert store.read_part(path).column("text_sha256").to_pylist() == ["a"]

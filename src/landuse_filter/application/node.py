@@ -17,7 +17,7 @@ import pyarrow as pa
 
 from landuse_filter.adapters.schema import generation_table
 from landuse_filter.adapters.store import CorruptPartError, WorkStore
-from landuse_filter.domain.completion import Part, progress
+from landuse_filter.domain.completion import Part
 from landuse_filter.domain.records import Generation, from_sglang
 
 
@@ -49,6 +49,8 @@ class Runner:
     flush_every: int = 256
     flush_seconds: float = 120.0
     should_stop: Callable[[], bool] = lambda: False
+    # Called after each part is written locally: (chunk id, part id, text hashes).
+    on_part: Callable[[str, str, list[str]], None] | None = None
     stats: RunStats = field(default_factory=RunStats)
 
     def valid_parts(self, chunk_id: str) -> list[Part]:
@@ -63,7 +65,11 @@ class Runner:
         return parts
 
     def done_shas(self, chunk_id: str) -> set[str]:
-        return {sha for part in self.valid_parts(chunk_id) for sha in part.text_sha256s}
+        """Hashes already generated: local parts plus remote manifests fetched for them."""
+        from landuse_filter.application.sync import manifest_shas
+
+        local = {sha for part in self.valid_parts(chunk_id) for sha in part.text_sha256s}
+        return local | manifest_shas(self.store, self.fp, chunk_id)
 
     async def run(self, chunk_ids: list[str]) -> RunStats:
         for chunk_id in chunk_ids:
@@ -78,7 +84,7 @@ class Runner:
         done = self.done_shas(chunk_id)
         todo = iter([i for i, sha in enumerate(expected) if sha not in done])
         await self._stream(chunk_id, table, todo)
-        if not progress(expected, self.valid_parts(chunk_id)).missing:
+        if not set(expected) - self.done_shas(chunk_id):
             self.stats.chunks_done.append(chunk_id)
 
     async def _stream(self, chunk_id: str, table: pa.Table, todo: Iterator[int]) -> None:
@@ -123,7 +129,9 @@ class Runner:
         if not rows:
             return
         stamped = {**self.provenance, "created_at": _utc_now()}
-        self.store.write_part(self.fp, chunk_id, generation_table(rows, stamped))
+        part = self.store.write_part(self.fp, chunk_id, generation_table(rows, stamped))
+        if self.on_part:
+            self.on_part(chunk_id, part, [r.text_sha256 for r in rows])
         self.stats.completed += len(rows)
         self.stats.generated_tokens += sum(r.generated_tokens for r in rows)
         self.stats.parts += 1

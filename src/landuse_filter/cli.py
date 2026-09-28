@@ -319,6 +319,9 @@ def g5k_run(
     namespace: str | None = typer.Option(
         None, help="Store a candidate config's results under <fp>-<namespace>."
     ),
+    bucket: str | None = typer.Option(
+        None, help="Private HF Bucket for chunks and parts (keeps local disks empty)."
+    ),
     interval: int = typer.Option(300, help="Seconds between cycles."),
     once: bool = typer.Option(False, help="Run a single cycle and exit."),
 ) -> None:
@@ -336,6 +339,7 @@ def g5k_run(
         admit=[g for g in admit.split(",") if g],
         window=window,
         namespace=namespace,
+        bucket=bucket,
     )
     ctl = _controller(work, settings)
     while True:

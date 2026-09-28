@@ -17,8 +17,10 @@ from zoneinfo import ZoneInfo
 
 from landuse_filter import config
 from landuse_filter.adapters import g5k
+from landuse_filter.adapters.remote import BucketRemote
 from landuse_filter.adapters.store import CorruptPartError, WorkStore
 from landuse_filter.application.bench_plan import SMOKE, smoke_fp
+from landuse_filter.application.sync import fetch_manifests
 from landuse_filter.domain.capacity import Cluster, free_gpus, oarsub_arguments
 from landuse_filter.domain.completion import Part, State, progress
 from landuse_filter.domain.fingerprint import config_fingerprint, serving_fingerprint
@@ -50,6 +52,7 @@ class Settings:
     admit: list[str] = field(default_factory=list)  # gpu keys to run the one-time smoke gate for
     window: int | None = None  # candidate concurrency (tuning, issue #17); None = GPU profile
     namespace: str | None = None  # results of a candidate config live under <fp>-<namespace>
+    bucket: str | None = None  # private HF Bucket holding chunks and parts (no bulk data locally)
     paused: bool = False
 
 
@@ -150,6 +153,19 @@ class Controller:
                     lines.append(row)
         return lines
 
+    def done_count(self, chunk_id: str, fp: str | None = None) -> int:
+        """Distinct texts of a chunk already generated (manifests + verified local parts)."""
+        from landuse_filter.application.sync import manifest_shas
+
+        fp = fp or self.work_fp
+        shas = manifest_shas(self.store, fp, chunk_id)
+        for path in self.store.part_paths(fp, chunk_id):
+            try:
+                shas.update(self.store.read_part(path).column("text_sha256").to_pylist())
+            except CorruptPartError:
+                self.quarantine(path)
+        return len(shas)
+
     def chunk_state(self, chunk_id: str, fp: str | None = None) -> State:
         expected = self.store.read_chunk(chunk_id).column("text_sha256").to_pylist()
         parts = []
@@ -178,7 +194,7 @@ class Controller:
             cid = row["chunk_id"]
             if cid in complete:
                 continue
-            if self.chunk_state(cid) is State.COMPLETE:
+            if self.done_count(cid) >= row["size"]:
                 newly.append({"chunk_id": cid})
             else:
                 pending.append((cid, row["size"]))
@@ -250,7 +266,18 @@ class Controller:
                 )
                 self.log(f"{site}: job {job.job_id} start drifted; cancelled and backing off")
 
+    def remote(self) -> "BucketRemote | None":
+        return BucketRemote(self.settings.bucket) if self.settings.bucket else None
+
     def pull(self) -> None:
+        remote = self.remote()
+        if remote is None:
+            self.pull_spools()
+            return
+        fetch_manifests(remote, self.store, f"parts/{self.work_fp}/")
+        fetch_manifests(remote, self.store, "jobs/")
+
+    def pull_spools(self) -> None:
         for site in self.settings.sites:
             if not any(a["site"] == site and a.get("job_id") for a in self.ledger()):
                 continue
@@ -414,9 +441,7 @@ class Controller:
         base = f"{self.fp}-smoke"
         fp = smoke_fp(self.fp, gpu_key(gpu))
         rows = self.store.read_jsonl(f"plans/{SMOKE}/{base}/chunks.jsonl")
-        return [
-            r["chunk_id"] for r in rows if self.chunk_state(r["chunk_id"], fp) is not State.COMPLETE
-        ]
+        return [r["chunk_id"] for r in rows if self.done_count(r["chunk_id"], fp) < r["size"]]
 
     def needs_smoke(self, gpu: str) -> bool:
         live = {a["gpu"] for a in self.live() if a.get("kind") == "smoke"}
@@ -543,6 +568,30 @@ class Controller:
             return None
 
     def stage(self, site: str, a: dict) -> None:
+        """Ship the assignment to the site; bulk inputs travel via the bucket if set."""
+        remote = self.remote()
+        if remote is None:
+            self.stage_spool(site, a)
+            return
+        a["bucket"] = self.settings.bucket
+        self.upload_chunks(remote, a["chunks"])
+        self.store.write_json(f"assignments/{a['id']}.json", a)
+        g5k.ssh(site, f"mkdir -p {g5k.REMOTE_ROOT}/work/assignments {g5k.REMOTE_ROOT}/logs")
+        g5k.rsync(
+            str(self.store.path(f"assignments/{a['id']}.json")),
+            f"{site}:{g5k.REMOTE_ROOT}/work/assignments/",
+        )
+
+    def upload_chunks(self, remote: "BucketRemote", chunks: list[str]) -> None:
+        """Put chunk inputs in the bucket once, then drop the local copies (scarce SSD)."""
+        present = set(remote.ls("chunks/"))
+        local = [c for c in chunks if self.store.exists(f"chunks/{c}.parquet")]
+        todo = [c for c in local if f"chunks/{c}.parquet" not in present]
+        remote.put([(self.store.path(f"chunks/{c}.parquet"), f"chunks/{c}.parquet") for c in todo])
+        for c in local:
+            self.store.path(f"chunks/{c}.parquet").unlink()
+
+    def stage_spool(self, site: str, a: dict) -> None:
         """Copy the assignment, its chunk inputs and existing parts to the site spool."""
         root = f"{site}:{g5k.REMOTE_ROOT}/work/"
         g5k.ssh(

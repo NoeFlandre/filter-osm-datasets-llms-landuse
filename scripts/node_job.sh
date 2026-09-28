@@ -13,9 +13,17 @@ export HF_HOME="$CACHE/hf"
 export HF_HUB_DISABLE_TELEMETRY=1
 export FLASHINFER_WORKSPACE_BASE="$CACHE/flashinfer"
 export UV_CACHE_DIR="/tmp/$USER-uv-${OAR_JOB_ID:-local}"
+# Node-local scratch for chunk inputs and parts (bucket mode); removed on exit.
+export LUF_SCRATCH="/tmp/$USER-luf-${OAR_JOB_ID:-local}"
+# Fine-grained HF token placed by the owner (mode 600). Read into the job's
+# environment only; never echoed, never on a command line.
+if [[ -r "$HOME/luf/hf_token" ]]; then
+  HF_TOKEN="$(<"$HOME/luf/hf_token")"
+  export HF_TOKEN
+fi
 export PATH="$HOME/.local/bin:$PATH"
 mkdir -p "$CACHE" "$LUF_WORK"
-trap 'rm -rf "$UV_CACHE_DIR"' EXIT
+trap 'rm -rf "$UV_CACHE_DIR" "$LUF_SCRATCH"' EXIT
 
 # SGLang's DeepEP import needs CUDA_HOME to JIT its kernels; OAR starts a non-login
 # shell, so load the site's CUDA toolkit explicitly (regression: job 4165500, Rennes).
