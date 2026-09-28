@@ -8,14 +8,14 @@ holds one row per unique text (raw output, token counts, provenance) keyed by
 """
 
 from collections.abc import Iterable
-from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple, Protocol
 
 import pyarrow as pa
 
 from landuse_filter.adapters.readers import SOURCES
 from landuse_filter.adapters.store import WorkStore, table_bytes, write_atomic
-from landuse_filter.application.results import canonical_generations, verdict_of
+from landuse_filter.application.results import canonical_generations
 from landuse_filter.domain.hashing import sha256_parts
 from landuse_filter.domain.sentences import Decision, SentenceRef
 
@@ -50,30 +50,23 @@ def generation_id(text_sha256: str, fp: str) -> str:
     return sha256_parts(text_sha256, fp)[:32]
 
 
-@dataclass(frozen=True, slots=True)
-class Resolved:
+class Resolved(NamedTuple):
     decision: str
     mode: str | None
     failure: str | None
+
+
+class Lookup(Protocol):
+    """Text hash -> (decision, mode, failure); a dict or an on-disk ResolutionIndex."""
+
+    def get(self, sha: str, /) -> tuple[str, str | None, str | None] | None: ...
 
 
 class MissingGenerationError(LookupError):
     """A non-skipped sentence has no generation yet: the file is not publishable."""
 
 
-def resolve_all(store: WorkStore, fp: str) -> dict[str, Resolved]:
-    out = {}
-    for row in canonical_generations(store, fp):
-        v = verdict_of(row)
-        out[row["text_sha256"]] = Resolved(
-            v.decision.value, v.mode and v.mode.value, v.failure and v.failure.value
-        )
-    return out
-
-
-def label_rows(
-    refs: Iterable[SentenceRef], resolved: dict[str, Resolved], fp: str, revision: str
-) -> list[dict]:
+def label_rows(refs: Iterable[SentenceRef], resolved: Lookup, fp: str, revision: str) -> list[dict]:
     rows = []
     for ref in refs:
         keys = dict(ref.locator)
@@ -99,6 +92,7 @@ def label_rows(
         r = resolved.get(ref.text_sha256)
         if r is None:
             raise MissingGenerationError(ref.text_sha256)
+        r = Resolved(*r)
         rows.append(
             {
                 **base,
@@ -121,7 +115,7 @@ def build_labels(
     input_path: str,
     local: Path,
     *,
-    resolved: dict[str, Resolved],
+    resolved: Lookup,
     fp: str,
     revision: str,
     out: Path,
