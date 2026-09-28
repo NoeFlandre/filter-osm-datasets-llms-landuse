@@ -384,3 +384,24 @@ def test_free_slots_outrank_queued_ones():
         "b", "c", "g", 1, 1, timedelta(hours=1), timedelta(hours=1), None, 1.0, queued=True
     )
     assert rank_slots([queued, free], timedelta(minutes=8))[0] is free
+
+
+def test_run_command_passes_the_night_walltime_to_the_controller(monkeypatch, tmp_path):
+    from typer.testing import CliRunner
+
+    from landuse_filter.cli import g5k as cli
+
+    seen = {}
+
+    def fake_controller(work, settings):
+        seen["settings"] = settings
+        return object()
+
+    monkeypatch.setattr(cli, "_controller", fake_controller)
+    monkeypatch.setattr(ctl_mod, "run_loop", lambda *a, **k: None)
+    result = CliRunner().invoke(
+        cli.g5k_app,
+        ["run", "--datasets", "d", "--work", str(tmp_path), "--night-walltime-minutes", "30"],
+    )
+    assert result.exit_code == 0, result.output
+    assert seen["settings"].night_walltime == timedelta(minutes=30)

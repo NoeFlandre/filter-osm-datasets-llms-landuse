@@ -248,31 +248,36 @@ Usage: root g5k run [OPTIONS]
  The controller loop: reconcile, pull results, submit where GPUs are free now.                      
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --datasets                                  <str>   Comma-separated, in priority order        │
-│                                                        (benchmark first for parity).             │
-│                                                        [required]                                │
-│    --work                                      <path>  Local work tree. [default: work]          │
-│    --sites                                     <str>   [default:                                 │
-│                                                        grenoble,lille,lyon,nancy,rennes,sophia,… │
-│    --gpu-models                                <str>   Comma-separated gpu keys to allow         │
-│                                                        (default: admitted models).               │
-│    --max-jobs                                  <int>   [default: 12]                             │
-│    --max-jobs-per-site                         <int>   [default: 4]                              │
-│    --walltime-minutes                          <int>   [default: 60]                             │
-│    --besteffort             --no-besteffort            [default: no-besteffort]                  │
-│    --max-queued-per-site                       <int>   Waiting jobs allowed per site when        │
-│                                                        nothing is free (start predicted < 2 h).  │
-│                                                        [default: 1]                              │
-│    --window                                    <int>   Candidate concurrency (tuning); default:  │
-│                                                        GPU profile.                              │
-│    --namespace                                 <str>   Store a candidate config's results under  │
-│                                                        <fp>-<namespace>.                         │
-│    --bucket                                    <str>   Private HF Bucket for chunks and parts.   │
-│                                                        [default: NoeFlandre/landuse-filter-work] │
-│    --interval                                  <int>   Seconds between cycles. [default: 300]    │
-│    --once                   --no-once                  Run a single cycle and exit.              │
-│                                                        [default: no-once]                        │
-│    --help                                              Show this message and exit.               │
+│ *  --datasets                                     <str>   Comma-separated, in priority order     │
+│                                                           (benchmark first for parity).          │
+│                                                           [required]                             │
+│    --work                                         <path>  Local work tree. [default: work]       │
+│    --sites                                        <str>   [default:                              │
+│                                                           grenoble,lille,lyon,nancy,rennes,soph… │
+│    --gpu-models                                   <str>   Comma-separated gpu keys to allow      │
+│                                                           (default: admitted models).            │
+│    --max-jobs                                     <int>   [default: 12]                          │
+│    --max-jobs-per-site                            <int>   [default: 4]                           │
+│    --walltime-minutes                             <int>   [default: 60]                          │
+│    --night-walltime-minutes                       <int>   Walltime cap for night/weekend jobs.   │
+│                                                           [default: 120]                         │
+│    --besteffort                --no-besteffort            [default: no-besteffort]               │
+│    --max-queued-per-site                          <int>   Waiting jobs allowed per site when     │
+│                                                           nothing is free (start predicted < 2   │
+│                                                           h).                                    │
+│                                                           [default: 1]                           │
+│    --window                                       <int>   Candidate concurrency (tuning);        │
+│                                                           default: GPU profile.                  │
+│    --namespace                                    <str>   Store a candidate config's results     │
+│                                                           under <fp>-<namespace>.                │
+│    --bucket                                       <str>   Private HF Bucket for chunks and       │
+│                                                           parts.                                 │
+│                                                           [default:                              │
+│                                                           NoeFlandre/landuse-filter-work]        │
+│    --interval                                     <int>   Seconds between cycles. [default: 300] │
+│    --once                      --no-once                  Run a single cycle and exit.           │
+│                                                           [default: no-once]                     │
+│    --help                                                 Show this message and exit.            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
