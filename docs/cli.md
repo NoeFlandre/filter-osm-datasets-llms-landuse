@@ -311,10 +311,11 @@ Usage: root node calibrate [OPTIONS]
  Sweep concurrency on this GPU; write a candidate profile (speed only).                             
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --chunk          <str>  Chunk id whose prompts drive the sweep. [required]                    │
-│    --windows        <str>  [default: 16,32,64,128,256]                                           │
-│    --bucket         <str>  [default: NoeFlandre/landuse-filter-work]                             │
-│    --help                  Show this message and exit.                                           │
+│ *  --chunk              <str>  Chunk id whose prompts drive the sweep. [required]                │
+│    --windows            <str>  [default: 16,32,64,128]                                           │
+│    --max-prompts        <int>  Prompts per level (keeps a sweep well inside 1 h). [default: 300] │
+│    --bucket             <str>  [default: NoeFlandre/landuse-filter-work]                         │
+│    --help                      Show this message and exit.                                       │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
