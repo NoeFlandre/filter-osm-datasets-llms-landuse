@@ -46,5 +46,8 @@ if [[ ! -f "$venv/.ready" ]]; then
     fi
   ) 9>"$CACHE/venv-$lock_sha.lock"
 fi
+# FlashInfer JIT-compiles with the venv's ninja: the venv's bin must be on PATH
+# (regression: job 4165509, "No such file or directory: 'ninja'").
+export PATH="$venv/bin:$PATH"
 echo "luf: env ready in $(( $(date +%s) - t0 ))s ($venv)"
 exec "$venv/bin/luf" node run --assignment "$ASSIGNMENT"

@@ -16,3 +16,8 @@ def test_env_is_built_once_under_a_lock():
 
 def test_no_credentials_are_used_on_nodes():
     assert "HF_TOKEN" not in SCRIPT
+
+
+def test_venv_bin_is_on_path_for_flashinfer_jit():
+    """Regression (job 4165509): FlashInfer shells out to the venv's ninja."""
+    assert SCRIPT.index('export PATH="$venv/bin:$PATH"') < SCRIPT.index('exec "$venv/bin/luf"')
