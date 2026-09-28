@@ -10,7 +10,9 @@ dependencies = [
     "typer>=0.15",
     "pyarrow>=18",
     "huggingface-hub>=1.0",
-    "numpy>=2.0",
+    # numpy>=2.4 needs a newer CPU baseline: planning jobs died with SIGILL on older
+    # Grid'5000 CPU nodes (Lyon jobs 2070945, 2070978).
+    "numpy>=2.0,<2.4",
 ]
 
 [project.optional-dependencies]
