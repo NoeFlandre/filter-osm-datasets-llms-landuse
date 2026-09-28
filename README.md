@@ -66,5 +66,5 @@ results are never redone.
 make gauntlet   # ruff, ty, unit/property/Gherkin/architecture tests, CRAP, mutation, docs
 ```
 
-Docs (MkDocs) live in `docs/`: architecture, output schema, benchmark parity, sizing,
+Docs: https://noeflandre.github.io/filter-osm-datasets-llms-landuse/ (MkDocs sources in `docs/`): architecture, output schema, benchmark parity, sizing,
 Grid'5000 operations, ADRs, known weaknesses.
