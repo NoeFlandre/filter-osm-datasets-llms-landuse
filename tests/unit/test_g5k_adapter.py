@@ -91,3 +91,33 @@ def test_rsync_tolerates_vanished_files_only(monkeypatch):
     fake(monkeypatch, (23, "", "some files not transferred"))
     with pytest.raises(g5k.RemoteError, match="rsync"):
         g5k.rsync("a", "b")
+
+
+def test_concurrent_deploys_of_the_same_commit_all_succeed(tmp_path):
+    """Regression (Rennes): parallel controllers raced rm -rf / tar on one target dir."""
+    import io
+    import tarfile
+    from concurrent.futures import ThreadPoolExecutor
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        for i in range(50):
+            data = b"x" * 1000
+            info = tarfile.TarInfo(f"tests/unit/f{i}.py")
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    archive = buf.getvalue()
+    command = g5k.deploy_command("luf/code/abc")
+
+    def deploy(_):
+        return subprocess.run(
+            ["bash", "-c", command], input=archive, cwd=tmp_path, capture_output=True, check=False
+        )
+
+    with ThreadPoolExecutor(8) as pool:
+        results = list(pool.map(deploy, range(8)))
+    assert all(r.returncode == 0 for r in results), [r.stderr for r in results]
+    target = tmp_path / "luf" / "code" / "abc"
+    assert (target / ".complete").exists()
+    assert len(list((target / "tests" / "unit").iterdir())) == 50
+    assert not list((tmp_path / "luf" / "code").glob(".deploy.*"))
