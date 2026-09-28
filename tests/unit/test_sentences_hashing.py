@@ -21,3 +21,7 @@ def test_label_id_depends_on_dataset_and_locator_only():
 
 def test_decision_vocabulary():
     assert [d.value for d in Decision] == ["yes", "no", "failed", "skipped_unsplit"]
+
+
+def test_parts_are_joined_by_unit_separator():
+    assert sha256_parts("a", "b") == sha256_text("a\x1fb")

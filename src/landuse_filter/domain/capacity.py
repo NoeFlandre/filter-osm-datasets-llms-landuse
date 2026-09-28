@@ -49,7 +49,7 @@ def _node_gpus(state: Mapping, gpus_per_node: int, *, besteffort_counts: bool) -
     all_slots = slots + state.get("busy_slots", 0) + (0 if besteffort_counts else freeable)
     if all_slots <= 0:
         return 0
-    return int(slots // (all_slots / gpus_per_node))
+    return slots * gpus_per_node // all_slots
 
 
 def _usable(cluster: Cluster, host: str, state: Mapping, now: float, walltime_s: float) -> bool:
@@ -79,7 +79,7 @@ def free_gpus(
 
 
 def walltime_text(walltime: timedelta) -> str:
-    minutes = int(walltime.total_seconds() // 60)
+    minutes = walltime // timedelta(minutes=1)
     return f"{minutes // 60}:{minutes % 60:02d}"
 
 

@@ -23,3 +23,21 @@ def test_output_affecting_fields_change_identity():
 
 def test_key_order_is_irrelevant():
     assert config_fingerprint(dict(reversed(list(BASE.items())))) == config_fingerprint(BASE)
+
+
+def test_canonical_json_is_compact_sorted_and_unescaped():
+    from landuse_filter.domain.fingerprint import canonical_json
+
+    assert canonical_json({"b": 1, "a": ["é", 2]}) == '{"a":["é",2],"b":1}'
+
+
+def test_fingerprints_exact_digests():
+    from landuse_filter.domain.hashing import sha256_text
+
+    assert config_fingerprint({"model": "m"}) == sha256_text('{"engine":{},"model":"m"}')[:16]
+    config = {"model": "m", "engine": {"dtype": "bf16", "log_level": "x"}}
+    assert config_fingerprint(config) == sha256_text('{"engine":{"dtype":"bf16"},"model":"m"}')[:16]
+    assert (
+        serving_fingerprint(config)
+        == sha256_text('{"engine":{"dtype":"bf16","log_level":"x"},"model":"m"}')[:16]
+    )

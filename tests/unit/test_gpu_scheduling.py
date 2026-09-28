@@ -40,3 +40,31 @@ def test_assign_skips_taken_and_respects_capacity():
     pending = [("a", 10), ("b", 10), ("c", 10), ("d", 10)]
     assert assign_chunks(pending, {"a"}, capacity=20, overflow=1.0) == ["b", "c"]
     assert assign_chunks([("big", 100)], set(), capacity=1) == ["big"]  # never starve a job
+
+
+def test_memory_exactly_at_minimum_is_eligible():
+    assert ineligibility(GpuSpec("T", (8, 0), 16 * 1024)) is None
+    assert ineligibility(GpuSpec("T", (8, 0), 16 * 1024 - 1)) == "16383 MiB < 16384 MiB"
+
+
+def test_gpu_key_turns_dashes_into_underscores():
+    assert gpu_key("NVIDIA A100-SXM4-40GB") == "a100_sxm4_40gb"
+
+
+def test_profile_engine_args_exact():
+    assert Profile("x").engine_args() == {"max_running_requests": 64, "mem_fraction_static": 0.75}
+
+
+def test_useful_sentences_exact_value():
+    s = slot("a", 2.0, wait=60, wall=70, gpus=3)
+    assert useful_sentences(s, timedelta(minutes=10)) == 2.0 * 3 * 3600 * 0.5
+
+
+def test_rank_keeps_slots_with_less_than_one_useful_sentence():
+    tiny = slot("a", 1e-4, wall=11)
+    assert rank_slots([tiny], timedelta(minutes=10)) == [tiny]
+
+
+def test_assign_budget_is_capacity_times_overflow():
+    pending = [("a", 10), ("b", 10), ("c", 10)]
+    assert assign_chunks(pending, set(), capacity=10, overflow=2.0) == ["a", "b"]
