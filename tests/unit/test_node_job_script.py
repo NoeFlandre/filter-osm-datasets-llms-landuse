@@ -91,3 +91,12 @@ def test_cpu_jobs_do_not_install_the_gpu_stack():
     assert "--extra gpu" not in SCRIPT
     assert "EXTRA=tokenize" in SCRIPT
     assert "EXTRA=gpu" in SCRIPT
+
+
+def test_numpy_stays_below_the_cpu_baseline_bump():
+    """Regression (Lyon planning jobs 2070945/2070978): numpy>=2.4 died with SIGILL on
+    older Grid'5000 CPU nodes; the working GPU stack ran numpy 2.3.5."""
+    pyproject = (Path(__file__).parents[2] / "pyproject.toml").read_text()
+    lock = (Path(__file__).parents[2] / "uv.lock").read_text()
+    assert '"numpy>=2.0,<2.4"' in pyproject
+    assert 'name = "numpy"\nversion = "2.3.5"' in lock
