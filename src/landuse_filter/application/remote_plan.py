@@ -5,6 +5,7 @@ the bucket, so a killed planning job resumes from the last checkpoint; chunk fil
 plan lines are uploaded as they are emitted and deleted locally.
 """
 
+import shutil
 import time
 from collections.abc import Callable
 from dataclasses import asdict
@@ -22,9 +23,21 @@ def _index(dataset: str) -> str:
 
 
 def restore_index(remote: Remote, scratch: WorkStore, dataset: str) -> bool:
+    """Download the index checkpoint as a fresh, writable file.
+
+    The bucket download can be read-only (linked from a cache), which made every
+    resumed planning job fail with "attempt to write a readonly database"
+    (regression: Grenoble job 3123094).
+    """
     if _index(dataset) not in remote.ls("index/"):
         return False
-    remote.get([(_index(dataset), scratch.path(_index(dataset)))])
+    target = scratch.path(_index(dataset))
+    staged = target.with_name(target.name + ".download")
+    remote.get([(_index(dataset), staged)])
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(staged, target)
+    target.chmod(0o644)
+    staged.unlink()
     return True
 
 
