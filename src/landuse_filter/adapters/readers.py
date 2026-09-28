@@ -92,7 +92,9 @@ WEBSITE = "osm-polygon-website-tag"
 WEBSITE_FIELDS = ("website", "contact_website")
 _WEB_SPLIT = frozenset({"success"})
 _WEB_UNSPLIT = frozenset({"unsupported_language"})
-_WEB_ABSENT = frozenset({"absent"})
+# No sentences to label: no text fetched, or an empty page (regression: bayern-latest,
+# way/365496611, status "empty_text", website planning job 2070649).
+_WEB_ABSENT = frozenset({"absent", "empty_text"})
 
 
 def read_website(path: Path, source_file: str) -> Iterator[SentenceRef]:
