@@ -214,6 +214,9 @@ def bench_compare(
     work: Path = WORK,
     resamples: int = typer.Option(10_000),
     label: str = typer.Option("reference-config", help="Name of the gate file to write."),
+    namespace: str | None = typer.Option(
+        None, help="Gate a candidate namespace instead of production."
+    ),
     as_json: bool = JSON_OUT,
 ) -> None:
     """Gate our benchmark generations against the published reference run."""
@@ -227,7 +230,8 @@ def bench_compare(
     store = _store(work)
     reference = list(read_reference(_bench_root(work)))
     item_sha = store.read_json(f"plans/benchmark/{config.GENERATION_FP}/items.json")
-    by_sha = decisions_by_sha(store, config.GENERATION_FP)
+    fp = f"{config.GENERATION_FP}-{namespace}" if namespace else config.GENERATION_FP
+    by_sha = decisions_by_sha(store, fp)
     candidate = {item: by_sha[sha] for item, sha in item_sha.items() if sha in by_sha}
     if len(candidate) < len(item_sha):
         typer.echo(f"incomplete: {len(candidate)}/{len(item_sha)} items generated", err=True)
@@ -308,6 +312,13 @@ def g5k_run(
     max_jobs_per_site: int = typer.Option(4),
     walltime_minutes: int = typer.Option(60),
     besteffort: bool = typer.Option(False),
+    admit: str = typer.Option("", help="GPU keys to run the one-time smoke admission for."),
+    window: int | None = typer.Option(
+        None, help="Candidate concurrency (tuning); default: GPU profile."
+    ),
+    namespace: str | None = typer.Option(
+        None, help="Store a candidate config's results under <fp>-<namespace>."
+    ),
     interval: int = typer.Option(300, help="Seconds between cycles."),
     once: bool = typer.Option(False, help="Run a single cycle and exit."),
 ) -> None:
@@ -322,6 +333,9 @@ def g5k_run(
         walltime=timedelta(minutes=walltime_minutes),
         besteffort=besteffort,
         gpu_models=[g for g in gpu_models.split(",") if g],
+        admit=[g for g in admit.split(",") if g],
+        window=window,
+        namespace=namespace,
     )
     ctl = _controller(work, settings)
     while True:

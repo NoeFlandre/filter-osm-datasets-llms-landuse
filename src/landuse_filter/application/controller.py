@@ -48,6 +48,8 @@ class Settings:
     besteffort: bool = False
     gpu_models: list[str] = field(default_factory=list)  # allow-list of gpu keys; empty = admitted
     admit: list[str] = field(default_factory=list)  # gpu keys to run the one-time smoke gate for
+    window: int | None = None  # candidate concurrency (tuning, issue #17); None = GPU profile
+    namespace: str | None = None  # results of a candidate config live under <fp>-<namespace>
     paused: bool = False
 
 
@@ -114,6 +116,19 @@ class Controller:
 
     # --- ledger -------------------------------------------------------------------
 
+    @property
+    def work_fp(self) -> str:
+        """Where this controller's results go: production fp, or a candidate namespace."""
+        return f"{self.fp}-{self.settings.namespace}" if self.settings.namespace else self.fp
+
+    @property
+    def complete_log(self) -> str:
+        return (
+            "complete.jsonl"
+            if not self.settings.namespace
+            else f"complete-{self.settings.namespace}.jsonl"
+        )
+
     def ledger(self) -> list[dict]:
         return [
             self.store.read_json(f"assignments/{p.name}")
@@ -138,7 +153,7 @@ class Controller:
     def chunk_state(self, chunk_id: str, fp: str | None = None) -> State:
         expected = self.store.read_chunk(chunk_id).column("text_sha256").to_pylist()
         parts = []
-        for path in self.store.part_paths(fp or self.fp, chunk_id):
+        for path in self.store.part_paths(fp or self.work_fp, chunk_id):
             try:
                 parts.append(
                     Part(
@@ -157,7 +172,7 @@ class Controller:
         self.log(f"quarantined corrupt part {path.name}")
 
     def pending_chunks(self) -> list[tuple[str, int]]:
-        complete = {r["chunk_id"] for r in self.store.read_jsonl("complete.jsonl")}
+        complete = {r["chunk_id"] for r in self.store.read_jsonl(self.complete_log)}
         pending, newly = [], []
         for row in self.plan_lines():
             cid = row["chunk_id"]
@@ -168,7 +183,7 @@ class Controller:
             else:
                 pending.append((cid, row["size"]))
         if newly:
-            self.store.append_jsonl("complete.jsonl", newly)
+            self.store.append_jsonl(self.complete_log, newly)
         return pending
 
     # --- cycle ---------------------------------------------------------------------
@@ -362,7 +377,12 @@ class Controller:
         self, now: datetime, jobs: dict[str, list[g5k.Job]], pending: list[tuple[str, int]]
     ) -> list[str]:
         submitted: list[str] = []
-        taken = {c for a in self.live() if a.get("kind", "work") == "work" for c in a["chunks"]}
+        taken = {
+            c
+            for a in self.live()
+            if a.get("kind", "work") == "work" and a["fp"] == self.work_fp
+            for c in a["chunks"]
+        }
         total = sum(len(v) for v in jobs.values())
         per_site = {s: len(v) for s, v in jobs.items()}
         code_commit = commit()
@@ -433,6 +453,9 @@ class Controller:
         kind: str = "work",
     ) -> dict:
         prof = profile_for(self.store, slot.gpu)
+        speed = prof.engine_args()
+        if self.settings.window:
+            speed["max_running_requests"] = self.settings.window
         aid = uuid.uuid4().hex[:12]
         return {
             "id": aid,
@@ -442,17 +465,17 @@ class Controller:
             "gpu": slot.gpu,
             "chunks": chunks,
             "kind": kind,
-            "fp": fp or self.fp,
+            "fp": fp or self.work_fp,
             "state": "submitting",
             "job_id": None,
-            "window": prof.max_running_requests,
-            "engine_kwargs": config.engine_kwargs(self.cfg, prof.engine_args()),
+            "window": self.settings.window or prof.max_running_requests,
+            "engine_kwargs": config.engine_kwargs(self.cfg, speed),
             "sampling": self.cfg["sampling"],
             "walltime_s": int(slot.walltime.total_seconds()),
             "provenance": {
                 "config_fingerprint": self.fp,
                 "serving_fingerprint": serving_fingerprint(
-                    {**self.cfg, "engine": {**self.cfg["engine"], **prof.engine_args()}}
+                    {**self.cfg, "engine": {**self.cfg["engine"], **speed}}
                 ),
                 "model": self.cfg["model"],
                 "draft": self.cfg["draft"],

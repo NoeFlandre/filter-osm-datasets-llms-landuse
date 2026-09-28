@@ -213,3 +213,14 @@ def test_one_time_smoke_job_per_pending_gpu(world):
     assert len([a for a in c.live() if a.get("kind") == "smoke"]) == 1  # never twice
     c.store.write_json("gates/admission/l40s.json", {"status": "admitted"})
     assert not c.needs_smoke("L40S")
+
+
+def test_candidate_namespace_and_window(world):
+    c, fake = world
+    c.settings.namespace, c.settings.window = "w128", 128
+    c.cycle(NOW)
+    a = c.live()[0]
+    assert a["fp"] == f"{c.fp}-w128"
+    assert a["window"] == 128
+    assert a["engine_kwargs"]["max_running_requests"] == 128
+    assert a["provenance"]["config_fingerprint"] == c.fp  # same generation identity
