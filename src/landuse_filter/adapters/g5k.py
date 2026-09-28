@@ -103,16 +103,26 @@ def inventory(site: str, script: Path) -> list[dict]:
     return json.loads(ssh(site, "python3 -", stdin=script.read_bytes(), timeout=600))
 
 
+def deploy_command(target: str) -> str:
+    """Unpack stdin into a private temp dir, then move it into place atomically.
+
+    Several controllers may deploy the same commit at once (regression: Rennes,
+    "rm: cannot remove 'luf/code/<commit>/tests/...'"). The first atomic ``os.rename``
+    wins (it fails when the target exists) and the others discard their copy.
+    """
+    rename = "python3 -c 'import os, sys; os.rename(sys.argv[1], sys.argv[2])'"
+    return (
+        f"test -f {target}/.complete || {{ mkdir -p {REMOTE_ROOT}/code && "
+        f'tmp=$(mktemp -d {REMOTE_ROOT}/code/.deploy.XXXXXX) && tar -x -C "$tmp" && '
+        f'touch "$tmp/.complete" && '
+        f'{{ {rename} "$tmp" {target} 2>/dev/null || rm -rf "$tmp"; }}; }}'
+    )
+
+
 def deploy_code(site: str, commit: str, archive: bytes) -> str:
     """Unpack a ``git archive`` of ``commit`` into ``~/luf/code/<commit>``; idempotent."""
     target = f"{REMOTE_ROOT}/code/{commit}"
-    ssh(
-        site,
-        f"test -f {target}/.complete || (rm -rf {target} && mkdir -p {target} && "
-        f"tar -x -C {target} && touch {target}/.complete)",
-        stdin=archive,
-        timeout=300,
-    )
+    ssh(site, deploy_command(target), stdin=archive, timeout=300)
     ssh(
         site,
         "command -v uv >/dev/null || test -x ~/.local/bin/uv || "
