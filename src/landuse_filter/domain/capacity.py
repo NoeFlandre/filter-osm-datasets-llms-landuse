@@ -118,7 +118,8 @@ def oarsub_arguments(  # noqa: PLR0913 - one parameter per OAR option
         "-l",
         f"host=1/gpu={gpus},walltime={walltime_text(walltime)}",
         "--checkpoint",
-        "300",
+        # OAR refuses checkpoints longer than 60 s for besteffort (regression: Grenoble).
+        "60" if besteffort else "300",
         "-n",
         name,
         "-O",

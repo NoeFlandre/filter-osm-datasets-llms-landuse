@@ -71,6 +71,12 @@ def test_testing_only_cluster_is_not_submittable():
 def test_besteffort():
     args = oarsub_arguments(CHUC, timedelta(hours=1), None, "n", command="c", besteffort=True)
     assert args[:2] == ["-t", "besteffort"]
+    assert args[args.index("--checkpoint") + 1] == "60"  # regression: OAR max for besteffort
+
+
+def test_regular_jobs_get_a_five_minute_checkpoint():
+    args = oarsub_arguments(GRES, timedelta(hours=1), None, "n", command="c")
+    assert args[args.index("--checkpoint") + 1] == "300"
 
 
 def test_walltime_text():
