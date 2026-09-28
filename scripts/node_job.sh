@@ -3,8 +3,7 @@
 #   node_job.sh <code-dir> <assignment-id>                 GPU generation job
 #   node_job.sh <code-dir> plan <dataset> <revision>       CPU planning job
 #   node_job.sh <code-dir> calibrate <chunk-id>             GPU concurrency sweep
-# A finished per-site environment in ~/luf/cache (NFS) is reused read-only when
-# present; otherwise each job builds a private one on node-local /tmp. Bulk data lives on
+# Each job builds a private Python environment on node-local /tmp (never on NFS). Bulk data lives on
 # node-local scratch and in the private HF Bucket; the NFS spool only carries small files.
 set -euo pipefail
 CODE=$1
@@ -53,17 +52,13 @@ export SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1
 fi
 
 cd "$CODE"
-lock_sha=$(sha256sum uv.lock | cut -c1-12)
-venv="$CACHE/venv-$lock_sha"
 t0=$(date +%s)
-if [[ ! -f "$venv/.ready" ]]; then
-  # No finished site environment: build a private one on node-local disk. Copying
-  # ~8 GB onto a slow NFS home can outlast the walltime (regression: Grenoble job
-  # 3122433 spent its whole hour copying), and it would eat into the home quota.
-  venv="/tmp/$USER-venv-${OAR_JOB_ID:-local}"
-  UV_PROJECT_ENVIRONMENT="$venv" UV_LINK_MODE=copy uv sync --frozen --no-dev --no-install-project --extra gpu --python 3.12
-  trap 'rm -rf "$UV_CACHE_DIR" "$LUF_SCRATCH" "$venv"' EXIT
-fi
+# Always a private env on node-local disk (1-2 min): shared NFS venvs cost ~8 GB of
+# home quota per site and can be slow to create (regressions: Grenoble job 3122433
+# copying for an hour; sites over quota). Removed on exit.
+venv="/tmp/$USER-venv-${OAR_JOB_ID:-local}"
+UV_PROJECT_ENVIRONMENT="$venv" UV_LINK_MODE=copy uv sync --frozen --no-dev --no-install-project --extra gpu --python 3.12
+trap 'rm -rf "$UV_CACHE_DIR" "$LUF_SCRATCH" "$venv"' EXIT
 # FlashInfer JIT-compiles with the venv's ninja: the venv's bin must be on PATH
 # (regression: job 4165509, "No such file or directory: 'ninja'").
 export PATH="$venv/bin:$PATH"
