@@ -25,6 +25,7 @@ from landuse_filter.application.assemble import (
     build_labels,
     resolve_all,
 )
+from landuse_filter.application.card import CardFacts, render_card
 
 
 @dataclass
@@ -137,45 +138,26 @@ def _card(
     total: int,
     decisions: dict[str, int],
 ) -> None:
-    status = "complete" if labelled == total else "in_progress"
     cfg = config.reference_config()
-    rows = "\n".join(f"| `{k}` | {v:,} |" for k, v in sorted(decisions.items()))
-    text = f"""---
-license: odbl
-pretty_name: {dataset} (land-use labels)
-tags: [openstreetmap, land-use, land-cover, remote-sensing, geospatial]
-dataset_status: {status}
-configs:
-- config_name: labels
-  data_files: "labels/**/*.parquet"
-- config_name: generations
-  data_files: "generations/**/*.parquet"
----
-# {dataset}-landuse
-
-Every in-scope sentence of [`NoeFlandre/{dataset}`](https://huggingface.co/datasets/NoeFlandre/{dataset})
-(revision `{revision}`, mirrored here unchanged) labelled for land-use / land-cover
-relevance by **{cfg["model"]}** with the DSpark draft **{cfg["draft"]}** (SGLang,
-BF16, greedy, thinking mode, `max_new_tokens={cfg["sampling"]["max_new_tokens"]}`).
-
-Status: **{status}** — {labelled:,} / {total:,} input files labelled.
-
-| Decision | Sentences |
-|---|---:|
-{rows}
-
-* `labels/<input path>.parquet`: one row per sentence position (`label_id` + the
-  input's join keys), `decision` ∈ `yes`, `no`, `failed`, `skipped_unsplit`, parse
-  mode / failure reason, `generation_id`.
-* `generations/`: one row per unique text: raw output (including reasoning), token
-  counts, finish reason, DSpark acceptance, GPU, site, job, code commit.
-
-Nothing from the input is removed. Prompt and serving configuration are those of the
-benchmark [`NoeFlandre/benchmark-llms-landuse-relevance`](https://huggingface.co/datasets/NoeFlandre/benchmark-llms-landuse-relevance);
-the implementation passed its non-inferiority gate before any production run.
-Code: https://github.com/NoeFlandre/filter-osm-datasets-llms-landuse ·
-config fingerprint `{config.GENERATION_FP}`.
-"""
+    admitted = {
+        p.stem: store.read_json(str(p.relative_to(store.root)))["gate"]
+        for p in sorted(store.path("gates/admission").glob("*.json"))
+        if store.read_json(str(p.relative_to(store.root))).get("status") == "admitted"
+    }
+    text = render_card(
+        CardFacts(
+            dataset=dataset,
+            revision=revision,
+            model=cfg["model"],
+            draft=cfg["draft"],
+            max_new_tokens=cfg["sampling"]["max_new_tokens"],
+            fingerprint=config.GENERATION_FP,
+            labelled_files=labelled,
+            total_files=total,
+            decisions=decisions,
+            admitted=admitted,
+        )
+    )
     path = store.path(f"publish/{dataset}/README.md")
     path.write_text(text, encoding="utf-8")
     hub.upload(repo, [(path, "README.md")], "Update dataset card")
