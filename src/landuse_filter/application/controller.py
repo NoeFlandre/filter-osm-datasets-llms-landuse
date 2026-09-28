@@ -22,6 +22,7 @@ from landuse_filter.adapters import g5k
 from landuse_filter.adapters.store import WorkStore
 from landuse_filter.application.inventory import admission, eligible, load_clusters, profile_for
 from landuse_filter.application.memory import ClusterMemory
+from landuse_filter.application.site_cache import SiteCache
 from landuse_filter.application.staging import Transport
 from landuse_filter.application.work_progress import WorkProgress
 from landuse_filter.domain.capacity import Cluster, free_gpus, oarsub_arguments
@@ -78,9 +79,14 @@ def commit(ref: str = DEPLOY_REF) -> str:
 
 class Controller:
     def __init__(
-        self, store: WorkStore, settings: Settings, log: Callable[[str], None] = print
+        self,
+        store: WorkStore,
+        settings: Settings,
+        log: Callable[[str], None] = print,
+        sites: "SiteCache | None" = None,
     ) -> None:
         self.store = store
+        self.sites = sites  # shared per-cycle view when several controllers run together
         self.settings = settings
         self.log = log
         self.cfg = config.reference_config()
@@ -155,7 +161,7 @@ class Controller:
         jobs: dict[str, list[g5k.Job]] = {}
         for site in self.settings.sites:
             try:
-                jobs[site] = g5k.our_jobs(site)
+                jobs[site] = self.sites.our_jobs(site) if self.sites else g5k.our_jobs(site)
             except g5k.RemoteError as exc:
                 self.log(f"{site}: unreachable ({exc}); keeping its assignments")
                 jobs[site] = [
@@ -217,7 +223,9 @@ class Controller:
             if not site_clusters or len(jobs.get(site, [])) >= self.settings.max_jobs_per_site:
                 continue
             try:
-                nodes = g5k.site_status(site)["nodes"]
+                nodes = (self.sites.site_status(site) if self.sites else g5k.site_status(site))[
+                    "nodes"
+                ]
             except (g5k.RemoteError, KeyError, ValueError) as exc:
                 self.log(f"{site}: status failed: {exc}")
                 continue
@@ -390,6 +398,8 @@ class Controller:
                 besteffort=slot.besteffort,
             )
             a["job_id"] = g5k.submit(site, args)
+            if self.sites:
+                self.sites.invalidate(site)
             a["state"] = "submitted"
             self.store.write_json(f"assignments/{a['id']}.json", a)
             if not self.starts_soon(site, a["job_id"]):
@@ -465,3 +475,31 @@ def run_loop(
         if once or (report["pending_chunks"] == 0 and report["live_jobs"] == 0):
             return
         sleep(interval)
+
+
+def run_many(
+    controllers: list["Controller"],
+    sites: SiteCache,
+    *,
+    interval: float,
+    sleep: Callable[[float], None] = time.sleep,
+    emit: Callable[[str], None] = print,
+) -> None:
+    """One process, several namespaces: each cycle every controller runs once over a
+    shared per-cycle site view; finished namespaces drop out; failures never kill it."""
+    active = list(controllers)
+    while active:
+        sites.reset()
+        for ctl in list(active):
+            try:
+                report = ctl.cycle()
+            except Exception as exc:  # noqa: BLE001 - keep the others running; state is on disk
+                ctl.log(f"{ctl.work_fp}: cycle failed ({type(exc).__name__}: {exc})")
+                continue
+            emit(json.dumps({"namespace": ctl.settings.namespace, **report}))
+            # Done when this namespace has no pending chunks and no live jobs of its own
+            # (report["live_jobs"] counts every luf- job on its sites).
+            if report["pending_chunks"] == 0 and not ctl.live():
+                active.remove(ctl)
+        if active:
+            sleep(interval)
