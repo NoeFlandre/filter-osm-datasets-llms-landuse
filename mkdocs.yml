@@ -19,3 +19,5 @@ nav:
       - adr/0007-single-writer-controller.md
       - adr/0008-node-runtime.md
       - adr/0009-work-store.md
+      - adr/0010-parity-and-hardware.md
+      - adr/0011-parallel-controllers.md
