@@ -137,7 +137,19 @@ class Controller:
         ]
 
     def live(self) -> list[dict]:
-        return [a for a in self.ledger() if a.get("state") in ("submitting", "submitted")]
+        """This controller's live assignments: its namespace, on its sites.
+
+        Several controllers (e.g. one GPU-admission run per GPU type) may share a work
+        tree; each only reconciles its own assignments, so none releases another's work.
+        Per-site job caps still count every ``luf-`` job on the site.
+        """
+        return [
+            a
+            for a in self.ledger()
+            if a.get("state") in ("submitting", "submitted")
+            and a.get("fp") == self.work_fp
+            and a.get("site") in self.settings.sites
+        ]
 
     # --- work ----------------------------------------------------------------------
 
