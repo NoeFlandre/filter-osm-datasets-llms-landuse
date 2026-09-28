@@ -24,18 +24,29 @@ class Keep:
     synced_parts: frozenset[str]  # spool parts already safe locally or in the bucket
 
 
+def _code(rest: str, _age: float, keep: Keep) -> bool:
+    return rest not in keep.commits
+
+
+def _cache(rest: str, _age: float, keep: Keep) -> bool:
+    return rest.startswith("venv-") and not rest.startswith(f"venv-{keep.lock_sha}")
+
+
+def _logs(_rest: str, age: float, _keep: Keep) -> bool:
+    return age > LOG_DAYS
+
+
+def _work(rest: str, _age: float, keep: Keep) -> bool:
+    return rest.startswith("parts/") and rest.removeprefix("parts/") in keep.synced_parts
+
+
+RULES = {"code": _code, "cache": _cache, "logs": _logs, "work": _work}
+
+
 def _removable(e: Entry, keep: Keep) -> bool:
-    name = e.path.removeprefix(ROOT)
-    kind, _, rest = name.partition("/")
-    if kind == "code":
-        return rest not in keep.commits
-    if kind == "cache" and rest.startswith("venv-"):
-        return not rest.startswith(f"venv-{keep.lock_sha}")
-    if kind == "logs":
-        return e.age_days > LOG_DAYS
-    if kind == "work" and rest.startswith("parts/"):
-        return rest.removeprefix("parts/") in keep.synced_parts
-    return False
+    kind, _, rest = e.path.removeprefix(ROOT).partition("/")
+    rule = RULES.get(kind)
+    return rule is not None and rule(rest, e.age_days, keep)
 
 
 def cleanup_plan(entries: Iterable[Entry], keep: Keep) -> list[str]:
