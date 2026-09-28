@@ -38,7 +38,9 @@ class PublishReport:
 
 
 def output_repo(dataset: str) -> str:
-    return f"NoeFlandre/{dataset}-landuse"
+    from landuse_filter.adapters.settings_file import load
+
+    return load().output_repo(dataset)
 
 
 def publish(
