@@ -63,14 +63,14 @@ def _codes(expected: np.ndarray, predicted: Sequence[str | None]) -> tuple[np.nd
 
 def _metrics(cells: tuple[np.ndarray, ...], idx: np.ndarray) -> tuple[np.ndarray, ...]:
     """F1, MCC, failed rate and accuracy for each resample row of ``idx`` (shape B x n)."""
-    tp, fn, tn, fp, failed = (c[idx].sum(axis=-1).astype(float) for c in cells)
-    with np.errstate(divide="ignore", invalid="ignore"):
+    tp, fn, tn, fp, failed = (c[idx].sum(axis=1).astype(float) for c in cells)
+    with np.errstate(invalid="ignore"):
         precision = np.where(tp + fp > 0, tp / (tp + fp), 0.0)
         recall = np.where(tp + fn > 0, tp / (tp + fn), 0.0)
         f1 = np.where(precision + recall > 0, 2 * precision * recall / (precision + recall), 0.0)
         den = np.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
         mcc = np.where(den > 0, (tp * tn - fp * fn) / den, 0.0)
-    n = idx.shape[-1]
+    n = idx.shape[1]
     return f1, mcc, failed / n, (tp + tn) / n
 
 
@@ -98,7 +98,7 @@ def _deltas(
         point += delta[:, 0]
         if delta[0, 0] < worst[1]:
             worst = (language, float(delta[0, 0]))
-        idx = rng.integers(0, len(group), size=(resamples, len(group)))
+        idx = rng.integers(len(group), size=(resamples, len(group)))
         boot += np.stack(_metrics(cand, idx)) - np.stack(_metrics(ref, idx))
     return point / len(groups), boot / len(groups), worst
 

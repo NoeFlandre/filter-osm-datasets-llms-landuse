@@ -75,3 +75,80 @@ def test_besteffort():
 
 def test_walltime_text():
     assert walltime_text(timedelta(minutes=5)) == "0:05"
+
+
+def node(**state):
+    return {"gres-1.nancy.grid5000.fr": {"hard": "alive", **state}}
+
+
+def test_node_gpus_missing_counters_default_to_zero():
+    assert free_gpus(GRES, node(), besteffort_counts=True) == 0
+    assert free_gpus(GRES, node(free_slots=24, busy_slots=24), besteffort_counts=True) == 1
+    assert free_gpus(GRES, node(busy_slots=48, freeable_slots=48), besteffort_counts=True) == 1
+    assert free_gpus(GRES, node(free_slots=48), besteffort_counts=False) == 2
+    assert free_gpus(GRES, node(free_slots=47, busy_slots=1), besteffort_counts=False) == 1
+
+
+def test_node_gpus_freeable_counts_as_busy_without_besteffort():
+    state = node(free_slots=24, freeable_slots=24)
+    assert free_gpus(GRES, state, besteffort_counts=False) == 1
+    assert free_gpus(GRES, state, besteffort_counts=True) == 2
+
+
+def test_node_gpus_whole_gpus_only():
+    assert free_gpus(GRES, node(free_slots=1, busy_slots=2), besteffort_counts=False) == 0
+    assert (
+        free_gpus(CHUC, {"chuc-1": {"free_slots": 3, "busy_slots": 5}}, besteffort_counts=False)
+        == 1
+    )
+
+
+def test_reservation_starting_exactly_at_job_end_does_not_block():
+    waiting = [{"state": "waiting", "scheduled_at": 150}]
+    state = node(free_slots=48, reservations=waiting)
+    assert free_gpus(GRES, state, besteffort_counts=False, now=50, walltime_s=100) == 2
+    assert free_gpus(GRES, state, besteffort_counts=False, now=51, walltime_s=100) == 0
+    assert free_gpus(GRES, state, besteffort_counts=False, walltime_s=151) == 0
+    assert free_gpus(GRES, state, besteffort_counts=False, walltime_s=150) == 2
+
+
+def test_no_walltime_ignores_reservations_by_default():
+    state = node(free_slots=48, reservations=[{"state": "waiting", "scheduled_at": 0.5}])
+    assert free_gpus(GRES, state, besteffort_counts=False) == 2
+
+
+def test_oarsub_arguments_full_command_line():
+    args = oarsub_arguments(CHUC, timedelta(minutes=125), "night", "luf-7", command="run.sh")
+    assert args == [
+        "-q",
+        "default",
+        "-t",
+        "night",
+        "-p",
+        "cluster='chuc'",
+        "-l",
+        "host=1/gpu=1,walltime=2:05",
+        "--checkpoint",
+        "300",
+        "-n",
+        "luf-7",
+        "-O",
+        "luf/logs/%jobid%.out",
+        "-E",
+        "luf/logs/%jobid%.err",
+        "run.sh",
+    ]
+
+
+def test_non_exotic_besteffort_job_drops_job_type():
+    args = oarsub_arguments(CHUC, timedelta(hours=1), "night", "n", command="c", besteffort=True)
+    assert args[:3] == ["-t", "besteffort", "-p"]
+
+
+def test_walltime_text_truncates_partial_minutes():
+    assert walltime_text(timedelta(seconds=119)) == "0:01"
+    assert walltime_text(timedelta(hours=10, minutes=3)) == "10:03"
+
+
+def test_single_slot_node():
+    assert free_gpus(GRES, node(free_slots=1), besteffort_counts=False) == 2

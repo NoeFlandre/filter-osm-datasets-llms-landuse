@@ -15,3 +15,9 @@ def test_truncation_rate():
     assert truncation_rate([Generated("yes", 10), Generated(None, 4096)], 2048) == 0.5
     with pytest.raises(ValueError, match="no generations"):
         truncation_rate([], 1)
+
+
+def test_truncation_rate_exact_message_and_cap_boundary():
+    with pytest.raises(ValueError, match=r"^no generations$"):
+        truncation_rate([], 1)
+    assert truncation_rate([Generated("yes", 5), Generated("no", 6)], 5) == 0.5

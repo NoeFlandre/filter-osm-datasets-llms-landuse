@@ -34,8 +34,7 @@ def config_fingerprint(config: Mapping[str, Any]) -> str:
     dropped so profiles tuned per GPU share one generation cache.
     """
     engine = {k: v for k, v in config.get("engine", {}).items() if k not in SPEED_ONLY_ARGS}
-    identity = {k: v for k, v in config.items() if k != "engine"}
-    return sha256_text(canonical_json({**identity, "engine": engine}))[:16]
+    return sha256_text(canonical_json({**config, "engine": engine}))[:16]
 
 
 def serving_fingerprint(config: Mapping[str, Any]) -> str:
