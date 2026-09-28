@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 from landuse_filter import config
 from landuse_filter.adapters import g5k
 from landuse_filter.adapters.store import CorruptPartError, WorkStore
+from landuse_filter.application.bench_plan import SMOKE, smoke_fp
 from landuse_filter.domain.capacity import Cluster, free_gpus, oarsub_arguments
 from landuse_filter.domain.completion import Part, State, progress
 from landuse_filter.domain.fingerprint import config_fingerprint, serving_fingerprint
@@ -46,6 +47,7 @@ class Settings:
     night_walltime: timedelta = timedelta(hours=2)
     besteffort: bool = False
     gpu_models: list[str] = field(default_factory=list)  # allow-list of gpu keys; empty = admitted
+    admit: list[str] = field(default_factory=list)  # gpu keys to run the one-time smoke gate for
     paused: bool = False
 
 
@@ -133,10 +135,10 @@ class Controller:
                     lines.append(row)
         return lines
 
-    def chunk_state(self, chunk_id: str) -> State:
+    def chunk_state(self, chunk_id: str, fp: str | None = None) -> State:
         expected = self.store.read_chunk(chunk_id).column("text_sha256").to_pylist()
         parts = []
-        for path in self.store.part_paths(self.fp, chunk_id):
+        for path in self.store.part_paths(fp or self.fp, chunk_id):
             try:
                 parts.append(
                     Part(
@@ -182,9 +184,9 @@ class Controller:
             "live_jobs": sum(len(v) for v in jobs.values()),
             "submitted": [],
         }
-        if self.settings.paused or not pending:
+        if self.settings.paused or not (pending or self.settings.admit):
             return report
-        report["submitted"] = self.submit(now, jobs, pending)
+        report["submitted"] = self.submit_smoke(now, jobs) + self.submit(now, jobs, pending)
         return report
 
     def reconcile(self) -> dict[str, list[g5k.Job]]:
@@ -256,17 +258,19 @@ class Controller:
     # --- submission -----------------------------------------------------------------
 
     def candidate_slots(
-        self, now: datetime, jobs: dict[str, list[g5k.Job]]
+        self,
+        now: datetime,
+        jobs: dict[str, list[g5k.Job]],
+        allow: Callable[[str], bool] | None = None,
     ) -> list[tuple[Slot, Cluster]]:
+        allow = allow or self.allowed_gpu
         out = []
         clusters = [
             c for c in load_clusters(self.store) if c.site in self.settings.sites and eligible(c)
         ]
         for site in self.settings.sites:
             site_clusters = [
-                c
-                for c in clusters
-                if c.site == site and self.allowed_gpu(c.gpu) and self.accessible(c)
+                c for c in clusters if c.site == site and allow(c.gpu) and self.accessible(c)
             ]
             if not site_clusters or len(jobs.get(site, [])) >= self.settings.max_jobs_per_site:
                 continue
@@ -358,7 +362,7 @@ class Controller:
         self, now: datetime, jobs: dict[str, list[g5k.Job]], pending: list[tuple[str, int]]
     ) -> list[str]:
         submitted: list[str] = []
-        taken = {c for a in self.live() for c in a["chunks"]}
+        taken = {c for a in self.live() if a.get("kind", "work") == "work" for c in a["chunks"]}
         total = sum(len(v) for v in jobs.values())
         per_site = {s: len(v) for s, v in jobs.items()}
         code_commit = commit()
@@ -384,7 +388,50 @@ class Controller:
                 submitted.append(f"{slot.site}/{cluster.name}:{job_id}")
         return submitted
 
-    def assignment(self, slot: Slot, chunks: list[str], code_commit: str) -> dict:
+    # --- one-time GPU admission (issue #18) -------------------------------------------
+
+    def smoke_pending(self, gpu: str) -> list[str]:
+        base = f"{self.fp}-smoke"
+        fp = smoke_fp(self.fp, gpu_key(gpu))
+        rows = self.store.read_jsonl(f"plans/{SMOKE}/{base}/chunks.jsonl")
+        return [
+            r["chunk_id"] for r in rows if self.chunk_state(r["chunk_id"], fp) is not State.COMPLETE
+        ]
+
+    def needs_smoke(self, gpu: str) -> bool:
+        live = {a["gpu"] for a in self.live() if a.get("kind") == "smoke"}
+        return (
+            gpu_key(gpu) in self.settings.admit
+            and admission(self.store, gpu) is Admission.PENDING
+            and gpu not in live
+            and bool(self.smoke_pending(gpu))
+        )
+
+    def submit_smoke(self, now: datetime, jobs: dict[str, list[g5k.Job]]) -> list[str]:
+        if not self.settings.admit:
+            return []
+        submitted, done = [], set()
+        for slot, cluster in self.candidate_slots(now, jobs, allow=self.needs_smoke):
+            if slot.gpu in done:
+                continue
+            fp = smoke_fp(self.fp, gpu_key(slot.gpu))
+            job_id = self.launch(
+                slot, cluster, self.smoke_pending(slot.gpu), commit(), fp=fp, kind="smoke"
+            )
+            if job_id:
+                done.add(slot.gpu)
+                submitted.append(f"smoke:{slot.site}/{cluster.name}:{job_id}")
+        return submitted
+
+    def assignment(
+        self,
+        slot: Slot,
+        chunks: list[str],
+        code_commit: str,
+        *,
+        fp: str | None = None,
+        kind: str = "work",
+    ) -> dict:
         prof = profile_for(self.store, slot.gpu)
         aid = uuid.uuid4().hex[:12]
         return {
@@ -394,7 +441,8 @@ class Controller:
             "cluster": slot.cluster,
             "gpu": slot.gpu,
             "chunks": chunks,
-            "fp": self.fp,
+            "kind": kind,
+            "fp": fp or self.fp,
             "state": "submitting",
             "job_id": None,
             "window": prof.max_running_requests,
@@ -414,9 +462,16 @@ class Controller:
         }
 
     def launch(
-        self, slot: Slot, cluster: Cluster, chunks: list[str], code_commit: str
+        self,
+        slot: Slot,
+        cluster: Cluster,
+        chunks: list[str],
+        code_commit: str,
+        *,
+        fp: str | None = None,
+        kind: str = "work",
     ) -> str | None:
-        a = self.assignment(slot, chunks, code_commit)
+        a = self.assignment(slot, chunks, code_commit, fp=fp, kind=kind)
         site = slot.site
         try:
             code = g5k.deploy_code(site, code_commit, git_archive(code_commit))
@@ -478,7 +533,7 @@ class Controller:
         files += [
             str(p.relative_to(self.store.root))
             for c in a["chunks"]
-            for p in self.store.part_paths(self.fp, c)
+            for p in self.store.part_paths(a["fp"], c)
         ]
         tmp = self.store.path(f"assignments/{a['id']}.json")
         self.store.write_json(f"assignments/{a['id']}.json", a)

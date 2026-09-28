@@ -191,3 +191,25 @@ def test_waiting_job_whose_start_drifts_is_cancelled(world):
     assert job.job_id in fake.cancelled
     assert c.store.exists("backoff/nancy_gres.json")
     assert job.name not in {a["name"] for a in c.live()}
+
+
+def test_one_time_smoke_job_per_pending_gpu(world):
+    c, fake = world
+    base = f"{c.fp}-smoke"
+    c.store.write_chunk(
+        "sm", pa.table({"text_sha256": ["x"], "text": ["t"], "input_ids": [[1]]}, schema=CHUNK)
+    )
+    c.store.append_jsonl(
+        f"plans/smoke/{base}/chunks.jsonl", [{"chunk_id": "sm", "order": [-1, 0], "size": 1}]
+    )
+    c.settings.admit = ["l40s"]
+    report = c.cycle(NOW)
+    smoke = [a for a in c.live() if a.get("kind") == "smoke"]
+    assert len(smoke) == 1
+    assert smoke[0]["fp"].endswith("-smoke-l40s")
+    assert smoke[0]["chunks"] == ["sm"]
+    assert any(s.startswith("smoke:") for s in report["submitted"])
+    c.cycle(NOW)
+    assert len([a for a in c.live() if a.get("kind") == "smoke"]) == 1  # never twice
+    c.store.write_json("gates/admission/l40s.json", {"status": "admitted"})
+    assert not c.needs_smoke("L40S")
