@@ -225,3 +225,17 @@ def test_besteffort_only_cluster_gets_besteffort_jobs_on_free_gpus(world):
     c.settings.besteffort = True
     c.cycle(NOW)
     assert fake.submitted[0][:2] == ["-t", "besteffort"]
+
+
+def test_parallel_controllers_do_not_release_each_others_work(world):
+    c, fake = world
+    c.cycle(NOW)
+    theirs = c.live()
+    other = Controller(
+        c.store,
+        Settings(datasets=["benchmark"], sites=["lyon"], namespace="gpu-x"),
+        log=lambda m: None,
+    )
+    other.reconcile()  # sees none of nancy's jobs
+    assert [a["id"] for a in c.live()] == [a["id"] for a in theirs]  # untouched
+    assert other.live() == []
