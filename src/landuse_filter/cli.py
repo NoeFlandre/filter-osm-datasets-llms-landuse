@@ -314,6 +314,31 @@ def g5k_storage(sites: str = typer.Option(SITES)) -> None:
             typer.echo(f"{site}: unreachable ({exc})", err=True)
 
 
+store_app = typer.Typer(no_args_is_help=True, help="Mirror the work tree to a private HF Bucket.")
+app.add_typer(store_app, name="store")
+BUCKET = typer.Option("NoeFlandre/landuse-filter-work", help="Private Hugging Face Bucket id.")
+
+
+@store_app.command("push")
+def store_push(work: Path = WORK, bucket: str = BUCKET) -> None:
+    """Upload the local work tree (plans, chunks, parts, ledger, gates) to the bucket."""
+    from landuse_filter.adapters.store import Bucket
+
+    target = Bucket(bucket)
+    target.ensure()
+    target.push(_store(work))
+    typer.echo(f"pushed {work} -> hf://buckets/{bucket}")
+
+
+@store_app.command("pull")
+def store_pull(work: Path = WORK, bucket: str = BUCKET) -> None:
+    """Restore the work tree from the bucket (e.g. on a new controller machine)."""
+    from landuse_filter.adapters.store import Bucket
+
+    Bucket(bucket).pull(_store(work))
+    typer.echo(f"pulled hf://buckets/{bucket} -> {work}")
+
+
 @app.command()
 def publish(
     dataset: str = typer.Option(..., help="Input dataset name."),
