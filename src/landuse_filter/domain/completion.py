@@ -27,21 +27,25 @@ class Progress:
     foreign: tuple[str, ...]  # hashes found in parts but not in the chunk
 
 
+def _owners(wanted: set[str], parts: Iterable[Part]) -> tuple[dict[str, str], set[str]]:
+    owner: dict[str, str] = {}
+    foreign: set[str] = set()
+    for part in sorted(parts, key=lambda p: p.part_id):
+        for sha in part.text_sha256s:
+            if sha in wanted:
+                owner.setdefault(sha, part.part_id)
+            else:
+                foreign.add(sha)
+    return owner, foreign
+
+
 def progress(expected: Sequence[str], parts: Iterable[Part]) -> Progress:
     """Merge parts in any order, with duplicates, to one canonical view.
 
     The canonical result for a text is the one in the lexicographically smallest part
     id, so the merge is order-independent.
     """
-    wanted = set(expected)
-    owner: dict[str, str] = {}
-    foreign: set[str] = set()
-    for part in sorted(parts, key=lambda p: p.part_id):
-        for sha in part.text_sha256s:
-            if sha not in wanted:
-                foreign.add(sha)
-            else:
-                owner.setdefault(sha, part.part_id)
+    owner, foreign = _owners(set(expected), parts)
     missing = tuple(s for s in expected if s not in owner)
     state = State.COMPLETE if not missing else State.PARTIAL if owner else State.PENDING
     return Progress(state, missing, owner, tuple(sorted(foreign)))

@@ -39,6 +39,25 @@ def _blocked(state: Mapping, now: float, walltime_s: float) -> bool:
     )
 
 
+_USABLE = ("alive", "standby", None)
+
+
+def _node_gpus(state: Mapping, gpus_per_node: int, *, besteffort_counts: bool) -> int:
+    """Whole GPUs free on one node, from its CPU-slot accounting."""
+    freeable = state.get("freeable_slots", 0)
+    slots = state.get("free_slots", 0) + (freeable if besteffort_counts else 0)
+    all_slots = slots + state.get("busy_slots", 0) + (0 if besteffort_counts else freeable)
+    if all_slots <= 0:
+        return 0
+    return int(slots // (all_slots / gpus_per_node))
+
+
+def _usable(cluster: Cluster, host: str, state: Mapping, now: float, walltime_s: float) -> bool:
+    if not host.startswith(f"{cluster.name}-") or state.get("hard") not in _USABLE:
+        return False
+    return not (walltime_s and _blocked(state, now, walltime_s))
+
+
 def free_gpus(
     cluster: Cluster,
     nodes: Mapping[str, Mapping],
@@ -53,34 +72,32 @@ def free_gpus(
     are converted to whole GPUs; a node with a waiting reservation starting before
     ``now + walltime_s`` counts as full, since the scheduler keeps it for that job.
     """
-    total = 0
-    for host, state in nodes.items():
-        if not host.startswith(f"{cluster.name}-") or state.get("hard") not in (
-            "alive",
-            "standby",
-            None,
-        ):
-            continue
-        if walltime_s and _blocked(state, now, walltime_s):
-            continue
-        slots = state.get("free_slots", 0) + (
-            state.get("freeable_slots", 0) if besteffort_counts else 0
-        )
-        all_slots = (
-            slots
-            + state.get("busy_slots", 0)
-            + (0 if besteffort_counts else state.get("freeable_slots", 0))
-        )
-        if all_slots <= 0:
-            continue
-        per_gpu = all_slots / cluster.gpus_per_node
-        total += int(slots // per_gpu) if per_gpu else 0
-    return total
+    usable = [s for host, s in nodes.items() if _usable(cluster, host, s, now, walltime_s)]
+    return sum(
+        _node_gpus(s, cluster.gpus_per_node, besteffort_counts=besteffort_counts) for s in usable
+    )
 
 
 def walltime_text(walltime: timedelta) -> str:
     minutes = int(walltime.total_seconds() // 60)
     return f"{minutes // 60}:{minutes % 60:02d}"
+
+
+def _queue_and_types(cluster: Cluster, job_type: str | None, *, besteffort: bool) -> list[str]:
+    """Always name the queue: some sites route unqualified jobs elsewhere (regression:
+    Lyon rejected an unqualified sirius job with "queue 'abaca' does not exist")."""
+    if besteffort:
+        queue = ["-t", "besteffort"]
+    else:
+        queue = ["-q", "abaca" if cluster.production else "default"]
+    exotic = ["-t", "exotic"] if cluster.exotic else []
+    return queue + exotic + _job_type(cluster, job_type, besteffort=besteffort)
+
+
+def _job_type(cluster: Cluster, job_type: str | None, *, besteffort: bool) -> list[str]:
+    """``-t night``/``-t day`` only applies to the default queue."""
+    usable = job_type and not cluster.production and not besteffort
+    return ["-t", job_type] if usable and job_type else []
 
 
 def oarsub_arguments(  # noqa: PLR0913 - one parameter per OAR option
@@ -94,21 +111,7 @@ def oarsub_arguments(  # noqa: PLR0913 - one parameter per OAR option
     gpus: int = 1,
     log_dir: str = "luf/logs",
 ) -> list[str]:
-    args: list[str] = []
-    # Always name the queue: some sites route unqualified jobs elsewhere
-    # (regression: Lyon rejected an unqualified sirius job with "queue 'abaca' does not exist").
-    if besteffort:
-        pass
-    elif cluster.production:
-        args += ["-q", "abaca"]
-    else:
-        args += ["-q", "default"]
-    if besteffort:
-        args += ["-t", "besteffort"]
-    if cluster.exotic:
-        args += ["-t", "exotic"]
-    if job_type and not cluster.production and not besteffort:
-        args += ["-t", job_type]
+    args = _queue_and_types(cluster, job_type, besteffort=besteffort)
     args += [
         "-p",
         f"cluster='{cluster.name}'",

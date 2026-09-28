@@ -105,6 +105,17 @@ markers = [
 [tool.coverage.run]
 source = ["src/landuse_filter"]
 branch = true
+# Thin wrappers around SSH/OAR, SGLang, the Hub and the Hub-backed benchmark download:
+# exercised on Grid'5000 and by the integration suite, not by unit tests (docs/debt.md).
+omit = [
+    "src/landuse_filter/adapters/g5k.py",
+    "src/landuse_filter/adapters/engine.py",
+    "src/landuse_filter/adapters/hub.py",
+    "src/landuse_filter/adapters/tokenizer.py",
+    "src/landuse_filter/adapters/remote/*",
+    "src/landuse_filter/application/node_main.py",
+    "src/landuse_filter/cli.py",
+]
 
 [tool.coverage.report]
 show_missing = true

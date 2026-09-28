@@ -65,3 +65,12 @@ def test_stop_then_resume_redoes_only_missing(tmp_path):
     second = asyncio.run(runner(store, second_engine).run(["c1"]))
     assert second.chunks_done == ["c1"]
     assert second_engine.calls == 10 - done
+
+
+def test_decisions_from_parts(tmp_path):
+    from landuse_filter.application.results import decisions_by_sha
+
+    store = WorkStore(tmp_path)
+    chunk(store, n=3)
+    asyncio.run(runner(store, FakeEngine()).run(["c1"]))
+    assert set(decisions_by_sha(store, "fp").values()) == {"yes"}
