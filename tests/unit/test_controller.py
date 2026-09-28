@@ -434,3 +434,26 @@ def test_run_admission_passes_both_walltimes(monkeypatch, tmp_path):
         timedelta(minutes=20),
         timedelta(minutes=30),
     )
+
+
+def test_cpu_jobs_avoid_the_sagittaire_cluster(monkeypatch, tmp_path):
+    """Regression (Lyon jobs 2070898..2071001): every run on sagittaire-5 (ancient CPU)
+    died with 'Illegal instruction' or a full disk; the same code ran fine on taurus."""
+    from typer.testing import CliRunner
+
+    from landuse_filter.cli import g5k as cli
+
+    submitted = []
+    monkeypatch.setattr(g5k, "deploy_code", lambda *a, **k: "luf/code/x")
+    monkeypatch.setattr(g5k, "ssh", lambda *a, **k: "")
+    monkeypatch.setattr(g5k, "policy_check", lambda site: None)
+    monkeypatch.setattr(g5k, "submit", lambda site, args: submitted.append(args) or "1")
+    monkeypatch.setattr(ctl_mod, "commit", lambda: "abc")
+    monkeypatch.setattr(ctl_mod, "git_archive", lambda ref: b"")
+    result = CliRunner().invoke(
+        cli.g5k_app,
+        ["cpu-job", "plan", "--site", "lyon", "--dataset", "d", "--revision", "r"],
+    )
+    assert result.exit_code == 0, result.output
+    prop = submitted[0][submitted[0].index("-p") + 1]
+    assert prop == "gpu_count = 0 AND cluster != 'sagittaire'"

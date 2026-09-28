@@ -141,6 +141,10 @@ def g5k_run_admission(
     run_many(controllers, cache, interval=interval, emit=typer.echo)
 
 
+# sagittaire's ancient CPUs crash modern wheels (SIGILL) and its /tmp is tiny.
+CPU_JOB_PROPERTY = "gpu_count = 0 AND cluster != 'sagittaire'"
+
+
 @g5k_app.command("cpu-job")
 def g5k_cpu_job(
     mode: str = typer.Argument(..., help="plan or publish"),
@@ -175,7 +179,7 @@ def g5k_cpu_job(
         + (["-t", window.job_type] if window and window.job_type else [])
         + [
             "-p",
-            "gpu_count = 0",
+            CPU_JOB_PROPERTY,
             "-l",
             f"host=1,walltime={walltime_text(wall)}",
             "--checkpoint",
