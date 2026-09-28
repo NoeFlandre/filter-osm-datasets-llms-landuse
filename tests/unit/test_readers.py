@@ -65,3 +65,18 @@ def test_unknown_status_fails_loudly(tmp_path):
     )
     with pytest.raises(UnknownStatusError, match="brand_new_status"):
         list(read_wiki(path, "x"))
+
+
+def test_website_empty_text_yields_no_rows(tmp_path):
+    """Regression (planning job 2070649): an empty page has status 'empty_text'."""
+    cols = {"polygon_id": ["p"]}
+    for f in ("website", "contact_website"):
+        cols |= {
+            f"{f}_text": [""],
+            f"{f}_language": [None],
+            f"{f}_sentences": [None],
+            f"{f}_sentence_status": ["empty_text" if f == "website" else "absent"],
+        }
+    path = tmp_path / "w.parquet"
+    pq.write_table(pa.table(cols), path)
+    assert list(read_website(path, "polygons/x.parquet")) == []
