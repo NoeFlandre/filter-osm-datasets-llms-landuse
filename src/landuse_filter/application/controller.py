@@ -47,14 +47,15 @@ class Settings:
 def load_clusters(store: WorkStore) -> list[Cluster]:
     return [
         Cluster(c["site"], c["cluster"], c["gpu"], c["memory_mib"], tuple(c["compute_capability"]),
-                c["gpus_per_node"], c["nodes"], tuple(c["queues"]), c["exotic"], c.get("vendor", "Nvidia"))
+                c["gpus_per_node"], c["nodes"], tuple(c["queues"]), c["exotic"], c.get("vendor", "Nvidia"), c.get("arch", "x86_64"))
         for c in store.read_json("inventory.json")
     ]
 
 
 def eligible(cluster: Cluster) -> bool:
     spec = GpuSpec(cluster.gpu, cluster.compute_capability, cluster.memory_mib)
-    return cluster.vendor.lower() == "nvidia" and ineligibility(spec) is None
+    # SGLang/FlashInfer wheels are x86_64 only (excludes e.g. Lyon's GH200 nodes).
+    return cluster.vendor.lower() == "nvidia" and cluster.arch == "x86_64" and ineligibility(spec) is None
 
 
 def admission(store: WorkStore, gpu: str) -> Admission:

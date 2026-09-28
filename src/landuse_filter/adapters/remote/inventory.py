@@ -35,6 +35,7 @@ def cluster_summary(site, cluster):
         "nodes": len(gpu_nodes),
         "queues": node.get("supported_job_types", {}).get("queues", []),
         "exotic": bool(node.get("exotic")),
+        "arch": node.get("architecture", {}).get("platform_type", "x86_64"),
         "max_walltime": node.get("supported_job_types", {}).get("max_walltime"),
     }
 

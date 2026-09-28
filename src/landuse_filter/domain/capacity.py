@@ -17,6 +17,7 @@ class Cluster:
     queues: tuple[str, ...]
     exotic: bool
     vendor: str = "Nvidia"
+    arch: str = "x86_64"
 
     @property
     def production(self) -> bool:
