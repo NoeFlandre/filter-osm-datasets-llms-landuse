@@ -25,7 +25,7 @@ def plan(tmp_path, scratch_name, stop_after=None):
         "fp",
         files=FILES,
         fetch=lambda _: INPUTS / "website.parquet",
-        encode=lambda p: [len(p)],
+        encode=lambda ps: [[len(p)] for p in ps],
         template="S: {}",
         chunk_size=7,
         should_stop=stop,

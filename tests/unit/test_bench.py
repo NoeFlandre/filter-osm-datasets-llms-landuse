@@ -42,8 +42,8 @@ def test_plan_benchmark_is_idempotent_and_tracked_by_status(tmp_path):
     store = WorkStore(tmp_path)
     items = read_items(ROOT)
     kw = {"template": "S: {}", "fp": "fp", "chunk_size": 5}
-    n = plan_benchmark(store, items, lambda p: [len(p)], **kw)
-    assert plan_benchmark(store, items, lambda p: [len(p)], **kw) == n
+    n = plan_benchmark(store, items, lambda ps: [[len(p)] for p in ps], **kw)
+    assert plan_benchmark(store, items, lambda ps: [[len(p)] for p in ps], **kw) == n
     lines = store.read_jsonl("plans/benchmark/fp/chunks.jsonl")
     assert len(lines) == n
     assert sum(r["size"] for r in lines) == len({i.sentence for i in items})
