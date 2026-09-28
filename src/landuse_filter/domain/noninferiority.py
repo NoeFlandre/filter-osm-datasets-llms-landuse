@@ -81,14 +81,11 @@ def _by_language(items: Sequence[PairedItem]) -> Mapping[str, list[PairedItem]]:
     return dict(sorted(groups.items()))
 
 
-def evaluate_gate(
-    items: Sequence[PairedItem], *, resamples: int = RESAMPLES, seed: int = SEED
-) -> GateResult:
-    """Compare candidate to reference predictions on the same items."""
-    if not items:
-        raise ValueError("no paired items")
+def _deltas(
+    groups: Mapping[str, list[PairedItem]], resamples: int, seed: int
+) -> tuple[np.ndarray, np.ndarray, tuple[str, float]]:
+    """Macro point deltas, bootstrap deltas (4 x B) and the worst language by F1."""
     rng = np.random.default_rng(seed)
-    groups = _by_language(items)
     boot = np.zeros((4, resamples))
     point = np.zeros(4)
     worst = ("", np.inf)
@@ -96,30 +93,46 @@ def evaluate_gate(
         expected = np.array([g.expected == "yes" for g in group])
         ref = _codes(expected, [g.reference for g in group])
         cand = _codes(expected, [g.candidate for g in group])
-        n = len(group)
-        full = np.arange(n)[None, :]
+        full = np.arange(len(group))[None, :]
         delta = np.stack(_metrics(cand, full)) - np.stack(_metrics(ref, full))
         point += delta[:, 0]
         if delta[0, 0] < worst[1]:
             worst = (language, float(delta[0, 0]))
-        idx = rng.integers(0, n, size=(resamples, n))
+        idx = rng.integers(0, len(group), size=(resamples, len(group)))
         boot += np.stack(_metrics(cand, idx)) - np.stack(_metrics(ref, idx))
-    k = len(groups)
-    point, boot = point / k, boot / k
+    return point / len(groups), boot / len(groups), worst
+
+
+def _reasons(lower: np.ndarray, upper: np.ndarray, worst: tuple[str, float]) -> list[str]:
+    checks = [
+        (lower[0] <= -F1_MARGIN, f"macro-F1 lower bound {lower[0]:.4f} <= -{F1_MARGIN}"),
+        (lower[1] <= -MCC_MARGIN, f"macro-MCC lower bound {lower[1]:.4f} <= -{MCC_MARGIN}"),
+        (
+            lower[3] <= -ACCURACY_MARGIN,
+            f"macro-accuracy lower bound {lower[3]:.4f} <= -{ACCURACY_MARGIN}",
+        ),
+        (
+            upper[2] >= FAILED_RATE_MARGIN,
+            f"failed-rate upper bound {upper[2]:.4f} >= +{FAILED_RATE_MARGIN}",
+        ),
+        (
+            worst[1] < -LANGUAGE_F1_DROP,
+            f"language {worst[0]} F1 drop {worst[1]:.4f} > {LANGUAGE_F1_DROP}",
+        ),
+    ]
+    return [message for failed, message in checks if failed]
+
+
+def evaluate_gate(
+    items: Sequence[PairedItem], *, resamples: int = RESAMPLES, seed: int = SEED
+) -> GateResult:
+    """Compare candidate to reference predictions on the same items."""
+    if not items:
+        raise ValueError("no paired items")
+    point, boot, worst = _deltas(_by_language(items), resamples, seed)
     lower = np.quantile(boot, ALPHA, axis=1)
     upper = np.quantile(boot, 1 - ALPHA, axis=1)
-    agreement = sum(i.reference == i.candidate for i in items) / len(items)
-    reasons = []
-    if lower[0] <= -F1_MARGIN:
-        reasons.append(f"macro-F1 lower bound {lower[0]:.4f} <= -{F1_MARGIN}")
-    if lower[1] <= -MCC_MARGIN:
-        reasons.append(f"macro-MCC lower bound {lower[1]:.4f} <= -{MCC_MARGIN}")
-    if lower[3] <= -ACCURACY_MARGIN:
-        reasons.append(f"macro-accuracy lower bound {lower[3]:.4f} <= -{ACCURACY_MARGIN}")
-    if upper[2] >= FAILED_RATE_MARGIN:
-        reasons.append(f"failed-rate upper bound {upper[2]:.4f} >= +{FAILED_RATE_MARGIN}")
-    if worst[1] < -LANGUAGE_F1_DROP:
-        reasons.append(f"language {worst[0]} F1 drop {worst[1]:.4f} > {LANGUAGE_F1_DROP}")
+    reasons = _reasons(lower, upper, worst)
     return GateResult(
         passed=not reasons,
         delta_f1=float(point[0]),
@@ -130,7 +143,7 @@ def evaluate_gate(
         mcc_lower=float(lower[1]),
         accuracy_lower=float(lower[3]),
         failed_rate_upper=float(upper[2]),
-        agreement=agreement,
+        agreement=sum(i.reference == i.candidate for i in items) / len(items),
         worst_language=worst[0],
         worst_language_delta_f1=worst[1],
         reasons=tuple(reasons),

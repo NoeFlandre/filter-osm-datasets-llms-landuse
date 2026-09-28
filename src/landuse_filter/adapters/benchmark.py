@@ -57,6 +57,11 @@ def read_reference(root: Path) -> Iterator[ReferencePrediction]:
         language = path.parent.name
         for p in json.loads(path.read_text(encoding="utf-8"))["predictions"]:
             yield ReferencePrediction(
-                p["item_id"], language, p["expected"], p["predicted"],
-                int(p["generated_tokens"]), bool(p["truncated"]), p["raw_output"],
+                p["item_id"],
+                language,
+                p["expected"],
+                p["predicted"],
+                int(p["generated_tokens"]),
+                bool(p["truncated"]),
+                p["raw_output"],
             )

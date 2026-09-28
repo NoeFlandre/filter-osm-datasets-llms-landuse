@@ -9,7 +9,7 @@ job loses only requests that had not finished.
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -68,38 +68,46 @@ class Runner:
         table = self.store.read_chunk(chunk_id)
         expected = table.column("text_sha256").to_pylist()
         done = self.done_shas(chunk_id)
-        todo = [i for i, sha in enumerate(expected) if sha not in done]
+        todo = iter([i for i, sha in enumerate(expected) if sha not in done])
+        await self._stream(chunk_id, table, todo)
+        parts = [
+            Part(p.stem, tuple(self.store.read_part(p).column("text_sha256").to_pylist()))
+            for p in self.store.part_paths(self.fp, chunk_id)
+        ]
+        if not progress(expected, parts).missing:
+            self.stats.chunks_done.append(chunk_id)
+
+    async def _stream(self, chunk_id: str, table: pa.Table, todo: Iterator[int]) -> None:
+        """Keep up to ``window`` requests in flight; flush completions periodically."""
         buffer: list[Generation] = []
         last_flush = time.monotonic()
         pending: set[asyncio.Task] = set()
-        queue = iter(todo)
-
-        def admit() -> None:
-            while len(pending) < self.window and not self.should_stop():
-                i = next(queue, None)
-                if i is None:
-                    return
-                pending.add(asyncio.ensure_future(self._one(table, i)))
-
-        admit()
+        self._admit(pending, table, todo)
         while pending:
-            finished, _ = await asyncio.wait(pending, timeout=1.0, return_when=asyncio.FIRST_COMPLETED)
-            for task in finished:
-                pending.discard(task)
-                buffer.append(task.result())
+            finished, _ = await asyncio.wait(
+                pending, timeout=1.0, return_when=asyncio.FIRST_COMPLETED
+            )
+            pending -= finished
+            buffer.extend(task.result() for task in finished)
             if self.should_stop():
                 for task in pending:
                     task.cancel()
                 break
-            if len(buffer) >= self.flush_every or time.monotonic() - last_flush >= self.flush_seconds:
+            if (
+                len(buffer) >= self.flush_every
+                or time.monotonic() - last_flush >= self.flush_seconds
+            ):
                 self._flush(chunk_id, buffer)
                 buffer, last_flush = [], time.monotonic()
-            admit()
+            self._admit(pending, table, todo)
         self._flush(chunk_id, buffer)
-        parts = [Part(p.stem, tuple(self.store.read_part(p).column("text_sha256").to_pylist()))
-                 for p in self.store.part_paths(self.fp, chunk_id)]
-        if not progress(expected, parts).missing:
-            self.stats.chunks_done.append(chunk_id)
+
+    def _admit(self, pending: set[asyncio.Task], table: pa.Table, todo: Iterator[int]) -> None:
+        while len(pending) < self.window and not self.should_stop():
+            i = next(todo, None)
+            if i is None:
+                return
+            pending.add(asyncio.ensure_future(self._one(table, i)))
 
     async def _one(self, table: pa.Table, i: int) -> Generation:
         ids = table.column("input_ids")[i].as_py()

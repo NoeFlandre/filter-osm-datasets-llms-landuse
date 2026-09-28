@@ -23,6 +23,7 @@ OAR job id, code commit, timestamp.
 
 ```python
 import duckdb
+
 duckdb.sql("""
   SELECT l.*, g.raw_output
   FROM 'labels/polygons/*.parquet' l

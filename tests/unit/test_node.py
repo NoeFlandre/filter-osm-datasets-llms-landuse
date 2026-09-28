@@ -17,12 +17,21 @@ class FakeEngine:
     async def generate(self, input_ids):
         self.calls += 1
         await asyncio.sleep(0.001 * (input_ids[0] % 3))
-        return {"text": "think</think>yes", "meta_info": {"completion_tokens": 5, "finish_reason": {"type": "stop"}}}
+        return {
+            "text": "think</think>yes",
+            "meta_info": {"completion_tokens": 5, "finish_reason": {"type": "stop"}},
+        }
 
 
 def chunk(store, n=10):
     shas = [f"s{i:02d}" for i in range(n)]
-    store.write_chunk("c1", pa.table({"text_sha256": shas, "text": shas, "input_ids": [[i, 1] for i in range(n)]}, schema=CHUNK))
+    store.write_chunk(
+        "c1",
+        pa.table(
+            {"text_sha256": shas, "text": shas, "input_ids": [[i, 1] for i in range(n)]},
+            schema=CHUNK,
+        ),
+    )
     return shas
 
 

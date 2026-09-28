@@ -11,9 +11,25 @@ from landuse_filter.application import controller as ctl_mod
 from landuse_filter.application.controller import Controller, Settings
 
 NOW = datetime(2026, 9, 28, 22, 0, tzinfo=ZoneInfo("Europe/Paris"))
-GRES = {"site": "nancy", "cluster": "gres", "gpu": "L40S", "memory_mib": 46068, "compute_capability": [8, 9],
-        "gpus_per_node": 2, "nodes": 2, "queues": ["abaca", "production"], "exotic": False}
-FREE = {"gres-1.nancy.grid5000.fr": {"hard": "alive", "free_slots": 48, "freeable_slots": 0, "busy_slots": 0}}
+GRES = {
+    "site": "nancy",
+    "cluster": "gres",
+    "gpu": "L40S",
+    "memory_mib": 46068,
+    "compute_capability": [8, 9],
+    "gpus_per_node": 2,
+    "nodes": 2,
+    "queues": ["abaca", "production"],
+    "exotic": False,
+}
+FREE = {
+    "gres-1.nancy.grid5000.fr": {
+        "hard": "alive",
+        "free_slots": 48,
+        "freeable_slots": 0,
+        "busy_slots": 0,
+    }
+}
 
 
 class FakeG5K:
@@ -33,7 +49,9 @@ class FakeG5K:
             raise g5k.RemoteError(self.refuse)
         self.submitted.append(args)
         job_id = str(100 + len(self.submitted))
-        self.jobs[site].append(g5k.Job(site, job_id, args[args.index("-n") + 1], "Waiting", "abaca"))
+        self.jobs[site].append(
+            g5k.Job(site, job_id, args[args.index("-n") + 1], "Waiting", "abaca")
+        )
         return job_id
 
     def policy_check(self, site):
@@ -61,11 +79,21 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(ctl_mod, "commit", lambda: "abc")
     store = WorkStore(tmp_path)
     store.write_json("inventory.json", [GRES])
-    c = Controller(store, Settings(datasets=["benchmark"], sites=["nancy"], gpu_models=["l40s"]), log=lambda m: None)
+    c = Controller(
+        store,
+        Settings(datasets=["benchmark"], sites=["nancy"], gpu_models=["l40s"]),
+        log=lambda m: None,
+    )
     for i in range(3):
         cid = f"c{i}"
-        store.write_chunk(cid, pa.table({"text_sha256": [f"{cid}s"], "text": ["t"], "input_ids": [[1]]}, schema=CHUNK))
-        store.append_jsonl(f"plans/benchmark/{c.fp}/chunks.jsonl", [{"chunk_id": cid, "order": [0, 0], "size": 3000}])
+        store.write_chunk(
+            cid,
+            pa.table({"text_sha256": [f"{cid}s"], "text": ["t"], "input_ids": [[1]]}, schema=CHUNK),
+        )
+        store.append_jsonl(
+            f"plans/benchmark/{c.fp}/chunks.jsonl",
+            [{"chunk_id": cid, "order": [0, 0], "size": 3000}],
+        )
     return c, fake
 
 
@@ -139,7 +167,13 @@ def test_waiting_reservation_blocks_node():
     from landuse_filter.domain.capacity import Cluster, free_gpus
 
     gres = Cluster("nancy", "gres", "L40S", 46068, (8, 9), 2, 1, ("abaca",), exotic=False)
-    node = {"gres-1.x": {"hard": "alive", "free_slots": 48, "busy_slots": 0,
-                         "reservations": [{"state": "waiting", "scheduled_at": 1000}]}}
+    node = {
+        "gres-1.x": {
+            "hard": "alive",
+            "free_slots": 48,
+            "busy_slots": 0,
+            "reservations": [{"state": "waiting", "scheduled_at": 1000}],
+        }
+    }
     assert free_gpus(gres, node, besteffort_counts=False, now=0, walltime_s=3600) == 0
     assert free_gpus(gres, node, besteffort_counts=False, now=0, walltime_s=500) == 2

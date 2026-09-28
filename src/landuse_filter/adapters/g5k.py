@@ -29,12 +29,17 @@ def ssh(site: str, command: str, *, timeout: float = 120, stdin: bytes | None = 
     try:
         done = subprocess.run(
             ["ssh", *SSH_OPTIONS, site, command],
-            input=stdin, capture_output=True, timeout=timeout, check=False,
+            input=stdin,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
         )
     except subprocess.TimeoutExpired as exc:
         raise RemoteError(f"{site}: timed out: {command[:80]}") from exc
     if done.returncode != 0:
-        raise RemoteError(f"{site}: exit {done.returncode}: {done.stderr.decode(errors='replace')[-500:]}")
+        raise RemoteError(
+            f"{site}: exit {done.returncode}: {done.stderr.decode(errors='replace')[-500:]}"
+        )
     return done.stdout.decode()
 
 
@@ -93,10 +98,18 @@ def inventory(site: str, script: Path) -> list[dict]:
 def deploy_code(site: str, commit: str, archive: bytes) -> str:
     """Unpack a ``git archive`` of ``commit`` into ``~/luf/code/<commit>``; idempotent."""
     target = f"{REMOTE_ROOT}/code/{commit}"
-    ssh(site, f"test -f {target}/.complete || (rm -rf {target} && mkdir -p {target} && "
-              f"tar -x -C {target} && touch {target}/.complete)", stdin=archive, timeout=300)
-    ssh(site, "command -v uv >/dev/null || test -x ~/.local/bin/uv || "
-              "(curl -LsSf https://astral.sh/uv/install.sh | sh) >/dev/null 2>&1")
+    ssh(
+        site,
+        f"test -f {target}/.complete || (rm -rf {target} && mkdir -p {target} && "
+        f"tar -x -C {target} && touch {target}/.complete)",
+        stdin=archive,
+        timeout=300,
+    )
+    ssh(
+        site,
+        "command -v uv >/dev/null || test -x ~/.local/bin/uv || "
+        "(curl -LsSf https://astral.sh/uv/install.sh | sh) >/dev/null 2>&1",
+    )
     return target
 
 

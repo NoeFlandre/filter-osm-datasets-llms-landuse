@@ -13,14 +13,16 @@ SHUTDOWN_TIMEOUT = 120.0
 
 class SGLangEngine:
     def __init__(self, engine_kwargs: dict[str, Any], sampling: dict[str, Any]) -> None:
-        import sglang
+        import sglang  # ty: ignore[unresolved-import]  # the `gpu` extra, nodes only
 
         self._engine: Any = sglang.Engine(**engine_kwargs)
         self._sampling = dict(sampling)
         self.version = str(getattr(sglang, "__version__", "unknown"))
 
     async def generate(self, input_ids: list[int]) -> dict:
-        return await self._engine.async_generate(input_ids=input_ids, sampling_params=self._sampling)
+        return await self._engine.async_generate(
+            input_ids=input_ids, sampling_params=self._sampling
+        )
 
     def shutdown(self) -> None:
         self._engine.shutdown()
@@ -34,7 +36,13 @@ def gpu_names() -> list[str]:
     import subprocess
 
     out = subprocess.run(
-        ["nvidia-smi", "--query-gpu=name,memory.total,compute_cap", "--format=csv,noheader,nounits"],
-        capture_output=True, text=True, check=True,
+        [
+            "nvidia-smi",
+            "--query-gpu=name,memory.total,compute_cap",
+            "--format=csv,noheader,nounits",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout
     return [line.strip() for line in out.splitlines() if line.strip()]

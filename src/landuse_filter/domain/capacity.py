@@ -27,14 +27,20 @@ class Cluster:
 def _blocked(state: Mapping, now: float, walltime_s: float) -> bool:
     """A waiting reservation on the node starts before our job would end."""
     return any(
-        r.get("state") == "waiting" and r.get("scheduled_at") and r["scheduled_at"] < now + walltime_s
+        r.get("state") == "waiting"
+        and r.get("scheduled_at")
+        and r["scheduled_at"] < now + walltime_s
         for r in state.get("reservations", [])
     )
 
 
 def free_gpus(
-    cluster: Cluster, nodes: Mapping[str, Mapping], *, besteffort_counts: bool,
-    now: float = 0.0, walltime_s: float = 0.0,
+    cluster: Cluster,
+    nodes: Mapping[str, Mapping],
+    *,
+    besteffort_counts: bool,
+    now: float = 0.0,
+    walltime_s: float = 0.0,
 ) -> int:
     """GPUs we could hold *for the whole walltime* on ``cluster``.
 
@@ -44,12 +50,22 @@ def free_gpus(
     """
     total = 0
     for host, state in nodes.items():
-        if not host.startswith(f"{cluster.name}-") or state.get("hard") not in ("alive", "standby", None):
+        if not host.startswith(f"{cluster.name}-") or state.get("hard") not in (
+            "alive",
+            "standby",
+            None,
+        ):
             continue
         if walltime_s and _blocked(state, now, walltime_s):
             continue
-        slots = state.get("free_slots", 0) + (state.get("freeable_slots", 0) if besteffort_counts else 0)
-        all_slots = slots + state.get("busy_slots", 0) + (0 if besteffort_counts else state.get("freeable_slots", 0))
+        slots = state.get("free_slots", 0) + (
+            state.get("freeable_slots", 0) if besteffort_counts else 0
+        )
+        all_slots = (
+            slots
+            + state.get("busy_slots", 0)
+            + (0 if besteffort_counts else state.get("freeable_slots", 0))
+        )
         if all_slots <= 0:
             continue
         per_gpu = all_slots / cluster.gpus_per_node
@@ -62,9 +78,16 @@ def walltime_text(walltime: timedelta) -> str:
     return f"{minutes // 60}:{minutes % 60:02d}"
 
 
-def oarsub_arguments(
-    cluster: Cluster, walltime: timedelta, job_type: str | None, name: str, command: str,
-    *, besteffort: bool = False, gpus: int = 1, log_dir: str = "luf/logs",
+def oarsub_arguments(  # noqa: PLR0913 - one parameter per OAR option
+    cluster: Cluster,
+    walltime: timedelta,
+    job_type: str | None,
+    name: str,
+    *,
+    command: str,
+    besteffort: bool = False,
+    gpus: int = 1,
+    log_dir: str = "luf/logs",
 ) -> list[str]:
     args: list[str] = []
     if cluster.production and not besteffort:
@@ -76,12 +99,18 @@ def oarsub_arguments(
     if job_type and not cluster.production and not besteffort:
         args += ["-t", job_type]
     args += [
-        "-p", f"cluster='{cluster.name}'",
-        "-l", f"host=1/gpu={gpus},walltime={walltime_text(walltime)}",
-        "--checkpoint", "300",
-        "-n", name,
-        "-O", f"{log_dir}/%jobid%.out",
-        "-E", f"{log_dir}/%jobid%.err",
+        "-p",
+        f"cluster='{cluster.name}'",
+        "-l",
+        f"host=1/gpu={gpus},walltime={walltime_text(walltime)}",
+        "--checkpoint",
+        "300",
+        "-n",
+        name,
+        "-O",
+        f"{log_dir}/%jobid%.out",
+        "-E",
+        f"{log_dir}/%jobid%.err",
         command,
     ]
     return args

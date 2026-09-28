@@ -22,12 +22,20 @@ def simulate_budgets(
     rows = []
     for cap in caps:
         paired = [
-            PairedItem(r.language, r.expected, r.predicted,
-                       predicted_under_cap(Generated(r.predicted, r.generated_tokens), cap))
+            PairedItem(
+                r.language,
+                r.expected,
+                r.predicted,
+                predicted_under_cap(Generated(r.predicted, r.generated_tokens), cap),
+            )
             for r in reference
         ]
         generated = [Generated(r.predicted, r.generated_tokens) for r in reference]
-        rows.append(BudgetRow(cap, truncation_rate(generated, cap), evaluate_gate(paired, resamples=resamples)))
+        rows.append(
+            BudgetRow(
+                cap, truncation_rate(generated, cap), evaluate_gate(paired, resamples=resamples)
+            )
+        )
     return rows
 
 

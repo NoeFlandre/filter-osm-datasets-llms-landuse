@@ -56,18 +56,27 @@ def run(assignment_id: str) -> int:
         "oar_job_id": os.environ.get("OAR_JOB_ID", "local"),
         "assignment_id": assignment_id,
     }
-    runner = Runner(store, engine, assignment["fp"], provenance, window=assignment["window"],
-                    should_stop=stop)
+    runner = Runner(
+        store, engine, assignment["fp"], provenance, window=assignment["window"], should_stop=stop
+    )
     try:
         stats = asyncio.run(runner.run(assignment["chunks"]))
     finally:
         engine.shutdown()
-    store.write_json(f"jobs/{assignment['site']}/{provenance['oar_job_id']}.json", {
-        "assignment_id": assignment_id, "host": socket.gethostname(), "gpu": spec.model,
-        "gpu_key": gpu_key(spec.model), "load_seconds": round(load_seconds, 1),
-        "completed": stats.completed, "generated_tokens": stats.generated_tokens,
-        "sentences_per_second": round(stats.sentences_per_second, 3),
-        "chunks_done": stats.chunks_done, "stopped": stop.requested,
-    })
+    store.write_json(
+        f"jobs/{assignment['site']}/{provenance['oar_job_id']}.json",
+        {
+            "assignment_id": assignment_id,
+            "host": socket.gethostname(),
+            "gpu": spec.model,
+            "gpu_key": gpu_key(spec.model),
+            "load_seconds": round(load_seconds, 1),
+            "completed": stats.completed,
+            "generated_tokens": stats.generated_tokens,
+            "sentences_per_second": round(stats.sentences_per_second, 3),
+            "chunks_done": stats.chunks_done,
+            "stopped": stop.requested,
+        },
+    )
     print(f"luf: done {stats.completed} sentences, {stats.sentences_per_second:.2f}/s", flush=True)  # noqa: T201
     return 0

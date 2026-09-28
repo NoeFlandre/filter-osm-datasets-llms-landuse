@@ -68,7 +68,9 @@ def test_failing_hard_items_cannot_game_f1():
     reference answers raises them. The failed-rate guard must block that."""
     base = items(n=300)
     gamed = [
-        PairedItem(i.language, i.expected, i.reference, None if i.reference != i.expected else i.candidate)
+        PairedItem(
+            i.language, i.expected, i.reference, None if i.reference != i.expected else i.candidate
+        )
         for i in base
     ]
     result = evaluate_gate(gamed, resamples=300)
@@ -81,7 +83,12 @@ def test_failing_hard_items_cannot_game_f1():
 def test_failing_correct_items_is_caught_by_accuracy():
     base = items(n=300)
     worse = [
-        PairedItem(i.language, i.expected, i.reference, None if k % 12 == 0 and i.reference == i.expected else i.candidate)
+        PairedItem(
+            i.language,
+            i.expected,
+            i.reference,
+            None if k % 12 == 0 and i.reference == i.expected else i.candidate,
+        )
         for k, i in enumerate(base)
     ]
     result = evaluate_gate(worse, resamples=300)

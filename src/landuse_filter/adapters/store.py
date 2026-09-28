@@ -128,10 +128,14 @@ class Bucket:
     def push(self, store: WorkStore, prefix: str = "") -> None:
         from huggingface_hub import HfApi
 
-        HfApi().sync_bucket(str(store.path(prefix)), f"hf://buckets/{self.bucket_id}/{prefix}", quiet=True)
+        HfApi().sync_bucket(
+            str(store.path(prefix)), f"hf://buckets/{self.bucket_id}/{prefix}", quiet=True
+        )
 
     def pull(self, store: WorkStore, prefix: str = "") -> None:
         from huggingface_hub import HfApi
 
         store.path(prefix).mkdir(parents=True, exist_ok=True)
-        HfApi().sync_bucket(f"hf://buckets/{self.bucket_id}/{prefix}", str(store.path(prefix)), quiet=True)
+        HfApi().sync_bucket(
+            f"hf://buckets/{self.bucket_id}/{prefix}", str(store.path(prefix)), quiet=True
+        )

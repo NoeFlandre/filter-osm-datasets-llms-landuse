@@ -11,10 +11,15 @@ import sys
 import time
 from datetime import timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
 
 from landuse_filter import __version__
+
+if TYPE_CHECKING:
+    from landuse_filter.adapters.store import WorkStore
+    from landuse_filter.application.controller import Controller, Settings
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help=__doc__)
 bench_app = typer.Typer(no_args_is_help=True, help="Benchmark parity: plan, budget, compare, gate.")
@@ -29,7 +34,7 @@ WORK = typer.Option(Path(os.environ.get("LUF_WORK", "work")), "--work", help="Lo
 JSON_OUT = typer.Option(False, "--json", help="Machine-readable output.")
 
 
-def _store(work: Path):
+def _store(work: Path) -> "WorkStore":
     from landuse_filter.adapters.store import WorkStore
 
     return WorkStore(work)
@@ -64,7 +69,9 @@ def fingerprint(as_json: bool = JSON_OUT) -> None:
     """Show the production generation fingerprint and serving config."""
     from landuse_filter import config
 
-    _emit({"config_fingerprint": config.GENERATION_FP, "config": config.reference_config()}, as_json)
+    _emit(
+        {"config_fingerprint": config.GENERATION_FP, "config": config.reference_config()}, as_json
+    )
 
 
 @app.command()
@@ -118,7 +125,14 @@ def bench_plan(work: Path = WORK, chunk_size: int = typer.Option(500, min=1)) ->
 
     items = read_items(_bench_root(work))
     encode = chat_encoder(config.MODEL_ID, config.MODEL_REVISION)
-    n = plan_benchmark(_store(work), items, encode, _template(), config.GENERATION_FP, chunk_size)
+    n = plan_benchmark(
+        _store(work),
+        items,
+        encode,
+        template=_template(),
+        fp=config.GENERATION_FP,
+        chunk_size=chunk_size,
+    )
     typer.echo(f"{len(items)} items -> {n} chunks")
 
 
@@ -167,8 +181,15 @@ def bench_compare(
     gate = compare(reference, candidate, resamples)
     from landuse_filter.adapters.benchmark import ReferencePrediction
 
-    ours = [ReferencePrediction(r.item_id, r.language, r.expected, candidate[r.item_id], 0, False, "") for r in reference]
-    payload = {"gate": asdict(gate), "ours": macro_scores(ours), "reference": macro_scores(reference)}
+    ours = [
+        ReferencePrediction(r.item_id, r.language, r.expected, candidate[r.item_id], 0, False, "")
+        for r in reference
+    ]
+    payload = {
+        "gate": asdict(gate),
+        "ours": macro_scores(ours),
+        "reference": macro_scores(reference),
+    }
     store.write_json(f"gates/{label}.json", payload)
     _emit(payload, as_json)
     if not gate.passed:
@@ -179,7 +200,9 @@ def bench_compare(
 
 
 @node_app.command("run")
-def node_run(assignment: str = typer.Option(..., help="Assignment id in $LUF_WORK/assignments.")) -> None:
+def node_run(
+    assignment: str = typer.Option(..., help="Assignment id in $LUF_WORK/assignments."),
+) -> None:
     """Run an assignment on this node's GPU (called by scripts/node_job.sh)."""
     from landuse_filter.application.node_main import run
 
@@ -191,15 +214,16 @@ def node_run(assignment: str = typer.Option(..., help="Assignment id in $LUF_WOR
 SITES = "grenoble,lille,lyon,nancy,rennes,sophia,toulouse,luxembourg"
 
 
-def _controller(work: Path, datasets: str, sites: str, **kw):
-    from landuse_filter.application.controller import Controller, Settings
+def _controller(work: Path, settings: "Settings") -> "Controller":
+    from landuse_filter.application.controller import Controller
 
-    settings = Settings(datasets=datasets.split(","), sites=sites.split(","), **kw)
     return Controller(_store(work), settings, log=lambda m: typer.echo(m, err=True))
 
 
 @g5k_app.command("inventory")
-def g5k_inventory(work: Path = WORK, site: str = typer.Option("nancy", help="Frontend to query from.")) -> None:
+def g5k_inventory(
+    work: Path = WORK, site: str = typer.Option("nancy", help="Frontend to query from.")
+) -> None:
     """Refresh the GPU cluster inventory of all sites (Reference API)."""
     from landuse_filter.adapters import g5k
     from landuse_filter.application.controller import admission, eligible, load_clusters
@@ -209,16 +233,23 @@ def g5k_inventory(work: Path = WORK, site: str = typer.Option("nancy", help="Fro
     store.write_json("inventory.json", g5k.inventory(site, script))
     for c in load_clusters(store):
         if eligible(c):
-            typer.echo(f"{c.site:10} {c.name:12} {c.gpu:32} {c.gpus_per_node}x{c.nodes:<3} "
-                       f"{'abaca' if c.production else 'default'}{' exotic' if c.exotic else ''}  {admission(store, c.gpu).value}")
+            typer.echo(
+                f"{c.site:10} {c.name:12} {c.gpu:32} {c.gpus_per_node}x{c.nodes:<3} "
+                f"{'abaca' if c.production else 'default'}{' exotic' if c.exotic else ''}  "
+                f"{admission(store, c.gpu).value}"
+            )
 
 
 @g5k_app.command("run")
 def g5k_run(
-    datasets: str = typer.Option(..., help="Comma-separated, in priority order (benchmark first for parity)."),
+    datasets: str = typer.Option(
+        ..., help="Comma-separated, in priority order (benchmark first for parity)."
+    ),
     work: Path = WORK,
     sites: str = typer.Option(SITES),
-    gpu_models: str = typer.Option("", help="Comma-separated gpu keys to allow (default: admitted models)."),
+    gpu_models: str = typer.Option(
+        "", help="Comma-separated gpu keys to allow (default: admitted models)."
+    ),
     max_jobs: int = typer.Option(12),
     max_jobs_per_site: int = typer.Option(4),
     walltime_minutes: int = typer.Option(60),
@@ -227,9 +258,18 @@ def g5k_run(
     once: bool = typer.Option(False, help="Run a single cycle and exit."),
 ) -> None:
     """The controller loop: reconcile, pull results, submit where GPUs are free now."""
-    ctl = _controller(work, datasets, sites, max_jobs_total=max_jobs, max_jobs_per_site=max_jobs_per_site,
-                      walltime=timedelta(minutes=walltime_minutes), besteffort=besteffort,
-                      gpu_models=[g for g in gpu_models.split(",") if g])
+    from landuse_filter.application.controller import Settings
+
+    settings = Settings(
+        datasets=datasets.split(","),
+        sites=sites.split(","),
+        max_jobs_total=max_jobs,
+        max_jobs_per_site=max_jobs_per_site,
+        walltime=timedelta(minutes=walltime_minutes),
+        besteffort=besteffort,
+        gpu_models=[g for g in gpu_models.split(",") if g],
+    )
+    ctl = _controller(work, settings)
     while True:
         if ctl.store.exists("PAUSED"):
             ctl.settings.paused = True
@@ -241,13 +281,18 @@ def g5k_run(
 
 
 @g5k_app.command("pause")
-def g5k_pause(work: Path = WORK, cancel: bool = typer.Option(False, help="Also oardel our live jobs.")) -> None:
+def g5k_pause(
+    work: Path = WORK, cancel: bool = typer.Option(False, help="Also oardel our live jobs.")
+) -> None:
     """Stop submitting new jobs (running jobs drain unless --cancel)."""
     store = _store(work)
     store.path("PAUSED").parent.mkdir(parents=True, exist_ok=True)
     store.path("PAUSED").write_text("paused\n")
     if cancel:
-        ctl = _controller(work, "benchmark", SITES)
+        from landuse_filter.application.controller import Settings
+
+        sites: list[str] = SITES.split(",")
+        ctl = _controller(work, Settings(datasets=[], sites=sites))
         typer.echo("\n".join(ctl.cancel_all()) or "no live jobs")
 
 
@@ -270,7 +315,9 @@ def g5k_storage(sites: str = typer.Option(SITES)) -> None:
 
 
 @app.command()
-def status(work: Path = WORK, datasets: str = typer.Option("benchmark"), as_json: bool = JSON_OUT) -> None:
+def status(
+    work: Path = WORK, datasets: str = typer.Option("benchmark"), as_json: bool = JSON_OUT
+) -> None:
     """Progress per dataset: chunks complete / pending, live assignments, throughput."""
     from landuse_filter.application.status import summarize
 

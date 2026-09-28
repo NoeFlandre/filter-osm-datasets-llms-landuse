@@ -65,11 +65,15 @@ class Planner:
 
     def register(self, files: Sequence[str]) -> None:
         with self.db:
-            self.db.executemany("INSERT OR IGNORE INTO files (idx, path) VALUES (?, ?)", list(enumerate(files)))
+            self.db.executemany(
+                "INSERT OR IGNORE INTO files (idx, path) VALUES (?, ?)", list(enumerate(files))
+            )
 
     def scan(self, fetch: Callable[[str], Path], limit: int | None = None) -> int:
         """Read pending files in order, recording unique texts; returns files scanned."""
-        pending = self.db.execute("SELECT idx, path FROM files WHERE done = 0 ORDER BY idx").fetchall()
+        pending = self.db.execute(
+            "SELECT idx, path FROM files WHERE done = 0 ORDER BY idx"
+        ).fetchall()
         batch = pending[:limit] if limit else pending
         for idx, path in batch:
             self._scan_file(idx, path, fetch(path))
@@ -83,13 +87,20 @@ class Planner:
                 if ref.unsplit:
                     unsplit += 1
                     continue
-                cur = self.db.execute("INSERT OR IGNORE INTO texts (sha, text, file_idx) VALUES (?, ?, ?)",
-                                      (ref.text_sha256, ref.text, idx))
+                cur = self.db.execute(
+                    "INSERT OR IGNORE INTO texts (sha, text, file_idx) VALUES (?, ?, ?)",
+                    (ref.text_sha256, ref.text, idx),
+                )
                 new += cur.rowcount
-            self.db.execute("UPDATE files SET done = 1, sentences = ?, unsplit = ?, new_unique = ? WHERE idx = ?",
-                            (sentences, unsplit, new, idx))
+            self.db.execute(
+                "UPDATE files SET done = 1, sentences = ?, unsplit = ?, new_unique = ? "
+                "WHERE idx = ?",
+                (sentences, unsplit, new, idx),
+            )
 
-    def emit(self, encode: Callable[[str], list[int]], template: str, chunk_size: int, *, final: bool) -> int:
+    def emit(
+        self, encode: Callable[[str], list[int]], template: str, chunk_size: int, *, final: bool
+    ) -> int:
         """Turn pending texts of scanned files into chunks; partial tail only if ``final``."""
         boundary = self.db.execute("SELECT MIN(idx) FROM files WHERE done = 0").fetchone()[0]
         query = "SELECT sha, text, file_idx FROM texts WHERE chunk_id IS NULL"
@@ -101,30 +112,49 @@ class Planner:
         usable = len(rows) if final else len(rows) - len(rows) % chunk_size
         emitted = 0
         for start in range(0, usable, chunk_size):
-            emitted += self._emit_group(rows[start : start + chunk_size], encode, template, chunk_size)
+            emitted += self._emit_group(
+                rows[start : start + chunk_size], encode, template, chunk_size
+            )
         return emitted
 
-    def _emit_group(self, rows: list, encode: Callable[[str], list[int]], template: str, chunk_size: int) -> int:
+    def _emit_group(
+        self, rows: list, encode: Callable[[str], list[int]], template: str, chunk_size: int
+    ) -> int:
         ids = {sha: encode(render_prompt(template, text)) for sha, text, _ in rows}
         rank = DATASET_RANK[self.source.dataset]
         texts = [UniqueText(sha, len(ids[sha]), (rank, idx)) for sha, _, idx in rows]
         (chunk,) = plan_chunks(texts, self.fp, chunk_size)
         text_of = {sha: text for sha, text, _ in rows}
-        table = pa.table({
-            "text_sha256": list(chunk.text_sha256s),
-            "text": [text_of[s] for s in chunk.text_sha256s],
-            "input_ids": [ids[s] for s in chunk.text_sha256s],
-        }, schema=CHUNK)
+        table = pa.table(
+            {
+                "text_sha256": list(chunk.text_sha256s),
+                "text": [text_of[s] for s in chunk.text_sha256s],
+                "input_ids": [ids[s] for s in chunk.text_sha256s],
+            },
+            schema=CHUNK,
+        )
         self.store.write_chunk(chunk.chunk_id, table)
-        self.store.append_jsonl(f"plans/{self.source.dataset}/{self.fp}/chunks.jsonl", [{
-            "chunk_id": chunk.chunk_id, "order": list(chunk.order), "size": len(rows),
-            "prompt_tokens": sum(t.prompt_tokens for t in texts),
-        }])
+        self.store.append_jsonl(
+            f"plans/{self.source.dataset}/{self.fp}/chunks.jsonl",
+            [
+                {
+                    "chunk_id": chunk.chunk_id,
+                    "order": list(chunk.order),
+                    "size": len(rows),
+                    "prompt_tokens": sum(t.prompt_tokens for t in texts),
+                }
+            ],
+        )
         with self.db:
-            self.db.executemany("UPDATE texts SET chunk_id = ? WHERE sha = ?", [(chunk.chunk_id, s) for s, _, _ in rows])
+            self.db.executemany(
+                "UPDATE texts SET chunk_id = ? WHERE sha = ?",
+                [(chunk.chunk_id, s) for s, _, _ in rows],
+            )
         return 1
 
     def report(self) -> PlanReport:
-        f = self.db.execute("SELECT COUNT(*), SUM(done), SUM(sentences), SUM(unsplit) FROM files").fetchone()
+        f = self.db.execute(
+            "SELECT COUNT(*), SUM(done), SUM(sentences), SUM(unsplit) FROM files"
+        ).fetchone()
         t = self.db.execute("SELECT COUNT(*), COUNT(DISTINCT chunk_id) FROM texts").fetchone()
         return PlanReport(f[1] or 0, f[0], f[2] or 0, f[3] or 0, t[0], t[1])
