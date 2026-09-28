@@ -24,12 +24,29 @@ class Cluster:
         return "production" in self.queues or "abaca" in self.queues
 
 
-def free_gpus(cluster: Cluster, nodes: Mapping[str, Mapping], *, besteffort_counts: bool) -> int:
-    """GPUs we could get *now* on ``cluster``: free slots (plus besteffort-held ones,
-    which a regular job preempts) converted to whole GPUs per node."""
+def _blocked(state: Mapping, now: float, walltime_s: float) -> bool:
+    """A waiting reservation on the node starts before our job would end."""
+    return any(
+        r.get("state") == "waiting" and r.get("scheduled_at") and r["scheduled_at"] < now + walltime_s
+        for r in state.get("reservations", [])
+    )
+
+
+def free_gpus(
+    cluster: Cluster, nodes: Mapping[str, Mapping], *, besteffort_counts: bool,
+    now: float = 0.0, walltime_s: float = 0.0,
+) -> int:
+    """GPUs we could hold *for the whole walltime* on ``cluster``.
+
+    Free slots (plus besteffort-held ones, which a regular job with priority preempts)
+    are converted to whole GPUs; a node with a waiting reservation starting before
+    ``now + walltime_s`` counts as full, since the scheduler keeps it for that job.
+    """
     total = 0
     for host, state in nodes.items():
         if not host.startswith(f"{cluster.name}-") or state.get("hard") not in ("alive", "standby", None):
+            continue
+        if walltime_s and _blocked(state, now, walltime_s):
             continue
         slots = state.get("free_slots", 0) + (state.get("freeable_slots", 0) if besteffort_counts else 0)
         all_slots = slots + state.get("busy_slots", 0) + (0 if besteffort_counts else state.get("freeable_slots", 0))

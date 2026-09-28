@@ -1,0 +1,20 @@
+site_name: OSM land-use relevance labels
+repo_url: https://github.com/NoeFlandre/filter-osm-datasets-llms-landuse
+theme:
+  name: material
+nav:
+  - Overview: index.md
+  - Output schema: schema.md
+  - Benchmark parity: benchmark.md
+  - Grid'5000: grid5000.md
+  - Known weaknesses: debt.md
+  - Decisions:
+      - adr/0001-sentence-unit.md
+      - adr/0002-separate-label-tables.md
+      - adr/0003-decision-vocabulary.md
+      - adr/0004-thinking-only.md
+      - adr/0005-content-addressed-dedup.md
+      - adr/0006-noninferiority-gate.md
+      - adr/0007-single-writer-controller.md
+      - adr/0008-node-runtime.md
+      - adr/0009-work-store.md

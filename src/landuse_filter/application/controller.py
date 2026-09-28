@@ -27,7 +27,12 @@ from landuse_filter.domain.prompting import PROMPT_SHA256
 from landuse_filter.domain.scheduling import Slot, assign_chunks, rank_slots
 
 PARIS = ZoneInfo("Europe/Paris")
+# oarsub's refusal when the account has no Abaca priority on a cluster.
+BESTEFFORT_ONLY = "only access the required resources in besteffort"
 SETUP = timedelta(minutes=8)
+LATE_START = timedelta(minutes=15)
+BACKOFF = timedelta(minutes=30)
+POST_SUBMIT_WAIT = 20.0
 
 
 @dataclass
@@ -79,6 +84,7 @@ class Controller:
         self.log = log
         self.cfg = config.reference_config()
         self.fp = config_fingerprint(self.cfg)
+        self.now = datetime.now(PARIS)
 
     # --- ledger -------------------------------------------------------------------
 
@@ -135,6 +141,7 @@ class Controller:
 
     def cycle(self, now: datetime | None = None) -> dict[str, Any]:
         now = now or datetime.now(PARIS)
+        self.now = now
         jobs = self.reconcile()
         self.pull()
         pending = self.pending_chunks()
@@ -179,7 +186,7 @@ class Controller:
         out = []
         clusters = [c for c in load_clusters(self.store) if c.site in self.settings.sites and eligible(c)]
         for site in self.settings.sites:
-            site_clusters = [c for c in clusters if c.site == site and self.allowed_gpu(c.gpu)]
+            site_clusters = [c for c in clusters if c.site == site and self.allowed_gpu(c.gpu) and self.accessible(c)]
             if not site_clusters or len(jobs.get(site, [])) >= self.settings.max_jobs_per_site:
                 continue
             try:
@@ -190,7 +197,10 @@ class Controller:
             for c in site_clusters:
                 window = allowed_window(now, starts_now=True) if not c.production else None
                 wall, job_type = self.walltime_for(c, window)
-                free = free_gpus(c, nodes, besteffort_counts=not self.settings.besteffort)
+                if self.backed_off(c, now):
+                    continue
+                free = free_gpus(c, nodes, besteffort_counts=False, now=now.timestamp(),
+                                 walltime_s=wall.total_seconds() if wall else 0.0)
                 if free <= 0 or wall is None:
                     continue
                 prof = profile_for(self.store, c.gpu)
@@ -198,6 +208,28 @@ class Controller:
         ranked = rank_slots([s for s, _ in out], SETUP)
         by_key = {(s.site, s.cluster): c for s, c in out}
         return [(s, by_key[(s.site, s.cluster)]) for s in ranked]
+
+    def starts_soon(self, site: str, job_id: str) -> bool:
+        """OAR is the oracle: a job predicted to start > LATE_START from now is not a free slot."""
+        import time
+
+        time.sleep(POST_SUBMIT_WAIT)
+        state, start = g5k.scheduled_start(site, job_id)
+        if state in ("Running", "Launching", "toLaunch", "Finishing", "Terminated"):
+            return True
+        return start is not None and start - time.time() <= LATE_START.total_seconds()
+
+    def back_off(self, cluster: Cluster) -> None:
+        self.store.write_json(f"backoff/{cluster.site}_{cluster.name}.json",
+                              {"until": (self.now + BACKOFF).isoformat()})
+
+    def backed_off(self, cluster: Cluster, now: datetime) -> bool:
+        path = f"backoff/{cluster.site}_{cluster.name}.json"
+        return self.store.exists(path) and datetime.fromisoformat(self.store.read_json(path)["until"]) > now
+
+    def accessible(self, cluster: Cluster) -> bool:
+        """False for clusters that only admit us in besteffort, unless besteffort is on."""
+        return self.settings.besteffort or not self.store.exists(f"access/{cluster.site}_{cluster.name}.json")
 
     def allowed_gpu(self, gpu: str) -> bool:
         if self.settings.gpu_models:
@@ -227,11 +259,12 @@ class Controller:
                 if not chunks:
                     return submitted
                 job_id = self.launch(slot, cluster, chunks, code_commit)
-                if job_id:
-                    taken.update(chunks)
-                    total += 1
-                    per_site[slot.site] = per_site.get(slot.site, 0) + 1
-                    submitted.append(f"{slot.site}/{cluster.name}:{job_id}")
+                if not job_id:
+                    break  # this slot refused us; try the next cluster
+                taken.update(chunks)
+                total += 1
+                per_site[slot.site] = per_site.get(slot.site, 0) + 1
+                submitted.append(f"{slot.site}/{cluster.name}:{job_id}")
         return submitted
 
     def assignment(self, slot: Slot, chunks: list[str], code_commit: str) -> dict:
@@ -265,12 +298,22 @@ class Controller:
                                     besteffort=self.settings.besteffort)
             a["job_id"] = g5k.submit(site, args)
             a["state"] = "submitted"
+            self.store.write_json(f"assignments/{a['id']}.json", a)
+            if not self.starts_soon(site, a["job_id"]):
+                g5k.cancel(site, a["job_id"])
+                a["state"] = "cancelled_late_start"
+                self.store.write_json(f"assignments/{a['id']}.json", a)
+                self.back_off(cluster)
+                self.log(f"{site}/{cluster.name}: job {a['job_id']} would start late; cancelled, backing off")
+                return None
             a["submitted_at"] = datetime.now(PARIS).isoformat(timespec="seconds")
             self.store.write_json(f"assignments/{a['id']}.json", a)
             g5k.policy_check(site)
             self.log(f"submitted {a['name']} on {site}/{cluster.name} ({len(chunks)} chunks): job {a['job_id']}")
             return a["job_id"]
         except g5k.RemoteError as exc:
+            if BESTEFFORT_ONLY in str(exc):
+                self.store.write_json(f"access/{site}_{cluster.name}.json", {"besteffort_only": True})
             a["state"] = "failed_submit"
             a["error"] = str(exc)[-500:]
             self.store.write_json(f"assignments/{a['id']}.json", a)

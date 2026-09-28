@@ -70,12 +70,19 @@ def submit(site: str, arguments: list[str]) -> str:
     return match.group(1)
 
 
+def scheduled_start(site: str, job_id: str) -> tuple[str, int | None]:
+    """(state, predicted start epoch) of one of our jobs."""
+    payload = json.loads(ssh(site, f"oarstat -j {int(job_id)} -J") or "{}")
+    job = next(iter(payload.values()), {})
+    return job.get("state", "Unknown"), job.get("scheduled_start") or job.get("start_time")
+
+
 def cancel(site: str, job_id: str) -> None:
     ssh(site, f"oardel {int(job_id)}")
 
 
 def site_status(site: str) -> dict:
-    url = f"https://api.grid5000.fr/stable/sites/{site}/status?disks=no&job_details=no&waiting=no"
+    url = f"https://api.grid5000.fr/stable/sites/{site}/status?disks=no&job_details=yes&waiting=yes"
     return json.loads(ssh(site, f"curl -sf {shlex.quote(url)}"))
 
 

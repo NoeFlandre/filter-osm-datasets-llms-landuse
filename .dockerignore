@@ -1,0 +1,6 @@
+.venv
+work
+.git
+*.pyc
+mutants
+site
