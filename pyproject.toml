@@ -90,6 +90,8 @@ ban-relative-imports = "all"
 "src/landuse_filter/adapters/remote/*" = ["T201", "S310", "ANN"]
 # Use cases import optional runtimes lazily and shell out to git for the code commit.
 "src/landuse_filter/application/*" = ["PLC0415", "S603", "S607"]
+# The card is Markdown that shows an example DuckDB recipe; nothing is executed.
+"src/landuse_filter/application/card.py" = ["S608"]
 # Typer maps flags to boolean parameters; a command's parameters are its interface.
 "src/landuse_filter/cli.py" = ["PLC0415", "PLR0913", "PLR0917", "FBT001", "FBT002", "FBT003", "B008"]
 
