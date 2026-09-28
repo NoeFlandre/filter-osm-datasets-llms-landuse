@@ -107,12 +107,10 @@ markers = [
 [tool.coverage.run]
 source = ["src/landuse_filter"]
 branch = true
-# Thin wrappers around SSH/OAR, SGLang, the Hub and the Hub-backed benchmark download:
-# exercised on Grid'5000 and by the integration suite, not by unit tests (docs/debt.md).
+# Need a GPU (SGLang), the real tokenizer, or a node: exercised on Grid'5000 and by the
+# integration suite. SSH/OAR, the Hub and the bucket are unit-tested with fakes.
 omit = [
-    "src/landuse_filter/adapters/g5k.py",
     "src/landuse_filter/adapters/engine.py",
-    "src/landuse_filter/adapters/hub.py",
     "src/landuse_filter/adapters/tokenizer.py",
     "src/landuse_filter/adapters/remote/*",
     "src/landuse_filter/application/node_main.py",
