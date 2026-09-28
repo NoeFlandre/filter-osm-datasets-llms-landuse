@@ -9,8 +9,8 @@ from landuse_filter.application.plan import Planner
 INPUTS = Path(__file__).parents[1] / "fixtures" / "inputs"
 
 
-def encode(prompt):
-    return [len(w) for w in prompt.split()]
+def encode(prompts):
+    return [[len(w) for w in p.split()] for p in prompts]
 
 
 def planner(tmp_path):

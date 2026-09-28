@@ -12,7 +12,7 @@ from pathlib import Path
 
 from landuse_filter.adapters.remote import Remote
 from landuse_filter.adapters.store import WorkStore
-from landuse_filter.application.plan import Planner
+from landuse_filter.application.plan import Encode, Planner
 
 CHECKPOINT_SECONDS = 900.0
 
@@ -55,7 +55,7 @@ def run_plan(  # noqa: PLR0913 - one use case, explicit collaborators
     *,
     files: list[str],
     fetch: Callable[[str], Path],
-    encode: Callable[[str], list[int]],
+    encode: Encode,
     template: str,
     chunk_size: int,
     should_stop: Callable[[], bool],

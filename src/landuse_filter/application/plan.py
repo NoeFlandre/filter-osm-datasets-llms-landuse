@@ -22,6 +22,9 @@ from landuse_filter.adapters.store import WorkStore
 from landuse_filter.domain.planning import UniqueText, plan_chunks
 from landuse_filter.domain.prompting import render_prompt
 
+# Batch tokeniser: prompts -> token ids, same order (fast path, see adapters.tokenizer).
+Encode = Callable[[list[str]], list[list[int]]]
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (idx INTEGER PRIMARY KEY, path TEXT UNIQUE, done INTEGER DEFAULT 0,
     sentences INTEGER, unsplit INTEGER, new_unique INTEGER);
@@ -98,9 +101,7 @@ class Planner:
                 (sentences, unsplit, new, idx),
             )
 
-    def emit(
-        self, encode: Callable[[str], list[int]], template: str, chunk_size: int, *, final: bool
-    ) -> int:
+    def emit(self, encode: Encode, template: str, chunk_size: int, *, final: bool) -> int:
         """Turn pending texts of scanned files into chunks; partial tail only if ``final``."""
         boundary = self.db.execute("SELECT MIN(idx) FROM files WHERE done = 0").fetchone()[0]
         query = "SELECT sha, text, file_idx FROM texts WHERE chunk_id IS NULL"
@@ -117,10 +118,9 @@ class Planner:
             )
         return emitted
 
-    def _emit_group(
-        self, rows: list, encode: Callable[[str], list[int]], template: str, chunk_size: int
-    ) -> int:
-        ids = {sha: encode(render_prompt(template, text)) for sha, text, _ in rows}
+    def _emit_group(self, rows: list, encode: Encode, template: str, chunk_size: int) -> int:
+        batch = encode([render_prompt(template, text) for _, text, _ in rows])
+        ids = {sha: batch[i] for i, (sha, _, _) in enumerate(rows)}
         rank = DATASET_RANK[self.source.dataset]
         texts = [UniqueText(sha, len(ids[sha]), (rank, idx)) for sha, _, idx in rows]
         (chunk,) = plan_chunks(texts, self.fp, chunk_size)
