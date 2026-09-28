@@ -19,7 +19,6 @@ from landuse_filter import config
 from landuse_filter.adapters import g5k
 from landuse_filter.adapters.remote import BucketRemote
 from landuse_filter.adapters.store import CorruptPartError, WorkStore
-from landuse_filter.application.bench_plan import SMOKE, smoke_fp
 from landuse_filter.application.sync import fetch_manifests
 from landuse_filter.domain.capacity import Cluster, free_gpus, oarsub_arguments
 from landuse_filter.domain.completion import Part, State, progress
@@ -49,7 +48,6 @@ class Settings:
     night_walltime: timedelta = timedelta(hours=2)
     besteffort: bool = False
     gpu_models: list[str] = field(default_factory=list)  # allow-list of gpu keys; empty = admitted
-    admit: list[str] = field(default_factory=list)  # gpu keys to run the one-time smoke gate for
     window: int | None = None  # candidate concurrency (tuning, issue #17); None = GPU profile
     namespace: str | None = None  # results of a candidate config live under <fp>-<namespace>
     bucket: str | None = None  # private HF Bucket holding chunks and parts (no bulk data locally)
@@ -215,9 +213,9 @@ class Controller:
             "live_jobs": sum(len(v) for v in jobs.values()),
             "submitted": [],
         }
-        if self.settings.paused or not (pending or self.settings.admit):
+        if self.settings.paused or not pending:
             return report
-        report["submitted"] = self.submit_smoke(now, jobs) + self.submit(now, jobs, pending)
+        report["submitted"] = self.submit(now, jobs, pending)
         return report
 
     def reconcile(self) -> dict[str, list[g5k.Job]]:
@@ -436,39 +434,6 @@ class Controller:
                 total += 1
                 per_site[slot.site] = per_site.get(slot.site, 0) + 1
                 submitted.append(f"{slot.site}/{cluster.name}:{job_id}")
-        return submitted
-
-    # --- one-time GPU admission (issue #18) -------------------------------------------
-
-    def smoke_pending(self, gpu: str) -> list[str]:
-        base = f"{self.fp}-smoke"
-        fp = smoke_fp(self.fp, gpu_key(gpu))
-        rows = self.store.read_jsonl(f"plans/{SMOKE}/{base}/chunks.jsonl")
-        return [r["chunk_id"] for r in rows if self.done_count(r["chunk_id"], fp) < r["size"]]
-
-    def needs_smoke(self, gpu: str) -> bool:
-        live = {a["gpu"] for a in self.live() if a.get("kind") == "smoke"}
-        return (
-            gpu_key(gpu) in self.settings.admit
-            and admission(self.store, gpu) is Admission.PENDING
-            and gpu not in live
-            and bool(self.smoke_pending(gpu))
-        )
-
-    def submit_smoke(self, now: datetime, jobs: dict[str, list[g5k.Job]]) -> list[str]:
-        if not self.settings.admit:
-            return []
-        submitted, done = [], set()
-        for slot, cluster in self.candidate_slots(now, jobs, allow=self.needs_smoke):
-            if slot.gpu in done:
-                continue
-            fp = smoke_fp(self.fp, gpu_key(slot.gpu))
-            job_id = self.launch(
-                slot, cluster, self.smoke_pending(slot.gpu), commit(), fp=fp, kind="smoke"
-            )
-            if job_id:
-                done.add(slot.gpu)
-                submitted.append(f"smoke:{slot.site}/{cluster.name}:{job_id}")
         return submitted
 
     def assignment(

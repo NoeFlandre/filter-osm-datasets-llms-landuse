@@ -8,7 +8,7 @@ MIN_MEMORY_MIB = 16 * 1024
 
 
 class Admission(StrEnum):
-    """One-time smoke-gate status of a GPU model (issue #18)."""
+    """One-time full-benchmark admission status of a GPU type (issue #18)."""
 
     PENDING = "pending"
     ADMITTED = "admitted"

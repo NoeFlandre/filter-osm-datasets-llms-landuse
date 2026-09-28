@@ -136,28 +136,6 @@ def bench_plan(work: Path = WORK, chunk_size: int = typer.Option(500, min=1)) ->
     typer.echo(f"{len(items)} items -> {n} chunks")
 
 
-@bench_app.command("smoke-plan")
-def bench_smoke_plan(work: Path = WORK, chunk_size: int = typer.Option(425, min=1)) -> None:
-    """Plan the fixed 1,700-item subset used once per GPU model for admission."""
-    from landuse_filter import config
-    from landuse_filter.adapters.benchmark import read_items
-    from landuse_filter.adapters.tokenizer import chat_encoder
-    from landuse_filter.application.bench_plan import SMOKE, plan_benchmark, smoke_items
-
-    items = smoke_items(read_items(_bench_root(work)))
-    encode = chat_encoder(config.MODEL_ID, config.MODEL_REVISION)
-    n = plan_benchmark(
-        _store(work),
-        items,
-        encode,
-        template=_template(),
-        fp=f"{config.GENERATION_FP}-smoke",
-        chunk_size=chunk_size,
-        name=SMOKE,
-    )
-    typer.echo(f"{len(items)} smoke items -> {n} chunks")
-
-
 @bench_app.command("admit")
 def bench_admit(
     gpu: str = typer.Option(..., help="GPU key, e.g. l40s (see `luf g5k inventory`)."),
@@ -165,18 +143,18 @@ def bench_admit(
     resamples: int = typer.Option(10_000),
     as_json: bool = JSON_OUT,
 ) -> None:
-    """Decide a GPU model's one-time admission from its smoke run (non-inferiority)."""
+    """One-time admission of a GPU type: its full-benchmark run (namespace gpu-<key>)
+    must pass the same non-inferiority gate as parity."""
     from dataclasses import asdict
 
     from landuse_filter import config
     from landuse_filter.adapters.benchmark import read_reference
     from landuse_filter.application.bench import compare
-    from landuse_filter.application.bench_plan import SMOKE, smoke_fp
     from landuse_filter.application.results import decisions_by_sha
 
     store = _store(work)
-    item_sha = store.read_json(f"plans/{SMOKE}/{config.GENERATION_FP}-smoke/items.json")
-    by_sha = decisions_by_sha(store, smoke_fp(config.GENERATION_FP, gpu))
+    item_sha = store.read_json(f"plans/benchmark/{config.GENERATION_FP}/items.json")
+    by_sha = decisions_by_sha(store, f"{config.GENERATION_FP}-gpu-{gpu}")
     candidate = {i: by_sha[s] for i, s in item_sha.items() if s in by_sha}
     if len(candidate) < len(item_sha):
         typer.echo(f"incomplete: {len(candidate)}/{len(item_sha)}", err=True)
@@ -350,7 +328,6 @@ def g5k_run(
     max_jobs_per_site: int = typer.Option(4),
     walltime_minutes: int = typer.Option(60),
     besteffort: bool = typer.Option(False),
-    admit: str = typer.Option("", help="GPU keys to run the one-time smoke admission for."),
     window: int | None = typer.Option(
         None, help="Candidate concurrency (tuning); default: GPU profile."
     ),
@@ -374,7 +351,6 @@ def g5k_run(
         walltime=timedelta(minutes=walltime_minutes),
         besteffort=besteffort,
         gpu_models=[g for g in gpu_models.split(",") if g],
-        admit=[g for g in admit.split(",") if g],
         window=window,
         namespace=namespace,
         bucket=bucket,

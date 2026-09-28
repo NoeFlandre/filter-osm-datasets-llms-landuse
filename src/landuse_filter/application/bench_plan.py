@@ -55,31 +55,3 @@ def plan_benchmark(
         f"plans/{name}/{fp}/items.json", {i.item_id: sha256_text(i.sentence) for i in items}
     )
     return len(chunks)
-
-
-SMOKE = "smoke"
-SMOKE_PER_LANGUAGE = 20
-SMOKE_SEED = 0
-
-
-def smoke_items(items: list[BenchmarkItem]) -> list[BenchmarkItem]:
-    """Fixed, label-stratified subset: 20 items per language (10 yes / 10 no if possible)."""
-    import random
-
-    rng = random.Random(SMOKE_SEED)  # noqa: S311 - reproducible sampling, not security
-    chosen: list[BenchmarkItem] = []
-    by_language: dict[str, list[BenchmarkItem]] = {}
-    for item in sorted(items, key=lambda i: i.item_id):
-        by_language.setdefault(item.language, []).append(item)
-    for language in sorted(by_language):
-        group = by_language[language]
-        half = SMOKE_PER_LANGUAGE // 2
-        for label in ("yes", "no"):
-            pool = [i for i in group if i.label == label]
-            chosen += rng.sample(pool, min(half, len(pool)))
-    return chosen
-
-
-def smoke_fp(fp: str, gpu: str) -> str:
-    """Smoke results live apart from production so dedup never mixes them."""
-    return f"{fp}-smoke-{gpu}"
