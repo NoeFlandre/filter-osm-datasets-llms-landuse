@@ -24,7 +24,6 @@ Usage: root [OPTIONS] COMMAND [ARGS]...
 │ bench        Benchmark parity: plan, budget, compare, gate.                                      │
 │ g5k          Grid'5000: inventory, controller, jobs, storage.                                    │
 │ node         Commands run on a reserved GPU node.                                                │
-│ store        Mirror the work tree to a private HF Bucket.                                        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -268,8 +267,8 @@ Usage: root g5k run [OPTIONS]
 │                                                        GPU profile.                              │
 │    --namespace                                 <str>   Store a candidate config's results under  │
 │                                                        <fp>-<namespace>.                         │
-│    --bucket                                    <str>   Private HF Bucket for chunks and parts    │
-│                                                        (keeps local disks empty).                │
+│    --bucket                                    <str>   Private HF Bucket for chunks and parts.   │
+│                                                        [default: NoeFlandre/landuse-filter-work] │
 │    --interval                                  <int>   Seconds between cycles. [default: 300]    │
 │    --once                   --no-once                  Run a single cycle and exit.              │
 │                                                        [default: no-once]                        │
@@ -444,52 +443,6 @@ Usage: root status [OPTIONS]
 │ --datasets        <str>   [default: benchmark]                                                   │
 │ --json                    Machine-readable output.                                               │
 │ --help                    Show this message and exit.                                            │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-```
-
-## `luf store`
-
-```text
-Usage: root store [OPTIONS] COMMAND [ARGS]...                                                      
-                                                                                                    
- Mirror the work tree to a private HF Bucket.                                                       
-                                                                                                    
-╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ --help          Show this message and exit.                                                      │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────╮
-│ push  Upload the local work tree (plans, chunks, parts, ledger, gates) to the bucket.            │
-│ pull  Restore the work tree from the bucket (e.g. on a new controller machine).                  │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-```
-
-## `luf store pull`
-
-```text
-Usage: root store pull [OPTIONS]                                                                   
-                                                                                                    
- Restore the work tree from the bucket (e.g. on a new controller machine).                          
-                                                                                                    
-╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ --work          <path>  Local work tree. [default: work]                                         │
-│ --bucket        <str>   Private Hugging Face Bucket id.                                          │
-│                         [default: NoeFlandre/landuse-filter-work]                                │
-│ --help                  Show this message and exit.                                              │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-```
-
-## `luf store push`
-
-```text
-Usage: root store push [OPTIONS]                                                                   
-                                                                                                    
- Upload the local work tree (plans, chunks, parts, ledger, gates) to the bucket.                    
-                                                                                                    
-╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ --work          <path>  Local work tree. [default: work]                                         │
-│ --bucket        <str>   Private Hugging Face Bucket id.                                          │
-│                         [default: NoeFlandre/landuse-filter-work]                                │
-│ --help                  Show this message and exit.                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 

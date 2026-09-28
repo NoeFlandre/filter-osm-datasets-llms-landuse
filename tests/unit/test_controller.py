@@ -5,6 +5,7 @@ import pyarrow as pa
 import pytest
 
 from landuse_filter.adapters import g5k
+from landuse_filter.adapters.remote import DirRemote
 from landuse_filter.adapters.schema import CHUNK
 from landuse_filter.adapters.store import WorkStore
 from landuse_filter.application import controller as ctl_mod
@@ -83,6 +84,7 @@ def world(tmp_path, monkeypatch):
         store,
         Settings(datasets=["benchmark"], sites=["nancy"], gpu_models=["l40s"]),
         log=lambda m: None,
+        remote=DirRemote(tmp_path / "bucket"),
     )
     for i in range(3):
         cid = f"c{i}"
@@ -235,6 +237,7 @@ def test_parallel_controllers_do_not_release_each_others_work(world):
         c.store,
         Settings(datasets=["benchmark"], sites=["lyon"], namespace="gpu-x"),
         log=lambda m: None,
+        remote=DirRemote(c.store.root / "bucket"),
     )
     other.reconcile()  # sees none of nancy's jobs
     assert [a["id"] for a in c.live()] == [a["id"] for a in theirs]  # untouched
@@ -301,12 +304,14 @@ def test_shared_site_cache_queries_each_site_once_per_cycle(world, monkeypatch):
         Settings(datasets=["benchmark"], sites=["nancy"], gpu_models=["l40s"], namespace="gpu-a"),
         log=lambda m: None,
         sites=cache,
+        remote=DirRemote(c.store.root / "bucket"),
     )
     b = Controller(
         c.store,
         Settings(datasets=["benchmark"], sites=["nancy"], gpu_models=["l40s"], namespace="gpu-b"),
         log=lambda m: None,
         sites=cache,
+        remote=DirRemote(c.store.root / "bucket"),
     )
     cache.reset()
     a.cycle(NOW)
@@ -323,7 +328,10 @@ def test_run_many_drops_finished_namespaces(world):
 
     c, fake = world
     done = Controller(
-        c.store, Settings(datasets=["none"], sites=["nancy"], namespace="gpu-z"), log=lambda m: None
+        c.store,
+        Settings(datasets=["none"], sites=["nancy"], namespace="gpu-z"),
+        log=lambda m: None,
+        remote=DirRemote(c.store.root / "bucket"),
     )
     out, sleeps = [], []
     run_many([done], SiteCache(), interval=1, sleep=sleeps.append, emit=out.append)

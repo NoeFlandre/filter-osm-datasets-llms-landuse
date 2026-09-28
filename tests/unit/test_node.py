@@ -89,3 +89,27 @@ def test_identical_part_repairs_a_corrupt_copy(tmp_path):
     path.write_bytes(b"torn")
     assert store.write_part("fp", "c", table) == part
     assert store.read_part(path).column("text_sha256").to_pylist() == ["a"]
+
+
+def test_gathered_decisions_merge_local_and_bucket_parts_without_keeping_them(tmp_path):
+    import tempfile
+    from pathlib import Path
+
+    from landuse_filter.adapters.remote import DirRemote
+    from landuse_filter.application.results import gathered_decisions
+
+    local = WorkStore(tmp_path / "local")
+    chunk(local, n=2)
+    asyncio.run(runner(local, FakeEngine()).run(["c1"]))
+    bucket = DirRemote(tmp_path / "bucket")
+    elsewhere = WorkStore(tmp_path / "node")
+    elsewhere.write_chunk(
+        "c2", pa.table({"text_sha256": ["z"], "text": ["z"], "input_ids": [[1]]}, schema=CHUNK)
+    )
+    asyncio.run(Runner(elsewhere, FakeEngine(), "fp", PROV, window=2).run(["c2"]))
+    for p in elsewhere.part_paths("fp"):
+        bucket.put([(p, str(p.relative_to(elsewhere.root)))])
+    before = set(Path(tempfile.gettempdir()).glob("luf-gate-*"))
+    decisions = gathered_decisions(local, bucket, "fp")
+    assert set(decisions) == {"s00", "s01", "z"}
+    assert set(Path(tempfile.gettempdir()).glob("luf-gate-*")) == before  # temp tree removed

@@ -99,7 +99,7 @@ def test_transport_uploads_chunks_once_and_frees_local_copies(tmp_path):
         )
     remote = DirRemote(tmp_path / "bucket")
     remote.put([(store.path("chunks/c1.parquet"), "chunks/c1.parquet")])
-    Transport(store, "bucket", log=lambda m: None).upload_chunks(remote, ["c1", "c2"])
+    Transport(store, remote, "bucket", log=lambda m: None).upload_chunks(["c1", "c2"])
     assert remote.ls("chunks/") == ["chunks/c1.parquet", "chunks/c2.parquet"]
     assert not store.exists("chunks/c1.parquet")
     assert not store.exists("chunks/c2.parquet")

@@ -38,15 +38,15 @@ def detect_gpu() -> GpuSpec:
     return GpuSpec(name, (int(major), int(minor or 0)), int(float(memory)))
 
 
-def workspace(spool: WorkStore, assignment: dict) -> tuple[WorkStore, "BucketRemote | None"]:
-    """Where chunks and parts live on the node, and the remote store if any.
+def workspace(assignment: dict) -> tuple[WorkStore, "BucketRemote"]:
+    """Node-local scratch (chunks, parts) and the bucket they come from and go to.
 
-    With a bucket, everything bulky stays on node-local scratch and is uploaded as it
-    is produced; the NFS spool only carries the assignment and the job summary.
+    Everything bulky stays on node-local scratch and is uploaded as it is produced;
+    the NFS spool only carries the assignment and the job summary.
     """
     bucket = assignment.get("bucket")
     if not bucket:
-        return spool, None
+        raise ValueError("assignment has no bucket: spool mode was removed (ADR-0009)")
     from landuse_filter.adapters.remote import BucketRemote
     from landuse_filter.application.sync import fetch, fetch_manifests
 
@@ -64,7 +64,7 @@ def run(assignment_id: str) -> int:
 
     spool = WorkStore(Path(os.environ.get("LUF_WORK", "work")))
     assignment = spool.read_json(f"assignments/{assignment_id}.json")
-    store, remote = workspace(spool, assignment)
+    store, remote = workspace(assignment)
     spec = detect_gpu()
     reason = ineligibility(spec)
     if reason:
@@ -82,13 +82,11 @@ def run(assignment_id: str) -> int:
         "oar_job_id": os.environ.get("OAR_JOB_ID", "local"),
         "assignment_id": assignment_id,
     }
-    on_part = None
-    if remote is not None:
-        from landuse_filter.application.sync import prune_local_part, upload_part
+    from landuse_filter.application.sync import prune_local_part, upload_part
 
-        def on_part(chunk: str, part: str, shas: list[str]) -> None:
-            upload_part(remote, store, assignment["fp"], chunk, part_id=part, shas=shas)
-            prune_local_part(store, assignment["fp"], chunk, part)
+    def on_part(chunk: str, part: str, shas: list[str]) -> None:
+        upload_part(remote, store, assignment["fp"], chunk, part_id=part, shas=shas)
+        prune_local_part(store, assignment["fp"], chunk, part)
 
     runner = Runner(
         store,
@@ -120,7 +118,6 @@ def run(assignment_id: str) -> int:
             "stopped": stop.requested,
         },
     )
-    if remote is not None:
-        remote.put([(spool.path(summary_path), summary_path)])
+    remote.put([(spool.path(summary_path), summary_path)])
     print(f"luf: done {stats.completed} sentences, {stats.sentences_per_second:.2f}/s", flush=True)  # noqa: T201
     return 0
