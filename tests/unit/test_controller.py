@@ -405,3 +405,32 @@ def test_run_command_passes_the_night_walltime_to_the_controller(monkeypatch, tm
     )
     assert result.exit_code == 0, result.output
     assert seen["settings"].night_walltime == timedelta(minutes=30)
+
+
+def test_run_admission_passes_both_walltimes(monkeypatch, tmp_path):
+    from typer.testing import CliRunner
+
+    from landuse_filter.cli import g5k as cli
+
+    seen = {}
+    monkeypatch.setattr(ctl_mod, "run_many", lambda ctls, *a, **k: seen.update(ctls=ctls))
+    result = CliRunner().invoke(
+        cli.g5k_app,
+        [
+            "run-admission",
+            "--gpus",
+            "l4",
+            "--work",
+            str(tmp_path),
+            "--walltime-minutes",
+            "20",
+            "--night-walltime-minutes",
+            "30",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    settings = seen["ctls"][0].settings
+    assert (settings.walltime, settings.night_walltime) == (
+        timedelta(minutes=20),
+        timedelta(minutes=30),
+    )
