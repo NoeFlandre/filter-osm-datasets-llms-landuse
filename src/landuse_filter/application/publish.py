@@ -17,15 +17,16 @@ import pyarrow.parquet as pq
 
 from landuse_filter import config
 from landuse_filter.adapters import hub
+from landuse_filter.adapters.indexes import ResolutionIndex
 from landuse_filter.adapters.readers import SOURCES
 from landuse_filter.adapters.store import WorkStore
 from landuse_filter.application.assemble import (
     MissingGenerationError,
     build_generations,
     build_labels,
-    resolve_all,
 )
 from landuse_filter.application.card import CardFacts, render_card
+from landuse_filter.application.results import canonical_generations
 
 
 @dataclass
@@ -51,7 +52,8 @@ def publish(
     if not dry_run:
         hub.ensure_dataset(repo)
         _mirror(store, dataset, input_repo=source.repo_id, revision=revision, repo=repo, done=done)
-    resolved = resolve_all(store, fp)
+    resolved = ResolutionIndex(store.path(f"index/resolve-{fp}.sqlite"))
+    resolved.build(canonical_generations(store, fp))
     db = sqlite3.connect(store.path(f"index/{dataset}.sqlite"))
     files = [p for (p,) in db.execute("SELECT path FROM files WHERE done = 1 ORDER BY idx")]
     new: list[tuple[Path, str]] = []

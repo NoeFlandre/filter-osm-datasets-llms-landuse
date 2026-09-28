@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 
 from landuse_filter import config
 from landuse_filter.adapters import g5k
+from landuse_filter.adapters.indexes import ProgressIndex
 from landuse_filter.adapters.remote import BucketRemote
 from landuse_filter.adapters.store import CorruptPartError, WorkStore
 from landuse_filter.application.sync import fetch_manifests
@@ -123,6 +124,7 @@ class Controller:
         self.cfg = config.reference_config()
         self.fp = config_fingerprint(self.cfg)
         self.now = datetime.now(PARIS)
+        self._progress: dict[str, ProgressIndex] = {}
 
     # --- ledger -------------------------------------------------------------------
 
@@ -172,13 +174,23 @@ class Controller:
                     lines.append(row)
         return lines
 
-    def done_count(self, chunk_id: str, fp: str | None = None) -> int:
-        """Distinct texts of a chunk already generated (manifests + verified local parts)."""
-        from landuse_filter.application.sync import manifest_shas
+    def progress_index(self, fp: str) -> ProgressIndex:
+        """Per-namespace index of generated hashes, backfilled once from local manifests."""
+        if fp not in self._progress:
+            index = ProgressIndex(self.store.path(f"index/progress-{fp}.sqlite"))
+            index.ingest(sorted(self.store.path(f"parts/{fp}").glob("*/*.json")))
+            self._progress[fp] = index
+        return self._progress[fp]
 
+    def done_count(self, chunk_id: str, fp: str | None = None) -> int:
+        """Distinct texts of a chunk already generated (manifest index + local parts)."""
         fp = fp or self.work_fp
-        shas = manifest_shas(self.store, fp, chunk_id)
-        for path in self.store.part_paths(fp, chunk_id):
+        index = self.progress_index(fp)
+        local = list(self.store.part_paths(fp, chunk_id))
+        if not local:
+            return index.count(chunk_id)
+        shas = index.shas(chunk_id)
+        for path in local:
             try:
                 shas.update(self.store.read_part(path).column("text_sha256").to_pylist())
             except CorruptPartError:
@@ -293,7 +305,8 @@ class Controller:
         if remote is None:
             self.pull_spools()
             return
-        fetch_manifests(remote, self.store, f"parts/{self.work_fp}/")
+        new = fetch_manifests(remote, self.store, f"parts/{self.work_fp}/")
+        self.progress_index(self.work_fp).ingest(self.store.path(p) for p in new)
         fetch_manifests(remote, self.store, "jobs/")
 
     def pull_spools(self) -> None:

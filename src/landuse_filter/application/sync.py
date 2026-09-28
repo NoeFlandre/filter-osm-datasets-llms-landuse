@@ -32,11 +32,11 @@ def fetch(remote: Remote, store: WorkStore, paths: list[str]) -> None:
     remote.get([(p, store.path(p)) for p in missing])
 
 
-def fetch_manifests(remote: Remote, store: WorkStore, prefix: str) -> int:
-    """Download manifests under ``prefix`` that are not local yet; returns how many."""
+def fetch_manifests(remote: Remote, store: WorkStore, prefix: str) -> list[str]:
+    """Download manifests under ``prefix`` that are not local yet; returns their paths."""
     wanted = [p for p in remote.ls(prefix) if p.endswith(".json") and not store.exists(p)]
     fetch(remote, store, wanted)
-    return len(wanted)
+    return wanted
 
 
 def manifest_shas(store: WorkStore, fp: str, chunk_id: str) -> set[str]:
