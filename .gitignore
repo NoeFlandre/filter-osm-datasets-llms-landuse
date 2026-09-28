@@ -1,0 +1,11 @@
+work/
+.venv/
+__pycache__/
+*.pyc
+.coverage
+coverage.json
+mutants/
+site/
+.hypothesis/
+.pytest_cache/
+.ruff_cache/

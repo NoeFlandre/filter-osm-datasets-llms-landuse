@@ -1,0 +1,311 @@
+"""Laptop-side controller: the single writer of chunk -> job assignments (ADR-0007).
+
+One ``cycle`` is idempotent and restartable: it reconciles the ledger with the live
+OAR jobs, pulls finished parts from site spools, verifies them, and, unless paused,
+submits new short jobs where GPUs are free *now*. All state is files under the work
+tree, so killing the controller at any point loses nothing.
+"""
+
+import subprocess
+import uuid
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
+from zoneinfo import ZoneInfo
+
+from landuse_filter import config
+from landuse_filter.adapters import g5k
+from landuse_filter.adapters.store import CorruptPartError, WorkStore
+from landuse_filter.domain.capacity import Cluster, free_gpus, oarsub_arguments
+from landuse_filter.domain.completion import Part, State, progress
+from landuse_filter.domain.fingerprint import config_fingerprint, serving_fingerprint
+from landuse_filter.domain.gpu import Admission, GpuSpec, Profile, gpu_key, ineligibility
+from landuse_filter.domain.policy import allowed_window
+from landuse_filter.domain.prompting import PROMPT_SHA256
+from landuse_filter.domain.scheduling import Slot, assign_chunks, rank_slots
+
+PARIS = ZoneInfo("Europe/Paris")
+SETUP = timedelta(minutes=8)
+
+
+@dataclass
+class Settings:
+    datasets: list[str]
+    sites: list[str]
+    max_jobs_total: int = 12
+    max_jobs_per_site: int = 4
+    max_queued_per_site: int = 0
+    walltime: timedelta = timedelta(hours=1)
+    night_walltime: timedelta = timedelta(hours=2)
+    besteffort: bool = False
+    gpu_models: list[str] = field(default_factory=list)  # allow-list of gpu keys; empty = admitted
+    paused: bool = False
+
+
+def load_clusters(store: WorkStore) -> list[Cluster]:
+    return [
+        Cluster(c["site"], c["cluster"], c["gpu"], c["memory_mib"], tuple(c["compute_capability"]),
+                c["gpus_per_node"], c["nodes"], tuple(c["queues"]), c["exotic"], c.get("vendor", "Nvidia"))
+        for c in store.read_json("inventory.json")
+    ]
+
+
+def eligible(cluster: Cluster) -> bool:
+    spec = GpuSpec(cluster.gpu, cluster.compute_capability, cluster.memory_mib)
+    return cluster.vendor.lower() == "nvidia" and ineligibility(spec) is None
+
+
+def admission(store: WorkStore, gpu: str) -> Admission:
+    path = f"gates/admission/{gpu_key(gpu)}.json"
+    return Admission(store.read_json(path)["status"]) if store.exists(path) else Admission.PENDING
+
+
+def profile_for(store: WorkStore, gpu: str) -> Profile:
+    path = f"profiles/{gpu_key(gpu)}.json"
+    return Profile(**store.read_json(path)) if store.exists(path) else Profile(gpu_key(gpu), max_running_requests=16)
+
+
+def commit() -> str:
+    return subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+
+
+class Controller:
+    def __init__(self, store: WorkStore, settings: Settings, log=print) -> None:  # noqa: T201
+        self.store = store
+        self.settings = settings
+        self.log = log
+        self.cfg = config.reference_config()
+        self.fp = config_fingerprint(self.cfg)
+
+    # --- ledger -------------------------------------------------------------------
+
+    def ledger(self) -> list[dict]:
+        return [self.store.read_json(f"assignments/{p.name}") for p in sorted(self.store.path("assignments").glob("*.json"))]
+
+    def live(self) -> list[dict]:
+        return [a for a in self.ledger() if a.get("state") in ("submitting", "submitted")]
+
+    # --- work ----------------------------------------------------------------------
+
+    def plan_lines(self) -> list[dict]:
+        seen: set[str] = set()
+        lines = []
+        for dataset in self.settings.datasets:
+            for row in self.store.read_jsonl(f"plans/{dataset}/{self.fp}/chunks.jsonl"):
+                if row["chunk_id"] not in seen:
+                    seen.add(row["chunk_id"])
+                    lines.append(row)
+        return lines
+
+    def chunk_state(self, chunk_id: str) -> State:
+        expected = self.store.read_chunk(chunk_id).column("text_sha256").to_pylist()
+        parts = []
+        for path in self.store.part_paths(self.fp, chunk_id):
+            try:
+                parts.append(Part(path.stem, tuple(self.store.read_part(path).column("text_sha256").to_pylist())))
+            except CorruptPartError:
+                self.quarantine(path)
+        return progress(expected, parts).state
+
+    def quarantine(self, path: Path) -> None:
+        target = self.store.path("quarantine") / path.relative_to(self.store.root)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        path.replace(target)
+        self.log(f"quarantined corrupt part {path.name}")
+
+    def pending_chunks(self) -> list[tuple[str, int]]:
+        complete = {r["chunk_id"] for r in self.store.read_jsonl("complete.jsonl")}
+        pending, newly = [], []
+        for row in self.plan_lines():
+            cid = row["chunk_id"]
+            if cid in complete:
+                continue
+            if self.chunk_state(cid) is State.COMPLETE:
+                newly.append({"chunk_id": cid})
+            else:
+                pending.append((cid, row["size"]))
+        if newly:
+            self.store.append_jsonl("complete.jsonl", newly)
+        return pending
+
+    # --- cycle ---------------------------------------------------------------------
+
+    def cycle(self, now: datetime | None = None) -> dict[str, Any]:
+        now = now or datetime.now(PARIS)
+        jobs = self.reconcile()
+        self.pull()
+        pending = self.pending_chunks()
+        report = {"pending_chunks": len(pending), "live_jobs": sum(len(v) for v in jobs.values()), "submitted": []}
+        if self.settings.paused or not pending:
+            return report
+        report["submitted"] = self.submit(now, jobs, pending)
+        return report
+
+    def reconcile(self) -> dict[str, list[g5k.Job]]:
+        jobs: dict[str, list[g5k.Job]] = {}
+        for site in self.settings.sites:
+            try:
+                jobs[site] = g5k.our_jobs(site)
+            except g5k.RemoteError as exc:
+                self.log(f"{site}: unreachable ({exc}); keeping its assignments")
+                jobs[site] = [g5k.Job(site, a["job_id"], a["name"], "Unknown", "")
+                              for a in self.live() if a["site"] == site and a.get("job_id")]
+        by_name = {j.name: j for js in jobs.values() for j in js}
+        for a in self.live():
+            job = by_name.get(a["name"])
+            if job and not a.get("job_id"):
+                a.update(job_id=job.job_id, state="submitted")  # crash after oarsub: adopt
+            elif not job:
+                a["state"] = "ended"
+            self.store.write_json(f"assignments/{a['id']}.json", a)
+        return jobs
+
+    def pull(self) -> None:
+        for site in self.settings.sites:
+            if not any(a["site"] == site for a in self.ledger()):
+                continue
+            for sub in ("parts", "jobs"):
+                try:
+                    g5k.rsync(f"{site}:{g5k.REMOTE_ROOT}/work/{sub}/", f"{self.store.path(sub)}/", extra=("--ignore-existing",))
+                except g5k.RemoteError as exc:
+                    self.log(f"{site}: pull {sub} failed: {exc}")
+
+    # --- submission -----------------------------------------------------------------
+
+    def candidate_slots(self, now: datetime, jobs: dict[str, list[g5k.Job]]) -> list[tuple[Slot, Cluster]]:
+        out = []
+        clusters = [c for c in load_clusters(self.store) if c.site in self.settings.sites and eligible(c)]
+        for site in self.settings.sites:
+            site_clusters = [c for c in clusters if c.site == site and self.allowed_gpu(c.gpu)]
+            if not site_clusters or len(jobs.get(site, [])) >= self.settings.max_jobs_per_site:
+                continue
+            try:
+                nodes = g5k.site_status(site)["nodes"]
+            except (g5k.RemoteError, KeyError, ValueError) as exc:
+                self.log(f"{site}: status failed: {exc}")
+                continue
+            for c in site_clusters:
+                window = allowed_window(now, starts_now=True) if not c.production else None
+                wall, job_type = self.walltime_for(c, window)
+                free = free_gpus(c, nodes, besteffort_counts=not self.settings.besteffort)
+                if free <= 0 or wall is None:
+                    continue
+                prof = profile_for(self.store, c.gpu)
+                out.append((Slot(site, c.name, c.gpu, 1, free, timedelta(0), wall, job_type, prof.sentences_per_second), c))
+        ranked = rank_slots([s for s, _ in out], SETUP)
+        by_key = {(s.site, s.cluster): c for s, c in out}
+        return [(s, by_key[(s.site, s.cluster)]) for s in ranked]
+
+    def allowed_gpu(self, gpu: str) -> bool:
+        if self.settings.gpu_models:
+            return gpu_key(gpu) in self.settings.gpu_models
+        return admission(self.store, gpu) is Admission.ADMITTED
+
+    def walltime_for(self, cluster: Cluster, window) -> tuple[timedelta | None, str | None]:
+        if cluster.production:
+            return self.settings.walltime, None
+        if window is None:
+            return None, None
+        cap = self.settings.walltime if window.job_type is None else self.settings.night_walltime
+        return min(cap, window.max_walltime), window.job_type
+
+    def submit(self, now: datetime, jobs: dict[str, list[g5k.Job]], pending: list[tuple[str, int]]) -> list[str]:
+        submitted: list[str] = []
+        taken = {c for a in self.live() for c in a["chunks"]}
+        total = sum(len(v) for v in jobs.values())
+        per_site = {s: len(v) for s, v in jobs.items()}
+        code_commit = commit()
+        for slot, cluster in self.candidate_slots(now, jobs):
+            for _ in range(slot.free_nodes):
+                if total >= self.settings.max_jobs_total or per_site.get(slot.site, 0) >= self.settings.max_jobs_per_site:
+                    break
+                capacity = slot.sentences_per_second * max(0.0, (slot.walltime - SETUP).total_seconds())
+                chunks = assign_chunks(pending, taken, capacity)
+                if not chunks:
+                    return submitted
+                job_id = self.launch(slot, cluster, chunks, code_commit)
+                if job_id:
+                    taken.update(chunks)
+                    total += 1
+                    per_site[slot.site] = per_site.get(slot.site, 0) + 1
+                    submitted.append(f"{slot.site}/{cluster.name}:{job_id}")
+        return submitted
+
+    def assignment(self, slot: Slot, chunks: list[str], code_commit: str) -> dict:
+        prof = profile_for(self.store, slot.gpu)
+        aid = uuid.uuid4().hex[:12]
+        return {
+            "id": aid, "name": f"{g5k.JOB_PREFIX}{aid}", "site": slot.site, "cluster": slot.cluster,
+            "gpu": slot.gpu, "chunks": chunks, "fp": self.fp, "state": "submitting", "job_id": None,
+            "window": prof.max_running_requests,
+            "engine_kwargs": config.engine_kwargs(self.cfg, prof.engine_args()),
+            "sampling": self.cfg["sampling"],
+            "walltime_s": int(slot.walltime.total_seconds()),
+            "provenance": {
+                "config_fingerprint": self.fp,
+                "serving_fingerprint": serving_fingerprint({**self.cfg, "engine": {**self.cfg["engine"], **prof.engine_args()}}),
+                "model": self.cfg["model"], "draft": self.cfg["draft"], "prompt_sha256": PROMPT_SHA256,
+                "code_commit": code_commit,
+            },
+        }
+
+    def launch(self, slot: Slot, cluster: Cluster, chunks: list[str], code_commit: str) -> str | None:
+        a = self.assignment(slot, chunks, code_commit)
+        site = slot.site
+        try:
+            code = g5k.deploy_code(site, code_commit, git_archive(code_commit))
+            self.stage(site, a)
+            g5k.policy_check(site)
+            self.store.write_json(f"assignments/{a['id']}.json", a)  # before oarsub: crash-safe
+            command = f"{code}/scripts/node_job.sh {code} {a['id']}"
+            args = oarsub_arguments(cluster, slot.walltime, slot.job_type, a["name"], command,
+                                    besteffort=self.settings.besteffort)
+            a["job_id"] = g5k.submit(site, args)
+            a["state"] = "submitted"
+            a["submitted_at"] = datetime.now(PARIS).isoformat(timespec="seconds")
+            self.store.write_json(f"assignments/{a['id']}.json", a)
+            g5k.policy_check(site)
+            self.log(f"submitted {a['name']} on {site}/{cluster.name} ({len(chunks)} chunks): job {a['job_id']}")
+            return a["job_id"]
+        except g5k.RemoteError as exc:
+            a["state"] = "failed_submit"
+            a["error"] = str(exc)[-500:]
+            self.store.write_json(f"assignments/{a['id']}.json", a)
+            self.log(f"{site}: submission failed: {exc}")
+            return None
+
+    def stage(self, site: str, a: dict) -> None:
+        """Copy the assignment, its chunk inputs and existing parts to the site spool."""
+        root = f"{site}:{g5k.REMOTE_ROOT}/work/"
+        g5k.ssh(site, f"mkdir -p {g5k.REMOTE_ROOT}/work/assignments {g5k.REMOTE_ROOT}/work/chunks {g5k.REMOTE_ROOT}/logs")
+        files = [f"chunks/{c}.parquet" for c in a["chunks"]]
+        files += [str(p.relative_to(self.store.root)) for c in a["chunks"] for p in self.store.part_paths(self.fp, c)]
+        tmp = self.store.path(f"assignments/{a['id']}.json")
+        self.store.write_json(f"assignments/{a['id']}.json", a)
+        files.append(str(tmp.relative_to(self.store.root)))
+        listing = self.store.path(f".stage-{a['id']}")
+        listing.write_text("\n".join(files) + "\n")
+        try:
+            g5k.rsync(f"{self.store.root}/", root, extra=(f"--files-from={listing}",))
+        finally:
+            listing.unlink(missing_ok=True)
+
+    # --- control ---------------------------------------------------------------------
+
+    def cancel_all(self) -> list[str]:
+        cancelled = []
+        for site in self.settings.sites:
+            for job in g5k.our_jobs(site):
+                g5k.cancel(site, job.job_id)
+                cancelled.append(f"{site}:{job.job_id}")
+        return cancelled
+
+
+def git_archive(ref: str) -> bytes:
+    return subprocess.run(["git", "archive", "--format=tar", ref], capture_output=True, check=True).stdout
+
+
+def chunk_ids(rows: Iterable[dict]) -> list[str]:
+    return [r["chunk_id"] for r in rows]

@@ -1,0 +1,123 @@
+"""Node-side runner: stream an assignment's chunks through the engine, checkpointing.
+
+Requests are kept in flight continuously (no batch barrier) up to ``window``; every
+completion is buffered and flushed as a content-addressed part every ``flush_every``
+results or ``flush_seconds``. On a stop request (SIGTERM / OAR checkpoint) the runner
+stops admitting, cancels in-flight requests and flushes what completed, so a killed
+job loses only requests that had not finished.
+"""
+
+import asyncio
+import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from typing import Protocol
+
+import pyarrow as pa
+
+from landuse_filter.adapters.schema import generation_table
+from landuse_filter.adapters.store import WorkStore
+from landuse_filter.domain.completion import Part, progress
+from landuse_filter.domain.records import Generation, from_sglang
+
+
+class AsyncEngine(Protocol):
+    def generate(self, input_ids: list[int]) -> Awaitable[dict]: ...
+
+
+@dataclass
+class RunStats:
+    completed: int = 0
+    generated_tokens: int = 0
+    parts: int = 0
+    chunks_done: list[str] = field(default_factory=list)
+    started: float = field(default_factory=time.monotonic)
+
+    @property
+    def sentences_per_second(self) -> float:
+        elapsed = time.monotonic() - self.started
+        return self.completed / elapsed if elapsed > 0 else 0.0
+
+
+@dataclass
+class Runner:
+    store: WorkStore
+    engine: AsyncEngine
+    fp: str
+    provenance: dict[str, str]
+    window: int = 64
+    flush_every: int = 256
+    flush_seconds: float = 120.0
+    should_stop: Callable[[], bool] = lambda: False
+    stats: RunStats = field(default_factory=RunStats)
+
+    def done_shas(self, chunk_id: str) -> set[str]:
+        shas: set[str] = set()
+        for path in self.store.part_paths(self.fp, chunk_id):
+            shas.update(self.store.read_part(path).column("text_sha256").to_pylist())
+        return shas
+
+    async def run(self, chunk_ids: list[str]) -> RunStats:
+        for chunk_id in chunk_ids:
+            if self.should_stop():
+                break
+            await self.run_chunk(chunk_id)
+        return self.stats
+
+    async def run_chunk(self, chunk_id: str) -> None:
+        table = self.store.read_chunk(chunk_id)
+        expected = table.column("text_sha256").to_pylist()
+        done = self.done_shas(chunk_id)
+        todo = [i for i, sha in enumerate(expected) if sha not in done]
+        buffer: list[Generation] = []
+        last_flush = time.monotonic()
+        pending: set[asyncio.Task] = set()
+        queue = iter(todo)
+
+        def admit() -> None:
+            while len(pending) < self.window and not self.should_stop():
+                i = next(queue, None)
+                if i is None:
+                    return
+                pending.add(asyncio.ensure_future(self._one(table, i)))
+
+        admit()
+        while pending:
+            finished, _ = await asyncio.wait(pending, timeout=1.0, return_when=asyncio.FIRST_COMPLETED)
+            for task in finished:
+                pending.discard(task)
+                buffer.append(task.result())
+            if self.should_stop():
+                for task in pending:
+                    task.cancel()
+                break
+            if len(buffer) >= self.flush_every or time.monotonic() - last_flush >= self.flush_seconds:
+                self._flush(chunk_id, buffer)
+                buffer, last_flush = [], time.monotonic()
+            admit()
+        self._flush(chunk_id, buffer)
+        parts = [Part(p.stem, tuple(self.store.read_part(p).column("text_sha256").to_pylist()))
+                 for p in self.store.part_paths(self.fp, chunk_id)]
+        if not progress(expected, parts).missing:
+            self.stats.chunks_done.append(chunk_id)
+
+    async def _one(self, table: pa.Table, i: int) -> Generation:
+        ids = table.column("input_ids")[i].as_py()
+        sha = table.column("text_sha256")[i].as_py()
+        output = await self.engine.generate(ids)
+        return from_sglang(sha, output, len(ids))
+
+    def _flush(self, chunk_id: str, rows: list[Generation]) -> None:
+        if not rows:
+            return
+        stamped = {**self.provenance, "created_at": _utc_now()}
+        self.store.write_part(self.fp, chunk_id, generation_table(rows, stamped))
+        self.stats.completed += len(rows)
+        self.stats.generated_tokens += sum(r.generated_tokens for r in rows)
+        self.stats.parts += 1
+
+
+def _utc_now() -> str:
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC).isoformat(timespec="seconds")
