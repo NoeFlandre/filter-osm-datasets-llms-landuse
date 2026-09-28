@@ -579,6 +579,51 @@ def store_pull(work: Path = WORK, bucket: str = BUCKET) -> None:
     typer.echo(f"pulled hf://buckets/{bucket} -> {work}")
 
 
+@g5k_app.command("clean")
+def g5k_clean(
+    sites: str = typer.Option(SITES),
+    work: Path = WORK,
+    apply: bool = typer.Option(False, help="Actually delete (default: dry run)."),
+) -> None:
+    """Delete stale project files under ~/luf on each site (old code, envs, logs, synced parts)."""
+    from landuse_filter.adapters import g5k
+    from landuse_filter.application.controller import commit
+    from landuse_filter.domain.cleanup import Entry, Keep, cleanup_plan
+
+    store = _store(work)
+    assignments = [
+        store.read_json(f"assignments/{p.name}") for p in store.path("assignments").glob("*.json")
+    ]
+    live = [a for a in assignments if a.get("state") in ("submitting", "submitted")]
+    commits = {a["provenance"]["code_commit"] for a in live} | {commit()}
+    lock = hashlib.sha256(
+        (Path(__file__).resolve().parents[2] / "uv.lock").read_bytes()
+    ).hexdigest()[:12]
+    for site in sites.split(","):
+        try:
+            listing = g5k.project_listing(site)
+        except g5k.RemoteError as exc:
+            typer.echo(f"{site}: unreachable ({exc})", err=True)
+            continue
+        synced = frozenset(
+            p.removeprefix("luf/work/parts/")
+            for p, _ in listing
+            if p.startswith("luf/work/parts/")
+            and (
+                store.exists(p.removeprefix("luf/work/"))
+                or store.exists(p.removeprefix("luf/work/").replace(".parquet", ".json"))
+            )
+        )
+        plan = cleanup_plan(
+            [Entry(p, a) for p, a in listing], Keep(frozenset(commits), lock, synced)
+        )
+        typer.echo(f"{site}: {len(plan)} path(s) {'deleted' if apply else 'would be deleted'}")
+        for p in plan[:20]:
+            typer.echo(f"  {p}")
+        if apply and plan:
+            g5k.remove(site, plan)
+
+
 @app.command()
 def publish(
     dataset: str = typer.Option(..., help="Input dataset name."),

@@ -123,3 +123,28 @@ def deploy_code(site: str, commit: str, archive: bytes) -> str:
 
 def home_usage(site: str) -> str:
     return ssh(site, "quota -s 2>/dev/null | tail -1; du -sh ~/luf 2>/dev/null || true")
+
+
+def project_listing(site: str) -> list[tuple[str, float]]:
+    """(path relative to home, age in days) for our top-level entries and spool parts."""
+    command = (
+        "cd ~ && now=$(date +%s) && "
+        "{ find luf -mindepth 2 -maxdepth 2 -printf '%p %T@\\n' 2>/dev/null; "
+        "find luf/work/parts -name '*.parquet' -printf '%p %T@\\n' 2>/dev/null; } | "
+        "awk -v now=$now '{printf \"%s %.2f\\n\", $1, (now - $2) / 86400}'"
+    )
+    rows = []
+    for line in ssh(site, command, timeout=300).splitlines():
+        path, _, age = line.rpartition(" ")
+        if path:
+            rows.append((path, float(age)))
+    return rows
+
+
+def remove(site: str, paths: list[str]) -> None:
+    """Delete project paths (each must start with ``luf/``) in batches."""
+    if any(not p.startswith(f"{REMOTE_ROOT}/") or ".." in p for p in paths):
+        raise RemoteError("refusing to delete outside ~/luf")
+    for start in range(0, len(paths), 200):
+        batch = " ".join(shlex.quote(p) for p in paths[start : start + 200])
+        ssh(site, f"cd ~ && rm -rf -- {batch}", timeout=600)

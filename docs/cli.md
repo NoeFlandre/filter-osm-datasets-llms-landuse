@@ -142,6 +142,8 @@ Usage: root g5k [OPTIONS] COMMAND [ARGS]...
 │ pause          Stop submitting new jobs (running jobs drain unless --cancel).                    │
 │ resume         Allow the controller to submit again.                                             │
 │ storage        Home quota usage per site and size of the project's ~/luf tree.                   │
+│ clean          Delete stale project files under ~/luf on each site (old code, envs, logs, synced │
+│                parts).                                                                           │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -158,6 +160,22 @@ Usage: root g5k calibrate-job [OPTIONS]
 │ *  --chunk          <str>   A benchmark chunk id (prompts for the sweep). [required]             │
 │    --work           <path>  Local work tree. [default: work]                                     │
 │    --help                   Show this message and exit.                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+```
+
+## `luf g5k clean`
+
+```text
+Usage: root g5k clean [OPTIONS]                                                                    
+                                                                                                    
+ Delete stale project files under ~/luf on each site (old code, envs, logs, synced parts).          
+                                                                                                    
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
+│ --sites                  <str>   [default:                                                       │
+│                                  grenoble,lille,lyon,nancy,rennes,sophia,toulouse,luxembourg]    │
+│ --work                   <path>  Local work tree. [default: work]                                │
+│ --apply    --no-apply            Actually delete (default: dry run). [default: no-apply]         │
+│ --help                           Show this message and exit.                                     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
