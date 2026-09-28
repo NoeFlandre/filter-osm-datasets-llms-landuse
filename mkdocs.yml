@@ -4,6 +4,7 @@ theme:
   name: material
 nav:
   - Overview: index.md
+  - Architecture: architecture.md
   - Output schema: schema.md
   - Benchmark parity: benchmark.md
   - Sizing: sizing.md
@@ -19,3 +20,9 @@ nav:
       - adr/0007-single-writer-controller.md
       - adr/0008-node-runtime.md
       - adr/0009-work-store.md
+markdown_extensions:
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
