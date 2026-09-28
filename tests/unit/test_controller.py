@@ -276,3 +276,56 @@ def test_loop_once_returns_after_one_failed_cycle(world):
     run_loop(
         c, interval=5, once=True, sleep=lambda s: (_ for _ in ()).throw(AssertionError("no sleep"))
     )
+
+
+def test_shared_site_cache_queries_each_site_once_per_cycle(world, monkeypatch):
+    from landuse_filter.application.site_cache import SiteCache
+
+    c, fake = world
+    calls = {"jobs": 0, "status": 0}
+    orig_jobs = g5k.our_jobs
+
+    def counting_jobs(site):
+        calls["jobs"] += 1
+        return orig_jobs(site)
+
+    monkeypatch.setattr(g5k, "our_jobs", counting_jobs)
+    monkeypatch.setattr(
+        g5k,
+        "site_status",
+        lambda site: calls.__setitem__("status", calls["status"] + 1) or {"nodes": FREE},
+    )
+    cache = SiteCache()
+    a = Controller(
+        c.store,
+        Settings(datasets=["benchmark"], sites=["nancy"], gpu_models=["l40s"], namespace="gpu-a"),
+        log=lambda m: None,
+        sites=cache,
+    )
+    b = Controller(
+        c.store,
+        Settings(datasets=["benchmark"], sites=["nancy"], gpu_models=["l40s"], namespace="gpu-b"),
+        log=lambda m: None,
+        sites=cache,
+    )
+    cache.reset()
+    a.cycle(NOW)
+    b.cycle(NOW)
+    assert calls["status"] == 1  # one status call per site per cycle
+    assert calls["jobs"] <= 3  # initial + one refresh per submission, not one per controller
+    assert {x["fp"] for x in a.live()} == {f"{a.fp}-gpu-a"}
+    assert {x["fp"] for x in b.live()} == {f"{b.fp}-gpu-b"}
+
+
+def test_run_many_drops_finished_namespaces(world):
+    from landuse_filter.application.controller import run_many
+    from landuse_filter.application.site_cache import SiteCache
+
+    c, fake = world
+    done = Controller(
+        c.store, Settings(datasets=["none"], sites=["nancy"], namespace="gpu-z"), log=lambda m: None
+    )
+    out, sleeps = [], []
+    run_many([done], SiteCache(), interval=1, sleep=sleeps.append, emit=out.append)
+    assert len(out) == 1
+    assert sleeps == []

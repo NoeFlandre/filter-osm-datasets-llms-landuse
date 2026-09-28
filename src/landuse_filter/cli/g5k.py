@@ -92,6 +92,42 @@ def g5k_run(
     run_loop(ctl, interval=interval, once=once, emit=typer.echo)
 
 
+@g5k_app.command("run-admission")
+def g5k_run_admission(
+    gpus: str = typer.Option(..., help="Comma-separated GPU keys to admit (full benchmark each)."),
+    work: Path = WORK,
+    sites: str = typer.Option(SITES),
+    max_jobs: int = typer.Option(5, help="Per GPU type."),
+    max_jobs_per_site: int = typer.Option(3),
+    interval: int = typer.Option(OPS.interval_seconds),
+) -> None:
+    """One process for every GPU-type admission run (namespace gpu-<key>), sharing one
+    view of each site per cycle; afterwards run `luf bench admit --gpu <key>`."""
+    from landuse_filter.application.controller import Controller, Settings, run_many
+    from landuse_filter.application.site_cache import SiteCache
+
+    cache = SiteCache()
+    store = _store(work)
+    controllers = [
+        Controller(
+            store,
+            Settings(
+                datasets=["benchmark"],
+                sites=sites.split(","),
+                max_jobs_total=max_jobs,
+                max_jobs_per_site=max_jobs_per_site,
+                besteffort=True,
+                gpu_models=[g],
+                namespace=f"gpu-{g}",
+            ),
+            log=lambda m: typer.echo(m, err=True),
+            sites=cache,
+        )
+        for g in gpus.split(",")
+    ]
+    run_many(controllers, cache, interval=interval, emit=typer.echo)
+
+
 @g5k_app.command("cpu-job")
 def g5k_cpu_job(
     mode: str = typer.Argument(..., help="plan or publish"),

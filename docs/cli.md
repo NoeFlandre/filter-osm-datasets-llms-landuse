@@ -137,6 +137,8 @@ Usage: root g5k [OPTIONS] COMMAND [ARGS]...
 ╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────╮
 │ inventory      Refresh the GPU cluster inventory of all sites (Reference API).                   │
 │ run            The controller loop: reconcile, pull results, submit where GPUs are free now.     │
+│ run-admission  One process for every GPU-type admission run (namespace gpu-<key>), sharing one   │
+│                view of each site per cycle; afterwards run `luf bench admit --gpu <key>`.        │
 │ cpu-job        Submit one resumable planning or publishing job (default queue, one CPU node).    │
 │ calibrate-job  Submit one GPU calibration job on ``cluster`` (1 h, starts now or is cancelled).  │
 │ pause          Stop submitting new jobs (running jobs drain unless --cancel).                    │
@@ -269,6 +271,27 @@ Usage: root g5k run [OPTIONS]
 │    --once                 --no-once                  Run a single cycle and exit.                │
 │                                                      [default: no-once]                          │
 │    --help                                            Show this message and exit.                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+```
+
+## `luf g5k run-admission`
+
+```text
+Usage: root g5k run-admission [OPTIONS]                                                            
+                                                                                                    
+ One process for every GPU-type admission run (namespace gpu-<key>), sharing one view of each site  
+ per cycle; afterwards run `luf bench admit --gpu <key>`.                                           
+                                                                                                    
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
+│ *  --gpus                     <str>   Comma-separated GPU keys to admit (full benchmark each).   │
+│                                       [required]                                                 │
+│    --work                     <path>  Local work tree. [default: work]                           │
+│    --sites                    <str>   [default:                                                  │
+│                                       grenoble,lille,lyon,nancy,rennes,sophia,toulouse,luxembou… │
+│    --max-jobs                 <int>   Per GPU type. [default: 5]                                 │
+│    --max-jobs-per-site        <int>   [default: 3]                                               │
+│    --interval                 <int>   [default: 300]                                             │
+│    --help                             Show this message and exit.                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
