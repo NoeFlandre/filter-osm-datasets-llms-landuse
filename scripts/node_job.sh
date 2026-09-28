@@ -9,6 +9,7 @@
 set -euo pipefail
 CODE=$1
 shift
+CODE="$(cd -- "$CODE" && pwd)"
 if [[ "${1:-}" == "plan" || "${1:-}" == "publish" || "${1:-}" == "calibrate" ]]; then
   MODE=$1
   shift
