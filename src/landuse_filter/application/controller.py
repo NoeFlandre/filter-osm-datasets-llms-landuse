@@ -199,6 +199,7 @@ class Controller:
                     for a in self.live()
                     if a["site"] == site and a.get("job_id")
                 ]
+        self.drop_drifted(jobs)
         by_name = {j.name: j for js in jobs.values() for j in js}
         for a in self.live():
             job = by_name.get(a["name"])
@@ -208,6 +209,29 @@ class Controller:
                 a["state"] = "ended"
             self.store.write_json(f"assignments/{a['id']}.json", a)
         return jobs
+
+    def drop_drifted(self, jobs: dict[str, list[g5k.Job]]) -> None:
+        """Cancel waiting jobs whose predicted start slipped past LATE_START."""
+        clusters = {a["name"]: (a["site"], a["cluster"]) for a in self.live()}
+        horizon = self.now.timestamp() + LATE_START.total_seconds()
+        for site, site_jobs in jobs.items():
+            for job in list(site_jobs):
+                late = (
+                    job.state == "Waiting" and job.scheduled_start and job.scheduled_start > horizon
+                )
+                if not late or job.name not in clusters:
+                    continue
+                try:
+                    g5k.cancel(site, job.job_id)
+                except g5k.RemoteError as exc:
+                    self.log(f"{site}: could not cancel drifted job {job.job_id}: {exc}")
+                    continue
+                site_jobs.remove(job)
+                self.store.write_json(
+                    f"backoff/{site}_{clusters[job.name][1]}.json",
+                    {"until": (self.now + BACKOFF).isoformat()},
+                )
+                self.log(f"{site}: job {job.job_id} start drifted; cancelled and backing off")
 
     def pull(self) -> None:
         for site in self.settings.sites:

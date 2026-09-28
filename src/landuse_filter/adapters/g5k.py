@@ -23,6 +23,7 @@ class Job:
     name: str
     state: str
     queue: str
+    scheduled_start: int | None = None
 
 
 def ssh(site: str, command: str, *, timeout: float = 120, stdin: bytes | None = None) -> str:
@@ -54,7 +55,14 @@ def our_jobs(site: str) -> list[Job]:
     """Our live jobs on ``site`` (name prefix ``luf-``); others are never touched."""
     payload = json.loads(ssh(site, "oarstat -u -J") or "{}")
     return [
-        Job(site, str(job_id), j.get("name") or "", j.get("state", ""), j.get("queue", ""))
+        Job(
+            site,
+            str(job_id),
+            j.get("name") or "",
+            j.get("state", ""),
+            j.get("queue", ""),
+            j.get("scheduled_start"),
+        )
         for job_id, j in payload.items()
         if (j.get("name") or "").startswith(JOB_PREFIX)
     ]

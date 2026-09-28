@@ -177,3 +177,17 @@ def test_waiting_reservation_blocks_node():
     }
     assert free_gpus(gres, node, besteffort_counts=False, now=0, walltime_s=3600) == 0
     assert free_gpus(gres, node, besteffort_counts=False, now=0, walltime_s=500) == 2
+
+
+def test_waiting_job_whose_start_drifts_is_cancelled(world):
+    c, fake = world
+    c.cycle(NOW)
+    job = fake.jobs["nancy"][0]
+    fake.jobs["nancy"][0] = g5k.Job(
+        job.site, job.job_id, job.name, "Waiting", "abaca", int(NOW.timestamp()) + 7200
+    )
+    c.now = NOW
+    c.reconcile()
+    assert job.job_id in fake.cancelled
+    assert c.store.exists("backoff/nancy_gres.json")
+    assert job.name not in {a["name"] for a in c.live()}
