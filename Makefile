@@ -9,8 +9,9 @@ HYPOTHESIS_PROFILE ?= ci
 help:  ## List targets
 	@grep -E '^[a-z-]+:.*?##' $(MAKEFILE_LIST) | sed 's/:.*##/\t/'
 
-install:  ## Dev environment (CPU; tokenizer extra for planning)
+install:  ## Dev environment (CPU; tokenizer extra for planning) + git hooks
 	$(UV) sync --extra tokenize
+	git config core.hooksPath scripts/hooks
 
 baseline:  ## Existing suite before changing anything
 	$(RUN) pytest

@@ -63,6 +63,7 @@ results are never redone.
 ## Development
 
 ```bash
+make install    # env + pre-commit hook (ruff format/check on staged files)
 make gauntlet   # ruff, ty, unit/property/Gherkin/architecture tests, CRAP, mutation, docs
 ```
 

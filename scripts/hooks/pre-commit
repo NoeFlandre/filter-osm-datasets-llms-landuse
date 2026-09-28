@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Refuse commits whose staged Python files are unformatted or fail ruff.
+# Enable once per clone:  git config core.hooksPath scripts/hooks
+set -euo pipefail
+files=$(git diff --cached --name-only --diff-filter=ACMR -- '*.py')
+[ -z "$files" ] && exit 0
+# shellcheck disable=SC2086
+uv run --no-sync ruff format --check $files
+# shellcheck disable=SC2086
+uv run --no-sync ruff check $files
