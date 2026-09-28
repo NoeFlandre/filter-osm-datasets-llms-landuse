@@ -136,6 +136,60 @@ def bench_plan(work: Path = WORK, chunk_size: int = typer.Option(500, min=1)) ->
     typer.echo(f"{len(items)} items -> {n} chunks")
 
 
+@bench_app.command("smoke-plan")
+def bench_smoke_plan(work: Path = WORK, chunk_size: int = typer.Option(425, min=1)) -> None:
+    """Plan the fixed 1,700-item subset used once per GPU model for admission."""
+    from landuse_filter import config
+    from landuse_filter.adapters.benchmark import read_items
+    from landuse_filter.adapters.tokenizer import chat_encoder
+    from landuse_filter.application.bench_plan import SMOKE, plan_benchmark, smoke_items
+
+    items = smoke_items(read_items(_bench_root(work)))
+    encode = chat_encoder(config.MODEL_ID, config.MODEL_REVISION)
+    n = plan_benchmark(
+        _store(work),
+        items,
+        encode,
+        template=_template(),
+        fp=f"{config.GENERATION_FP}-smoke",
+        chunk_size=chunk_size,
+        name=SMOKE,
+    )
+    typer.echo(f"{len(items)} smoke items -> {n} chunks")
+
+
+@bench_app.command("admit")
+def bench_admit(
+    gpu: str = typer.Option(..., help="GPU key, e.g. l40s (see `luf g5k inventory`)."),
+    work: Path = WORK,
+    resamples: int = typer.Option(10_000),
+    as_json: bool = JSON_OUT,
+) -> None:
+    """Decide a GPU model's one-time admission from its smoke run (non-inferiority)."""
+    from dataclasses import asdict
+
+    from landuse_filter import config
+    from landuse_filter.adapters.benchmark import read_reference
+    from landuse_filter.application.bench import compare
+    from landuse_filter.application.bench_plan import SMOKE, smoke_fp
+    from landuse_filter.application.results import decisions_by_sha
+
+    store = _store(work)
+    item_sha = store.read_json(f"plans/{SMOKE}/{config.GENERATION_FP}-smoke/items.json")
+    by_sha = decisions_by_sha(store, smoke_fp(config.GENERATION_FP, gpu))
+    candidate = {i: by_sha[s] for i, s in item_sha.items() if s in by_sha}
+    if len(candidate) < len(item_sha):
+        typer.echo(f"incomplete: {len(candidate)}/{len(item_sha)}", err=True)
+        raise typer.Exit(4)
+    reference = [r for r in read_reference(_bench_root(work)) if r.item_id in item_sha]
+    gate = compare(reference, candidate, resamples)
+    status = "admitted" if gate.passed else "rejected"
+    store.write_json(f"gates/admission/{gpu}.json", {"status": status, "gate": asdict(gate)})
+    _emit({"gpu": gpu, "status": status, **asdict(gate)}, as_json)
+    if not gate.passed:
+        raise typer.Exit(3)
+
+
 @bench_app.command("budget")
 def bench_budget(
     work: Path = WORK,
