@@ -6,7 +6,7 @@ benchmark gate in its own namespace before production uses it (ADR-0006).
 
 import asyncio
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from landuse_filter.application.node import AsyncEngine
@@ -41,9 +41,26 @@ async def _measure(engine: AsyncEngine, prompts: Sequence[list[int]], window: in
     return Point(window, done, time.monotonic() - start, tokens)
 
 
-def sweep(engine: AsyncEngine, prompts: Sequence[list[int]], windows: Sequence[int]) -> list[Point]:
-    """Same prompts at each concurrency level; prompts should be >= 4x the largest window."""
-    return [asyncio.run(_measure(engine, prompts, w)) for w in windows]
+def sweep(
+    engine: AsyncEngine,
+    prompts: Sequence[list[int]],
+    windows: Sequence[int],
+    on_point: Callable[[Point], None] = lambda _p: None,
+) -> list[Point]:
+    """Same prompts at each concurrency level, all in ONE event loop.
+
+    SGLang's engine is bound to the loop it first runs in; a fresh ``asyncio.run`` per
+    level hung forever after the first (regression: Lille job 2212508).
+    """
+
+    async def all_levels() -> list[Point]:
+        points = []
+        for w in windows:
+            points.append(await _measure(engine, prompts, w))
+            on_point(points[-1])
+        return points
+
+    return asyncio.run(all_levels())
 
 
 def best(points: Sequence[Point], tolerance: float = 0.03) -> Point:

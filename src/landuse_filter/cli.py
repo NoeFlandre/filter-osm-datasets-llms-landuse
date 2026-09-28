@@ -289,7 +289,8 @@ def node_plan(
 @node_app.command("calibrate")
 def node_calibrate(
     chunk: str = typer.Option(..., help="Chunk id whose prompts drive the sweep."),
-    windows: str = typer.Option("16,32,64,128,256"),
+    windows: str = typer.Option("16,32,64,128"),
+    max_prompts: int = typer.Option(300, help="Prompts per level (keeps a sweep well inside 1 h)."),
     bucket: str = typer.Option(OPS.bucket),
 ) -> None:
     """Sweep concurrency on this GPU; write a candidate profile (speed only)."""
@@ -307,14 +308,21 @@ def node_calibrate(
     scratch = _store(Path(os.environ.get("LUF_SCRATCH", "/tmp/luf-scratch")))  # noqa: S108
     remote = BucketRemote(bucket)
     fetch(remote, scratch, [f"chunks/{chunk}.parquet"])
-    prompts = scratch.read_chunk(chunk).column("input_ids").to_pylist()
+    prompts = scratch.read_chunk(chunk).column("input_ids").to_pylist()[:max_prompts]
     spec = detect_gpu()
     cfg = config.reference_config()
     engine = SGLangEngine(
         config.engine_kwargs(cfg, {"max_running_requests": max(levels)}), cfg["sampling"]
     )
     try:
-        points = sweep(engine, prompts, levels)
+        points = sweep(
+            engine,
+            prompts,
+            levels,
+            on_point=lambda p: typer.echo(
+                json.dumps({**asdict(p), "sps": round(p.sentences_per_second, 3)})
+            ),
+        )
     finally:
         engine.shutdown()
     pick = best(points)
