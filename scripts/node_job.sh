@@ -2,13 +2,14 @@
 # Runs on a reserved Grid'5000 node (never on a frontend). Usage:
 #   node_job.sh <code-dir> <assignment-id>                 GPU generation job
 #   node_job.sh <code-dir> plan <dataset> <revision>       CPU planning job
+#   node_job.sh <code-dir> calibrate <chunk-id>             GPU concurrency sweep
 # The Python environment is built once per site and lockfile into ~/luf/cache (NFS),
 # serialised with flock, then reused read-only by every later job. Bulk data lives on
 # node-local scratch and in the private HF Bucket; the NFS spool only carries small files.
 set -euo pipefail
 CODE=$1
 shift
-if [[ "${1:-}" == "plan" || "${1:-}" == "publish" ]]; then
+if [[ "${1:-}" == "plan" || "${1:-}" == "publish" || "${1:-}" == "calibrate" ]]; then
   MODE=$1
   shift
 else
@@ -33,7 +34,7 @@ export PATH="$HOME/.local/bin:$PATH"
 mkdir -p "$CACHE" "$LUF_WORK"
 trap 'rm -rf "$UV_CACHE_DIR" "$LUF_SCRATCH"' EXIT
 
-if [[ "$MODE" == "run" ]]; then
+if [[ "$MODE" == "run" || "$MODE" == "calibrate" ]]; then
 # SGLang's DeepEP import needs CUDA_HOME to JIT its kernels; OAR starts a non-login
 # shell, so load the site's CUDA toolkit explicitly (regression: job 4165500, Rennes).
 # shellcheck disable=SC1091
@@ -68,6 +69,9 @@ fi
 # (regression: job 4165509, "No such file or directory: 'ninja'").
 export PATH="$venv/bin:$PATH"
 echo "luf: env ready in $(( $(date +%s) - t0 ))s ($venv)"
+if [[ "$MODE" == "calibrate" ]]; then
+  exec "$venv/bin/luf" node calibrate --chunk "$1"
+fi
 if [[ "$MODE" != "run" ]]; then
   # Input shards and parts are large: keep them on node-local scratch, never on NFS.
   export HF_HOME="$LUF_SCRATCH/hf"
