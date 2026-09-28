@@ -49,3 +49,27 @@ def test_plan_benchmark_is_idempotent_and_tracked_by_status(tmp_path):
     assert sum(r["size"] for r in lines) == len({i.sentence for i in items})
     report = summarize(store, ["benchmark"])
     assert "benchmark" in report
+
+
+def test_status_reports_eta_and_alerts(tmp_path):
+    from landuse_filter.config import GENERATION_FP
+
+    store = WorkStore(tmp_path)
+    store.append_jsonl(
+        f"plans/d/{GENERATION_FP}/chunks.jsonl",
+        [{"chunk_id": "a", "size": 3600}, {"chunk_id": "b", "size": 10}],
+    )
+    store.append_jsonl("complete.jsonl", [{"chunk_id": "b"}])
+    store.write_json(
+        "assignments/x.json",
+        {"state": "submitted", "fp": GENERATION_FP, "gpu": "NVIDIA L40S", "chunks": ["a"]},
+    )
+    store.write_json("profiles/l40s.json", {"gpu": "l40s", "sentences_per_second": 2.0})
+    store.write_json(
+        "jobs/s/1.json",
+        {"gpu": "L40S", "sentences_per_second": 2.0, "completed": 100, "failed": 20},
+    )
+    report = summarize(store, ["d"])
+    assert report["d"]["texts_complete"] == 10
+    assert report["d"]["eta_hours"] == 0.5
+    assert report["alerts"]
