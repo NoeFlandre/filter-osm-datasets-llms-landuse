@@ -1,6 +1,5 @@
 """The 25,500-item benchmark as a work source, so parity runs use the production path."""
 
-
 import pyarrow as pa
 
 from landuse_filter.adapters.benchmark import BenchmarkItem
