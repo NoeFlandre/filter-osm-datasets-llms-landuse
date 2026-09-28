@@ -31,3 +31,15 @@ def test_progress_states():
     assert p.owner == {"a": "p1"}
     assert p.foreign == ("z",)
     assert progress(["a"], [Part("p", ("a",))]).state is State.COMPLETE
+
+
+def test_chunk_id_is_truncated_hash_of_sorted_shas():
+    from landuse_filter.domain.hashing import sha256_parts
+    from landuse_filter.domain.planning import chunk_id
+
+    assert chunk_id("fp", ["b", "a"]) == sha256_parts("fp", "a", "b")[:24]
+
+
+def test_bad_chunk_size_message():
+    with pytest.raises(ValueError, match=r"^chunk_size must be positive$"):
+        plan_chunks(texts(2), "fp", 0)

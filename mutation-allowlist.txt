@@ -1,0 +1,10 @@
+landuse_filter.domain.fingerprint.x_canonical_json__mutmut_4: ensure_ascii=None is falsy, identical to ensure_ascii=False
+landuse_filter.domain.policy.x_easter__mutmut_22: -15 and +15 are congruent modulo 30
+landuse_filter.domain.noninferiority.x__metrics__mutmut_2: astype(None) is numpy's default float64, same as astype(float)
+landuse_filter.domain.noninferiority.x__metrics__mutmut_16: precision only feeds f1; with tp+fp == 0, tp == 0 so f1 is 0 either way
+landuse_filter.domain.noninferiority.x__metrics__mutmut_20: precision only feeds f1; with tp+fp == 0, tp == 0 so f1 is 0 either way
+landuse_filter.domain.noninferiority.x__metrics__mutmut_29: recall only feeds f1; with tp+fn == 0, tp == 0 so f1 is 0 either way
+landuse_filter.domain.noninferiority.x__metrics__mutmut_33: recall only feeds f1; with tp+fn == 0, tp == 0 so f1 is 0 either way
+landuse_filter.domain.noninferiority.x__deltas__mutmut_10: sentinel name is always replaced: every language delta is finite (< inf)
+landuse_filter.domain.hashing.x_sha256_text__mutmut_4: "UTF-8" and "utf-8" name the same codec
+landuse_filter.domain.hashing.x_sha256_parts__mutmut_4: "\x1F" and "\x1f" are the same character

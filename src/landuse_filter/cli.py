@@ -11,10 +11,15 @@ import sys
 import time
 from datetime import timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
 
 from landuse_filter import __version__
+
+if TYPE_CHECKING:
+    from landuse_filter.adapters.store import WorkStore
+    from landuse_filter.application.controller import Controller, Settings
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help=__doc__)
 bench_app = typer.Typer(no_args_is_help=True, help="Benchmark parity: plan, budget, compare, gate.")
@@ -29,7 +34,7 @@ WORK = typer.Option(Path(os.environ.get("LUF_WORK", "work")), "--work", help="Lo
 JSON_OUT = typer.Option(False, "--json", help="Machine-readable output.")
 
 
-def _store(work: Path):
+def _store(work: Path) -> "WorkStore":
     from landuse_filter.adapters.store import WorkStore
 
     return WorkStore(work)
@@ -64,7 +69,9 @@ def fingerprint(as_json: bool = JSON_OUT) -> None:
     """Show the production generation fingerprint and serving config."""
     from landuse_filter import config
 
-    _emit({"config_fingerprint": config.GENERATION_FP, "config": config.reference_config()}, as_json)
+    _emit(
+        {"config_fingerprint": config.GENERATION_FP, "config": config.reference_config()}, as_json
+    )
 
 
 @app.command()
@@ -118,8 +125,47 @@ def bench_plan(work: Path = WORK, chunk_size: int = typer.Option(500, min=1)) ->
 
     items = read_items(_bench_root(work))
     encode = chat_encoder(config.MODEL_ID, config.MODEL_REVISION)
-    n = plan_benchmark(_store(work), items, encode, _template(), config.GENERATION_FP, chunk_size)
+    n = plan_benchmark(
+        _store(work),
+        items,
+        encode,
+        template=_template(),
+        fp=config.GENERATION_FP,
+        chunk_size=chunk_size,
+    )
     typer.echo(f"{len(items)} items -> {n} chunks")
+
+
+@bench_app.command("admit")
+def bench_admit(
+    gpu: str = typer.Option(..., help="GPU key, e.g. l40s (see `luf g5k inventory`)."),
+    work: Path = WORK,
+    resamples: int = typer.Option(10_000),
+    as_json: bool = JSON_OUT,
+) -> None:
+    """One-time admission of a GPU type: its full-benchmark run (namespace gpu-<key>)
+    must pass the same non-inferiority gate as parity."""
+    from dataclasses import asdict
+
+    from landuse_filter import config
+    from landuse_filter.adapters.benchmark import read_reference
+    from landuse_filter.application.bench import compare
+    from landuse_filter.application.results import decisions_by_sha
+
+    store = _store(work)
+    item_sha = store.read_json(f"plans/benchmark/{config.GENERATION_FP}/items.json")
+    by_sha = decisions_by_sha(store, f"{config.GENERATION_FP}-gpu-{gpu}")
+    candidate = {i: by_sha[s] for i, s in item_sha.items() if s in by_sha}
+    if len(candidate) < len(item_sha):
+        typer.echo(f"incomplete: {len(candidate)}/{len(item_sha)}", err=True)
+        raise typer.Exit(4)
+    reference = [r for r in read_reference(_bench_root(work)) if r.item_id in item_sha]
+    gate = compare(reference, candidate, resamples)
+    status = "admitted" if gate.passed else "rejected"
+    store.write_json(f"gates/admission/{gpu}.json", {"status": status, "gate": asdict(gate)})
+    _emit({"gpu": gpu, "status": status, **asdict(gate)}, as_json)
+    if not gate.passed:
+        raise typer.Exit(3)
 
 
 @bench_app.command("budget")
@@ -146,6 +192,9 @@ def bench_compare(
     work: Path = WORK,
     resamples: int = typer.Option(10_000),
     label: str = typer.Option("reference-config", help="Name of the gate file to write."),
+    namespace: str | None = typer.Option(
+        None, help="Gate a candidate namespace instead of production."
+    ),
     as_json: bool = JSON_OUT,
 ) -> None:
     """Gate our benchmark generations against the published reference run."""
@@ -159,7 +208,8 @@ def bench_compare(
     store = _store(work)
     reference = list(read_reference(_bench_root(work)))
     item_sha = store.read_json(f"plans/benchmark/{config.GENERATION_FP}/items.json")
-    by_sha = decisions_by_sha(store, config.GENERATION_FP)
+    fp = f"{config.GENERATION_FP}-{namespace}" if namespace else config.GENERATION_FP
+    by_sha = decisions_by_sha(store, fp)
     candidate = {item: by_sha[sha] for item, sha in item_sha.items() if sha in by_sha}
     if len(candidate) < len(item_sha):
         typer.echo(f"incomplete: {len(candidate)}/{len(item_sha)} items generated", err=True)
@@ -167,8 +217,15 @@ def bench_compare(
     gate = compare(reference, candidate, resamples)
     from landuse_filter.adapters.benchmark import ReferencePrediction
 
-    ours = [ReferencePrediction(r.item_id, r.language, r.expected, candidate[r.item_id], 0, False, "") for r in reference]
-    payload = {"gate": asdict(gate), "ours": macro_scores(ours), "reference": macro_scores(reference)}
+    ours = [
+        ReferencePrediction(r.item_id, r.language, r.expected, candidate[r.item_id], 0, False, "")
+        for r in reference
+    ]
+    payload = {
+        "gate": asdict(gate),
+        "ours": macro_scores(ours),
+        "reference": macro_scores(reference),
+    }
     store.write_json(f"gates/{label}.json", payload)
     _emit(payload, as_json)
     if not gate.passed:
@@ -179,11 +236,69 @@ def bench_compare(
 
 
 @node_app.command("run")
-def node_run(assignment: str = typer.Option(..., help="Assignment id in $LUF_WORK/assignments.")) -> None:
+def node_run(
+    assignment: str = typer.Option(..., help="Assignment id in $LUF_WORK/assignments."),
+) -> None:
     """Run an assignment on this node's GPU (called by scripts/node_job.sh)."""
     from landuse_filter.application.node_main import run
 
     raise typer.Exit(run(assignment))
+
+
+@node_app.command("plan")
+def node_plan(
+    dataset: str = typer.Option(...),
+    revision: str = typer.Option(...),
+    bucket: str = typer.Option("NoeFlandre/landuse-filter-work"),
+    chunk_size: int = typer.Option(2000, min=1),
+) -> None:
+    """Scan a dataset on this node's scratch and publish chunks to the bucket."""
+    import signal
+
+    from landuse_filter import config
+    from landuse_filter.adapters.readers import SOURCES
+    from landuse_filter.adapters.remote import BucketRemote
+    from landuse_filter.adapters.tokenizer import chat_encoder
+    from landuse_filter.application.plan import download, list_input_files
+    from landuse_filter.application.remote_plan import run_plan
+
+    stop = {"requested": False}
+    for sig in (signal.SIGTERM, signal.SIGUSR2):
+        signal.signal(sig, lambda *_: stop.update(requested=True))
+    source = SOURCES[dataset]
+    scratch = _store(Path(os.environ.get("LUF_SCRATCH", "/tmp/luf-scratch")))  # noqa: S108
+    report = run_plan(
+        BucketRemote(bucket),
+        scratch,
+        dataset,
+        config.GENERATION_FP,
+        files=list_input_files(source, revision),
+        fetch=lambda path: download(source, path, revision),
+        encode=chat_encoder(config.MODEL_ID, config.MODEL_REVISION),
+        template=_template(),
+        chunk_size=chunk_size,
+        should_stop=lambda: stop["requested"],
+        forget=lambda p: p.resolve().unlink(missing_ok=True),
+    )
+    typer.echo(json.dumps(report))
+
+
+@node_app.command("publish")
+def node_publish(
+    dataset: str = typer.Option(...),
+    revision: str = typer.Option(...),
+    bucket: str = typer.Option("NoeFlandre/landuse-filter-work"),
+) -> None:
+    """Build and upload the -landuse dataset on this node's scratch."""
+    from dataclasses import asdict
+
+    from landuse_filter import config
+    from landuse_filter.adapters.remote import BucketRemote
+    from landuse_filter.application.remote_publish import run_publish
+
+    scratch = _store(Path(os.environ.get("LUF_SCRATCH", "/tmp/luf-scratch")))  # noqa: S108
+    report = run_publish(BucketRemote(bucket), scratch, dataset, revision, config.GENERATION_FP)
+    typer.echo(json.dumps(asdict(report)))
 
 
 # --- grid'5000 ------------------------------------------------------------------
@@ -191,15 +306,16 @@ def node_run(assignment: str = typer.Option(..., help="Assignment id in $LUF_WOR
 SITES = "grenoble,lille,lyon,nancy,rennes,sophia,toulouse,luxembourg"
 
 
-def _controller(work: Path, datasets: str, sites: str, **kw):
-    from landuse_filter.application.controller import Controller, Settings
+def _controller(work: Path, settings: "Settings") -> "Controller":
+    from landuse_filter.application.controller import Controller
 
-    settings = Settings(datasets=datasets.split(","), sites=sites.split(","), **kw)
     return Controller(_store(work), settings, log=lambda m: typer.echo(m, err=True))
 
 
 @g5k_app.command("inventory")
-def g5k_inventory(work: Path = WORK, site: str = typer.Option("nancy", help="Frontend to query from.")) -> None:
+def g5k_inventory(
+    work: Path = WORK, site: str = typer.Option("nancy", help="Frontend to query from.")
+) -> None:
     """Refresh the GPU cluster inventory of all sites (Reference API)."""
     from landuse_filter.adapters import g5k
     from landuse_filter.application.controller import admission, eligible, load_clusters
@@ -209,27 +325,55 @@ def g5k_inventory(work: Path = WORK, site: str = typer.Option("nancy", help="Fro
     store.write_json("inventory.json", g5k.inventory(site, script))
     for c in load_clusters(store):
         if eligible(c):
-            typer.echo(f"{c.site:10} {c.name:12} {c.gpu:32} {c.gpus_per_node}x{c.nodes:<3} "
-                       f"{'abaca' if c.production else 'default'}{' exotic' if c.exotic else ''}  {admission(store, c.gpu).value}")
+            typer.echo(
+                f"{c.site:10} {c.name:12} {c.gpu:32} {c.gpus_per_node}x{c.nodes:<3} "
+                f"{'abaca' if c.production else 'default'}{' exotic' if c.exotic else ''}  "
+                f"{admission(store, c.gpu).value}"
+            )
 
 
 @g5k_app.command("run")
 def g5k_run(
-    datasets: str = typer.Option(..., help="Comma-separated, in priority order (benchmark first for parity)."),
+    datasets: str = typer.Option(
+        ..., help="Comma-separated, in priority order (benchmark first for parity)."
+    ),
     work: Path = WORK,
     sites: str = typer.Option(SITES),
-    gpu_models: str = typer.Option("", help="Comma-separated gpu keys to allow (default: admitted models)."),
+    gpu_models: str = typer.Option(
+        "", help="Comma-separated gpu keys to allow (default: admitted models)."
+    ),
     max_jobs: int = typer.Option(12),
     max_jobs_per_site: int = typer.Option(4),
     walltime_minutes: int = typer.Option(60),
     besteffort: bool = typer.Option(False),
+    window: int | None = typer.Option(
+        None, help="Candidate concurrency (tuning); default: GPU profile."
+    ),
+    namespace: str | None = typer.Option(
+        None, help="Store a candidate config's results under <fp>-<namespace>."
+    ),
+    bucket: str | None = typer.Option(
+        None, help="Private HF Bucket for chunks and parts (keeps local disks empty)."
+    ),
     interval: int = typer.Option(300, help="Seconds between cycles."),
     once: bool = typer.Option(False, help="Run a single cycle and exit."),
 ) -> None:
     """The controller loop: reconcile, pull results, submit where GPUs are free now."""
-    ctl = _controller(work, datasets, sites, max_jobs_total=max_jobs, max_jobs_per_site=max_jobs_per_site,
-                      walltime=timedelta(minutes=walltime_minutes), besteffort=besteffort,
-                      gpu_models=[g for g in gpu_models.split(",") if g])
+    from landuse_filter.application.controller import Settings
+
+    settings = Settings(
+        datasets=datasets.split(","),
+        sites=sites.split(","),
+        max_jobs_total=max_jobs,
+        max_jobs_per_site=max_jobs_per_site,
+        walltime=timedelta(minutes=walltime_minutes),
+        besteffort=besteffort,
+        gpu_models=[g for g in gpu_models.split(",") if g],
+        window=window,
+        namespace=namespace,
+        bucket=bucket,
+    )
+    ctl = _controller(work, settings)
     while True:
         if ctl.store.exists("PAUSED"):
             ctl.settings.paused = True
@@ -240,14 +384,72 @@ def g5k_run(
         time.sleep(interval)
 
 
+@g5k_app.command("cpu-job")
+def g5k_cpu_job(
+    mode: str = typer.Argument(..., help="plan or publish"),
+    site: str = typer.Option(..., help="Site to run the CPU job on."),
+    dataset: str = typer.Option(...),
+    revision: str = typer.Option(...),
+    walltime_minutes: int = typer.Option(60),
+) -> None:
+    """Submit one resumable planning or publishing job (default queue, one CPU node)."""
+    if mode not in ("plan", "publish"):
+        raise typer.BadParameter("mode must be plan or publish")
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from landuse_filter.adapters import g5k
+    from landuse_filter.application.controller import commit, git_archive
+    from landuse_filter.domain.capacity import walltime_text
+    from landuse_filter.domain.policy import allowed_window
+
+    window = allowed_window(datetime.now(ZoneInfo("Europe/Paris")), starts_now=True)
+    wall = (
+        min(timedelta(minutes=walltime_minutes), window.max_walltime)
+        if window
+        else timedelta(hours=1)
+    )
+    code_commit = commit()
+    code = g5k.deploy_code(site, code_commit, git_archive(code_commit))
+    g5k.ssh(site, f"mkdir -p {g5k.REMOTE_ROOT}/logs")
+    g5k.policy_check(site)
+    args = (
+        ["-q", "default"]
+        + (["-t", window.job_type] if window and window.job_type else [])
+        + [
+            "-p",
+            "gpu_count = 0",
+            "-l",
+            f"host=1,walltime={walltime_text(wall)}",
+            "--checkpoint",
+            "300",
+            "-n",
+            f"{g5k.JOB_PREFIX}plan-{dataset[:20]}",
+            "-O",
+            f"{g5k.REMOTE_ROOT}/logs/%jobid%.out",
+            "-E",
+            f"{g5k.REMOTE_ROOT}/logs/%jobid%.err",
+            f"{code}/scripts/node_job.sh {code} {mode} {dataset} {revision}",
+        ]
+    )
+    job_id = g5k.submit(site, args)
+    g5k.policy_check(site)
+    typer.echo(f"{mode} job {job_id} on {site} ({walltime_text(wall)})")
+
+
 @g5k_app.command("pause")
-def g5k_pause(work: Path = WORK, cancel: bool = typer.Option(False, help="Also oardel our live jobs.")) -> None:
+def g5k_pause(
+    work: Path = WORK, cancel: bool = typer.Option(False, help="Also oardel our live jobs.")
+) -> None:
     """Stop submitting new jobs (running jobs drain unless --cancel)."""
     store = _store(work)
     store.path("PAUSED").parent.mkdir(parents=True, exist_ok=True)
     store.path("PAUSED").write_text("paused\n")
     if cancel:
-        ctl = _controller(work, "benchmark", SITES)
+        from landuse_filter.application.controller import Settings
+
+        sites = [str(s) for s in SITES.split(",")]
+        ctl = _controller(work, Settings(datasets=[], sites=sites))
         typer.echo("\n".join(ctl.cancel_all()) or "no live jobs")
 
 
@@ -269,8 +471,54 @@ def g5k_storage(sites: str = typer.Option(SITES)) -> None:
             typer.echo(f"{site}: unreachable ({exc})", err=True)
 
 
+store_app = typer.Typer(no_args_is_help=True, help="Mirror the work tree to a private HF Bucket.")
+app.add_typer(store_app, name="store")
+BUCKET = typer.Option("NoeFlandre/landuse-filter-work", help="Private Hugging Face Bucket id.")
+
+
+@store_app.command("push")
+def store_push(work: Path = WORK, bucket: str = BUCKET) -> None:
+    """Upload the local work tree (plans, chunks, parts, ledger, gates) to the bucket."""
+    from landuse_filter.adapters.store import Bucket
+
+    target = Bucket(bucket)
+    target.ensure()
+    target.push(_store(work))
+    typer.echo(f"pushed {work} -> hf://buckets/{bucket}")
+
+
+@store_app.command("pull")
+def store_pull(work: Path = WORK, bucket: str = BUCKET) -> None:
+    """Restore the work tree from the bucket (e.g. on a new controller machine)."""
+    from landuse_filter.adapters.store import Bucket
+
+    Bucket(bucket).pull(_store(work))
+    typer.echo(f"pulled hf://buckets/{bucket} -> {work}")
+
+
 @app.command()
-def status(work: Path = WORK, datasets: str = typer.Option("benchmark"), as_json: bool = JSON_OUT) -> None:
+def publish(
+    dataset: str = typer.Option(..., help="Input dataset name."),
+    revision: str = typer.Option(..., help="Pinned input revision (same as planning)."),
+    work: Path = WORK,
+    dry_run: bool = typer.Option(False, help="Build labels locally; upload nothing."),
+    as_json: bool = JSON_OUT,
+) -> None:
+    """Mirror the input and upload labels/generations for every fully generated file."""
+    from dataclasses import asdict
+
+    from landuse_filter.application.publish import publish as run_publish
+
+    report = run_publish(_store(work), dataset, revision, dry_run=dry_run)
+    _emit(asdict(report), as_json)
+    if report.new_files == 0:
+        raise typer.Exit(4)
+
+
+@app.command()
+def status(
+    work: Path = WORK, datasets: str = typer.Option("benchmark"), as_json: bool = JSON_OUT
+) -> None:
     """Progress per dataset: chunks complete / pending, live assignments, throughput."""
     from landuse_filter.application.status import summarize
 

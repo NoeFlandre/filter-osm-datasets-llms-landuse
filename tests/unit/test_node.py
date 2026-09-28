@@ -17,12 +17,21 @@ class FakeEngine:
     async def generate(self, input_ids):
         self.calls += 1
         await asyncio.sleep(0.001 * (input_ids[0] % 3))
-        return {"text": "think</think>yes", "meta_info": {"completion_tokens": 5, "finish_reason": {"type": "stop"}}}
+        return {
+            "text": "think</think>yes",
+            "meta_info": {"completion_tokens": 5, "finish_reason": {"type": "stop"}},
+        }
 
 
 def chunk(store, n=10):
     shas = [f"s{i:02d}" for i in range(n)]
-    store.write_chunk("c1", pa.table({"text_sha256": shas, "text": shas, "input_ids": [[i, 1] for i in range(n)]}, schema=CHUNK))
+    store.write_chunk(
+        "c1",
+        pa.table(
+            {"text_sha256": shas, "text": shas, "input_ids": [[i, 1] for i in range(n)]},
+            schema=CHUNK,
+        ),
+    )
     return shas
 
 
@@ -56,3 +65,27 @@ def test_stop_then_resume_redoes_only_missing(tmp_path):
     second = asyncio.run(runner(store, second_engine).run(["c1"]))
     assert second.chunks_done == ["c1"]
     assert second_engine.calls == 10 - done
+
+
+def test_decisions_from_parts(tmp_path):
+    from landuse_filter.application.results import decisions_by_sha
+
+    store = WorkStore(tmp_path)
+    chunk(store, n=3)
+    asyncio.run(runner(store, FakeEngine()).run(["c1"]))
+    assert set(decisions_by_sha(store, "fp").values()) == {"yes"}
+
+
+def test_identical_part_repairs_a_corrupt_copy(tmp_path):
+    """Regression (flaky resume scenario): identical content reuses the name; repair it."""
+    import pyarrow as pa
+
+    from landuse_filter.adapters.store import WorkStore
+
+    store = WorkStore(tmp_path)
+    table = pa.table({"text_sha256": ["a"]})
+    part = store.write_part("fp", "c", table)
+    path = next(store.part_paths("fp", "c"))
+    path.write_bytes(b"torn")
+    assert store.write_part("fp", "c", table) == part
+    assert store.read_part(path).column("text_sha256").to_pylist() == ["a"]

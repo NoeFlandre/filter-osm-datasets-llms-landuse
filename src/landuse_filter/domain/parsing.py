@@ -63,15 +63,22 @@ def parse_answer(answer: str) -> Verdict:
     """Parse the answer region: exact, then leading, then a single distinct label."""
     if not answer:
         return _failed(Failure.EMPTY)
+    return _anchored(answer) or _by_labels(answer)
+
+
+def _anchored(answer: str) -> Verdict | None:
     for pattern, mode in ((_EXACT, ParseMode.EXACT), (_LEADING, ParseMode.LEADING)):
         match = pattern.search(answer)
         if match:
             return Verdict(Decision(match.group(1).lower()), mode)
+    return None
+
+
+def _by_labels(answer: str) -> Verdict:
     labels = {m.lower() for m in _LABEL.findall(answer)}
     if len(labels) == 1:
         return Verdict(Decision(labels.pop()), ParseMode.LAST)
     if labels:
         return _failed(Failure.AMBIGUOUS)
-    if _FOREIGN.search(answer):
-        return _failed(Failure.NON_ENGLISH_TOKEN)
-    return _failed(Failure.NO_LABEL)
+    foreign = _FOREIGN.search(answer)
+    return _failed(Failure.NON_ENGLISH_TOKEN if foreign else Failure.NO_LABEL)

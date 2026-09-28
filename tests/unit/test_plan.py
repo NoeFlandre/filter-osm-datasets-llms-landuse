@@ -43,7 +43,9 @@ def test_emit_holds_back_partial_chunks_until_final(tmp_path):
     assert p.emit(encode, "S: {}", chunk_size=50, final=True) == 0  # idempotent
     store = WorkStore(tmp_path)
     lines = store.read_jsonl(f"plans/{WEBSITE}/fp/chunks.jsonl")
-    total = sum(pq.read_table(store.path(f"chunks/{row['chunk_id']}.parquet")).num_rows for row in lines)
+    total = sum(
+        pq.read_table(store.path(f"chunks/{row['chunk_id']}.parquet")).num_rows for row in lines
+    )
     assert total == unique
 
 

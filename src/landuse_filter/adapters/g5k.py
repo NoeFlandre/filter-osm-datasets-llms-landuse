@@ -23,18 +23,24 @@ class Job:
     name: str
     state: str
     queue: str
+    scheduled_start: int | None = None
 
 
 def ssh(site: str, command: str, *, timeout: float = 120, stdin: bytes | None = None) -> str:
     try:
         done = subprocess.run(
             ["ssh", *SSH_OPTIONS, site, command],
-            input=stdin, capture_output=True, timeout=timeout, check=False,
+            input=stdin,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
         )
     except subprocess.TimeoutExpired as exc:
         raise RemoteError(f"{site}: timed out: {command[:80]}") from exc
     if done.returncode != 0:
-        raise RemoteError(f"{site}: exit {done.returncode}: {done.stderr.decode(errors='replace')[-500:]}")
+        raise RemoteError(
+            f"{site}: exit {done.returncode}: {done.stderr.decode(errors='replace')[-500:]}"
+        )
     return done.stdout.decode()
 
 
@@ -49,7 +55,14 @@ def our_jobs(site: str) -> list[Job]:
     """Our live jobs on ``site`` (name prefix ``luf-``); others are never touched."""
     payload = json.loads(ssh(site, "oarstat -u -J") or "{}")
     return [
-        Job(site, str(job_id), j.get("name") or "", j.get("state", ""), j.get("queue", ""))
+        Job(
+            site,
+            str(job_id),
+            j.get("name") or "",
+            j.get("state", ""),
+            j.get("queue", ""),
+            j.get("scheduled_start"),
+        )
         for job_id, j in payload.items()
         if (j.get("name") or "").startswith(JOB_PREFIX)
     ]
@@ -70,12 +83,19 @@ def submit(site: str, arguments: list[str]) -> str:
     return match.group(1)
 
 
+def scheduled_start(site: str, job_id: str) -> tuple[str, int | None]:
+    """(state, predicted start epoch) of one of our jobs."""
+    payload = json.loads(ssh(site, f"oarstat -j {int(job_id)} -J") or "{}")
+    job = next(iter(payload.values()), {})
+    return job.get("state", "Unknown"), job.get("scheduled_start") or job.get("start_time")
+
+
 def cancel(site: str, job_id: str) -> None:
     ssh(site, f"oardel {int(job_id)}")
 
 
 def site_status(site: str) -> dict:
-    url = f"https://api.grid5000.fr/stable/sites/{site}/status?disks=no&job_details=no&waiting=no"
+    url = f"https://api.grid5000.fr/stable/sites/{site}/status?disks=no&job_details=yes&waiting=yes"
     return json.loads(ssh(site, f"curl -sf {shlex.quote(url)}"))
 
 
@@ -86,10 +106,18 @@ def inventory(site: str, script: Path) -> list[dict]:
 def deploy_code(site: str, commit: str, archive: bytes) -> str:
     """Unpack a ``git archive`` of ``commit`` into ``~/luf/code/<commit>``; idempotent."""
     target = f"{REMOTE_ROOT}/code/{commit}"
-    ssh(site, f"test -f {target}/.complete || (rm -rf {target} && mkdir -p {target} && "
-              f"tar -x -C {target} && touch {target}/.complete)", stdin=archive, timeout=300)
-    ssh(site, "command -v uv >/dev/null || test -x ~/.local/bin/uv || "
-              "(curl -LsSf https://astral.sh/uv/install.sh | sh) >/dev/null 2>&1")
+    ssh(
+        site,
+        f"test -f {target}/.complete || (rm -rf {target} && mkdir -p {target} && "
+        f"tar -x -C {target} && touch {target}/.complete)",
+        stdin=archive,
+        timeout=300,
+    )
+    ssh(
+        site,
+        "command -v uv >/dev/null || test -x ~/.local/bin/uv || "
+        "(curl -LsSf https://astral.sh/uv/install.sh | sh) >/dev/null 2>&1",
+    )
     return target
 
 

@@ -18,6 +18,7 @@ class Slot:
     walltime: timedelta
     job_type: str | None
     sentences_per_second: float  # per GPU, from the calibrated profile
+    besteffort: bool = False  # submit as a preemptible besteffort job
 
 
 def useful_sentences(slot: Slot, setup: timedelta) -> float:

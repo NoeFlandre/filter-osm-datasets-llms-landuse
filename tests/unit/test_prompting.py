@@ -33,3 +33,14 @@ def test_render_requires_placeholder():
 
 def test_digest_constant_matches_reference_run():
     assert PROMPT_SHA256.startswith("2fb48569")
+
+
+def test_render_replaces_only_first_placeholder():
+    assert render_prompt("{} and {}", "x") == "x and {}"
+
+
+def test_error_messages_name_the_problem():
+    with pytest.raises(PromptError, match=r"^prompt template has no '\{\}' placeholder$"):
+        render_prompt("no slot", "x")
+    with pytest.raises(PromptError, match=f"^prompt sha256 abc != benchmark {PROMPT_SHA256}$"):
+        check_prompt_digest("abc")

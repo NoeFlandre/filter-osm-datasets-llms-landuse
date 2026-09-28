@@ -6,8 +6,12 @@ import signal
 import socket
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from landuse_filter.adapters.store import WorkStore
+
+if TYPE_CHECKING:
+    from landuse_filter.adapters.remote import BucketRemote
 from landuse_filter.application.node import Runner
 from landuse_filter.domain.gpu import GpuSpec, gpu_key, ineligibility
 
@@ -34,11 +38,33 @@ def detect_gpu() -> GpuSpec:
     return GpuSpec(name, (int(major), int(minor or 0)), int(float(memory)))
 
 
+def workspace(spool: WorkStore, assignment: dict) -> tuple[WorkStore, "BucketRemote | None"]:
+    """Where chunks and parts live on the node, and the remote store if any.
+
+    With a bucket, everything bulky stays on node-local scratch and is uploaded as it
+    is produced; the NFS spool only carries the assignment and the job summary.
+    """
+    bucket = assignment.get("bucket")
+    if not bucket:
+        return spool, None
+    from landuse_filter.adapters.remote import BucketRemote
+    from landuse_filter.application.sync import fetch, fetch_manifests
+
+    default = "/tmp/luf-scratch"  # noqa: S108 - node-local scratch, set per job by node_job.sh
+    scratch = WorkStore(Path(os.environ.get("LUF_SCRATCH", default)))
+    remote = BucketRemote(bucket)
+    fetch(remote, scratch, [f"chunks/{c}.parquet" for c in assignment["chunks"]])
+    for chunk in assignment["chunks"]:
+        fetch_manifests(remote, scratch, f"parts/{assignment['fp']}/{chunk}/")
+    return scratch, remote
+
+
 def run(assignment_id: str) -> int:
     from landuse_filter.adapters.engine import SGLangEngine
 
-    store = WorkStore(Path(os.environ.get("LUF_WORK", "work")))
-    assignment = store.read_json(f"assignments/{assignment_id}.json")
+    spool = WorkStore(Path(os.environ.get("LUF_WORK", "work")))
+    assignment = spool.read_json(f"assignments/{assignment_id}.json")
+    store, remote = workspace(spool, assignment)
     spec = detect_gpu()
     reason = ineligibility(spec)
     if reason:
@@ -56,18 +82,44 @@ def run(assignment_id: str) -> int:
         "oar_job_id": os.environ.get("OAR_JOB_ID", "local"),
         "assignment_id": assignment_id,
     }
-    runner = Runner(store, engine, assignment["fp"], provenance, window=assignment["window"],
-                    should_stop=stop)
+    on_part = None
+    if remote is not None:
+        from landuse_filter.application.sync import prune_local_part, upload_part
+
+        def on_part(chunk: str, part: str, shas: list[str]) -> None:
+            upload_part(remote, store, assignment["fp"], chunk, part_id=part, shas=shas)
+            prune_local_part(store, assignment["fp"], chunk, part)
+
+    runner = Runner(
+        store,
+        engine,
+        assignment["fp"],
+        provenance,
+        window=assignment["window"],
+        should_stop=stop,
+        on_part=on_part,
+    )
     try:
         stats = asyncio.run(runner.run(assignment["chunks"]))
     finally:
         engine.shutdown()
-    store.write_json(f"jobs/{assignment['site']}/{provenance['oar_job_id']}.json", {
-        "assignment_id": assignment_id, "host": socket.gethostname(), "gpu": spec.model,
-        "gpu_key": gpu_key(spec.model), "load_seconds": round(load_seconds, 1),
-        "completed": stats.completed, "generated_tokens": stats.generated_tokens,
-        "sentences_per_second": round(stats.sentences_per_second, 3),
-        "chunks_done": stats.chunks_done, "stopped": stop.requested,
-    })
+    summary_path = f"jobs/{assignment['site']}/{provenance['oar_job_id']}.json"
+    spool.write_json(
+        summary_path,
+        {
+            "assignment_id": assignment_id,
+            "host": socket.gethostname(),
+            "gpu": spec.model,
+            "gpu_key": gpu_key(spec.model),
+            "load_seconds": round(load_seconds, 1),
+            "completed": stats.completed,
+            "generated_tokens": stats.generated_tokens,
+            "sentences_per_second": round(stats.sentences_per_second, 3),
+            "chunks_done": stats.chunks_done,
+            "stopped": stop.requested,
+        },
+    )
+    if remote is not None:
+        remote.put([(spool.path(summary_path), summary_path)])
     print(f"luf: done {stats.completed} sentences, {stats.sentences_per_second:.2f}/s", flush=True)  # noqa: T201
     return 0
