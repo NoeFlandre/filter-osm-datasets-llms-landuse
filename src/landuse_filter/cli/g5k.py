@@ -160,20 +160,32 @@ def g5k_calibrate_job(
     work: Path = WORK,
 ) -> None:
     """Submit one GPU calibration job on ``cluster`` (1 h, starts now or is cancelled)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
     from landuse_filter.adapters import g5k
     from landuse_filter.application.controller import commit, git_archive
     from landuse_filter.application.inventory import load_clusters
     from landuse_filter.domain.capacity import oarsub_arguments
+    from landuse_filter.domain.policy import allowed_window
 
     target = next(c for c in load_clusters(_store(work)) if c.site == site and c.name == cluster)
+    # Same usage-policy window as the controller: -t night outside daytime, otherwise a
+    # 1 h immediate job (regression: an untyped job at 18:40 was scheduled for 08:02).
+    window = (
+        None
+        if target.production
+        else allowed_window(datetime.now(ZoneInfo("Europe/Paris")), starts_now=True)
+    )
+    wall = min(timedelta(hours=1), window.max_walltime) if window else timedelta(hours=1)
     code_commit = commit()
     code = g5k.deploy_code(site, code_commit, git_archive(code_commit))
     g5k.ssh(site, f"mkdir -p {g5k.REMOTE_ROOT}/logs")
     g5k.policy_check(site)
     args = oarsub_arguments(
         target,
-        timedelta(hours=1),
-        None,
+        wall,
+        window.job_type if window else None,
         f"{g5k.JOB_PREFIX}calib-{cluster}",
         command=f"{code}/scripts/node_job.sh {code} calibrate {chunk}",
     )
