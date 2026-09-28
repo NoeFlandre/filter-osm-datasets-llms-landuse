@@ -93,7 +93,7 @@ ban-relative-imports = "all"
 # The card is Markdown that shows an example DuckDB recipe; nothing is executed.
 "src/landuse_filter/application/card.py" = ["S608"]
 # Typer maps flags to boolean parameters; a command's parameters are its interface.
-"src/landuse_filter/cli.py" = ["PLC0415", "PLR0913", "PLR0917", "FBT001", "FBT002", "FBT003", "B008"]
+"src/landuse_filter/cli/*" = ["PLC0415", "PLR0913", "PLR0917", "FBT001", "FBT002", "FBT003", "B008"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -114,7 +114,7 @@ omit = [
     "src/landuse_filter/adapters/tokenizer.py",
     "src/landuse_filter/adapters/remote/*",
     "src/landuse_filter/application/node_main.py",
-    "src/landuse_filter/cli.py",
+    "src/landuse_filter/cli/*",
 ]
 
 [tool.coverage.report]

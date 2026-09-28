@@ -1,0 +1,260 @@
+"""`luf g5k` commands."""
+
+import hashlib
+import json
+import time
+from datetime import timedelta
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import typer
+
+from landuse_filter.cli import (
+    OPS,
+    SITES,
+    WORK,
+    _store,
+    g5k_app,
+)
+
+if TYPE_CHECKING:
+    from landuse_filter.application.controller import Controller, Settings
+
+
+def _controller(work: Path, settings: "Settings") -> "Controller":
+    from landuse_filter.application.controller import Controller
+
+    return Controller(_store(work), settings, log=lambda m: typer.echo(m, err=True))
+
+
+@g5k_app.command("inventory")
+def g5k_inventory(
+    work: Path = WORK, site: str = typer.Option("nancy", help="Frontend to query from.")
+) -> None:
+    """Refresh the GPU cluster inventory of all sites (Reference API)."""
+    from landuse_filter.adapters import g5k
+    from landuse_filter.application.controller import admission, eligible, load_clusters
+
+    script = Path(__file__).parent / "adapters" / "remote" / "inventory.py"
+    store = _store(work)
+    store.write_json("inventory.json", g5k.inventory(site, script))
+    for c in load_clusters(store):
+        if eligible(c):
+            typer.echo(
+                f"{c.site:10} {c.name:12} {c.gpu:32} {c.gpus_per_node}x{c.nodes:<3} "
+                f"{'abaca' if c.production else 'default'}{' exotic' if c.exotic else ''}  "
+                f"{admission(store, c.gpu).value}"
+            )
+
+
+@g5k_app.command("run")
+def g5k_run(
+    datasets: str = typer.Option(
+        ..., help="Comma-separated, in priority order (benchmark first for parity)."
+    ),
+    work: Path = WORK,
+    sites: str = typer.Option(SITES),
+    gpu_models: str = typer.Option(
+        "", help="Comma-separated gpu keys to allow (default: admitted models)."
+    ),
+    max_jobs: int = typer.Option(OPS.max_jobs),
+    max_jobs_per_site: int = typer.Option(OPS.max_jobs_per_site),
+    walltime_minutes: int = typer.Option(OPS.walltime_minutes),
+    besteffort: bool = typer.Option(False),
+    window: int | None = typer.Option(
+        None, help="Candidate concurrency (tuning); default: GPU profile."
+    ),
+    namespace: str | None = typer.Option(
+        None, help="Store a candidate config's results under <fp>-<namespace>."
+    ),
+    bucket: str | None = typer.Option(
+        None, help="Private HF Bucket for chunks and parts (keeps local disks empty)."
+    ),
+    interval: int = typer.Option(OPS.interval_seconds, help="Seconds between cycles."),
+    once: bool = typer.Option(False, help="Run a single cycle and exit."),
+) -> None:
+    """The controller loop: reconcile, pull results, submit where GPUs are free now."""
+    from landuse_filter.application.controller import Settings
+
+    settings = Settings(
+        datasets=datasets.split(","),
+        sites=sites.split(","),
+        max_jobs_total=max_jobs,
+        max_jobs_per_site=max_jobs_per_site,
+        walltime=timedelta(minutes=walltime_minutes),
+        besteffort=besteffort,
+        gpu_models=[g for g in gpu_models.split(",") if g],
+        window=window,
+        namespace=namespace,
+        bucket=bucket,
+    )
+    ctl = _controller(work, settings)
+    while True:
+        if ctl.store.exists("PAUSED"):
+            ctl.settings.paused = True
+        report = ctl.cycle()
+        typer.echo(json.dumps(report))
+        if once or (report["pending_chunks"] == 0 and report["live_jobs"] == 0):
+            break
+        time.sleep(interval)
+
+
+@g5k_app.command("cpu-job")
+def g5k_cpu_job(
+    mode: str = typer.Argument(..., help="plan or publish"),
+    site: str = typer.Option(..., help="Site to run the CPU job on."),
+    dataset: str = typer.Option(...),
+    revision: str = typer.Option(...),
+    walltime_minutes: int = typer.Option(60),
+) -> None:
+    """Submit one resumable planning or publishing job (default queue, one CPU node)."""
+    if mode not in ("plan", "publish"):
+        raise typer.BadParameter("mode must be plan or publish")
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from landuse_filter.adapters import g5k
+    from landuse_filter.application.controller import commit, git_archive
+    from landuse_filter.domain.capacity import walltime_text
+    from landuse_filter.domain.policy import allowed_window
+
+    window = allowed_window(datetime.now(ZoneInfo("Europe/Paris")), starts_now=True)
+    wall = (
+        min(timedelta(minutes=walltime_minutes), window.max_walltime)
+        if window
+        else timedelta(hours=1)
+    )
+    code_commit = commit()
+    code = g5k.deploy_code(site, code_commit, git_archive(code_commit))
+    g5k.ssh(site, f"mkdir -p {g5k.REMOTE_ROOT}/logs")
+    g5k.policy_check(site)
+    args = (
+        ["-q", "default"]
+        + (["-t", window.job_type] if window and window.job_type else [])
+        + [
+            "-p",
+            "gpu_count = 0",
+            "-l",
+            f"host=1,walltime={walltime_text(wall)}",
+            "--checkpoint",
+            "300",
+            "-n",
+            f"{g5k.JOB_PREFIX}plan-{dataset[:20]}",
+            "-O",
+            f"{g5k.REMOTE_ROOT}/logs/%jobid%.out",
+            "-E",
+            f"{g5k.REMOTE_ROOT}/logs/%jobid%.err",
+            f"{code}/scripts/node_job.sh {code} {mode} {dataset} {revision}",
+        ]
+    )
+    job_id = g5k.submit(site, args)
+    g5k.policy_check(site)
+    typer.echo(f"{mode} job {job_id} on {site} ({walltime_text(wall)})")
+
+
+@g5k_app.command("calibrate-job")
+def g5k_calibrate_job(
+    site: str = typer.Option(...),
+    cluster: str = typer.Option(...),
+    chunk: str = typer.Option(..., help="A benchmark chunk id (prompts for the sweep)."),
+    work: Path = WORK,
+) -> None:
+    """Submit one GPU calibration job on ``cluster`` (1 h, starts now or is cancelled)."""
+    from landuse_filter.adapters import g5k
+    from landuse_filter.application.controller import commit, git_archive, load_clusters
+    from landuse_filter.domain.capacity import oarsub_arguments
+
+    target = next(c for c in load_clusters(_store(work)) if c.site == site and c.name == cluster)
+    code_commit = commit()
+    code = g5k.deploy_code(site, code_commit, git_archive(code_commit))
+    g5k.ssh(site, f"mkdir -p {g5k.REMOTE_ROOT}/logs")
+    g5k.policy_check(site)
+    args = oarsub_arguments(
+        target,
+        timedelta(hours=1),
+        None,
+        f"{g5k.JOB_PREFIX}calib-{cluster}",
+        command=f"{code}/scripts/node_job.sh {code} calibrate {chunk}",
+    )
+    job_id = g5k.submit(site, args)
+    g5k.policy_check(site)
+    typer.echo(f"calibration job {job_id} on {site}/{cluster}")
+
+
+@g5k_app.command("pause")
+def g5k_pause(
+    work: Path = WORK, cancel: bool = typer.Option(False, help="Also oardel our live jobs.")
+) -> None:
+    """Stop submitting new jobs (running jobs drain unless --cancel)."""
+    store = _store(work)
+    store.path("PAUSED").parent.mkdir(parents=True, exist_ok=True)
+    store.path("PAUSED").write_text("paused\n")
+    if cancel:
+        from landuse_filter.application.controller import Settings
+
+        sites = [str(s) for s in SITES.split(",")]
+        ctl = _controller(work, Settings(datasets=[], sites=sites))
+        typer.echo("\n".join(ctl.cancel_all()) or "no live jobs")
+
+
+@g5k_app.command("resume")
+def g5k_resume(work: Path = WORK) -> None:
+    """Allow the controller to submit again."""
+    _store(work).path("PAUSED").unlink(missing_ok=True)
+
+
+@g5k_app.command("storage")
+def g5k_storage(sites: str = typer.Option(SITES)) -> None:
+    """Home quota usage per site and size of the project's ~/luf tree."""
+    from landuse_filter.adapters import g5k
+
+    for site in sites.split(","):
+        try:
+            typer.echo(f"{site}: {g5k.home_usage(site).strip()}")
+        except g5k.RemoteError as exc:
+            typer.echo(f"{site}: unreachable ({exc})", err=True)
+
+
+@g5k_app.command("clean")
+def g5k_clean(
+    sites: str = typer.Option(SITES),
+    work: Path = WORK,
+    apply: bool = typer.Option(False, help="Actually delete (default: dry run)."),
+) -> None:
+    """Delete stale project files under ~/luf on each site (old code, envs, logs, synced parts)."""
+    from landuse_filter.adapters import g5k
+    from landuse_filter.application.controller import commit
+    from landuse_filter.domain.cleanup import Entry, Keep, cleanup_plan
+
+    store = _store(work)
+    assignments = [
+        store.read_json(f"assignments/{p.name}") for p in store.path("assignments").glob("*.json")
+    ]
+    live = [a for a in assignments if a.get("state") in ("submitting", "submitted")]
+    commits = {a["provenance"]["code_commit"] for a in live} | {commit()}
+    lock = hashlib.sha256(
+        (Path(__file__).resolve().parents[2] / "uv.lock").read_bytes()
+    ).hexdigest()[:12]
+    for site in sites.split(","):
+        try:
+            listing = g5k.project_listing(site)
+        except g5k.RemoteError as exc:
+            typer.echo(f"{site}: unreachable ({exc})", err=True)
+            continue
+        synced = frozenset(
+            p.removeprefix("luf/work/parts/")
+            for p, _ in listing
+            if p.startswith("luf/work/parts/")
+            and (
+                store.exists(p.removeprefix("luf/work/"))
+                or store.exists(p.removeprefix("luf/work/").replace(".parquet", ".json"))
+            )
+        )
+        plan = cleanup_plan(
+            [Entry(p, a) for p, a in listing], Keep(frozenset(commits), lock, synced)
+        )
+        typer.echo(f"{site}: {len(plan)} path(s) {'deleted' if apply else 'would be deleted'}")
+        for p in plan[:20]:
+            typer.echo(f"  {p}")
+        if apply and plan:
+            g5k.remove(site, plan)
