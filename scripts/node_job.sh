@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
 # Runs on a reserved Grid'5000 node (never on a frontend). Usage:
-#   node_job.sh <code-dir> <assignment-id>
+#   node_job.sh <code-dir> <assignment-id>                 GPU generation job
+#   node_job.sh <code-dir> plan <dataset> <revision>       CPU planning job
 # The Python environment is built once per site and lockfile into ~/luf/cache (NFS),
-# serialised with flock, then reused read-only by every later job. Models are public,
-# so no credential ever reaches Grid'5000; results go to the site spool ~/luf/work.
+# serialised with flock, then reused read-only by every later job. Bulk data lives on
+# node-local scratch and in the private HF Bucket; the NFS spool only carries small files.
 set -euo pipefail
 CODE=$1
-ASSIGNMENT=$2
+shift
+if [[ "${1:-}" == "plan" ]]; then
+  MODE=plan
+  shift
+else
+  MODE=run
+  ASSIGNMENT=$1
+fi
 CACHE="$HOME/luf/cache"
 export LUF_WORK="$HOME/luf/work"
 export HF_HOME="$CACHE/hf"
@@ -25,6 +33,7 @@ export PATH="$HOME/.local/bin:$PATH"
 mkdir -p "$CACHE" "$LUF_WORK"
 trap 'rm -rf "$UV_CACHE_DIR" "$LUF_SCRATCH"' EXIT
 
+if [[ "$MODE" == "run" ]]; then
 # SGLang's DeepEP import needs CUDA_HOME to JIT its kernels; OAR starts a non-login
 # shell, so load the site's CUDA toolkit explicitly (regression: job 4165500, Rennes).
 # shellcheck disable=SC1091
@@ -39,6 +48,7 @@ export CUDA_HOME="$cuda_root"
 export LD_LIBRARY_PATH="$cuda_root/lib64:$cuda_root/lib:${LD_LIBRARY_PATH:-}"
 # LFM2.5 declares 131072 context tokens; SGLang's derived default is 128000.
 export SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1
+fi
 
 cd "$CODE"
 lock_sha=$(sha256sum uv.lock | cut -c1-12)
@@ -58,4 +68,9 @@ fi
 # (regression: job 4165509, "No such file or directory: 'ninja'").
 export PATH="$venv/bin:$PATH"
 echo "luf: env ready in $(( $(date +%s) - t0 ))s ($venv)"
+if [[ "$MODE" == "plan" ]]; then
+  # Input shards are large: download them to node-local scratch, never to NFS.
+  export HF_HOME="$LUF_SCRATCH/hf"
+  exec "$venv/bin/luf" node plan --dataset "$1" --revision "$2"
+fi
 exec "$venv/bin/luf" node run --assignment "$ASSIGNMENT"

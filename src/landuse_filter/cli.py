@@ -267,6 +267,44 @@ def node_run(
     raise typer.Exit(run(assignment))
 
 
+@node_app.command("plan")
+def node_plan(
+    dataset: str = typer.Option(...),
+    revision: str = typer.Option(...),
+    bucket: str = typer.Option("NoeFlandre/landuse-filter-work"),
+    chunk_size: int = typer.Option(2000, min=1),
+) -> None:
+    """Scan a dataset on this node's scratch and publish chunks to the bucket."""
+    import signal
+
+    from landuse_filter import config
+    from landuse_filter.adapters.readers import SOURCES
+    from landuse_filter.adapters.remote import BucketRemote
+    from landuse_filter.adapters.tokenizer import chat_encoder
+    from landuse_filter.application.plan import download, list_input_files
+    from landuse_filter.application.remote_plan import run_plan
+
+    stop = {"requested": False}
+    for sig in (signal.SIGTERM, signal.SIGUSR2):
+        signal.signal(sig, lambda *_: stop.update(requested=True))
+    source = SOURCES[dataset]
+    scratch = _store(Path(os.environ.get("LUF_SCRATCH", "/tmp/luf-scratch")))  # noqa: S108
+    report = run_plan(
+        BucketRemote(bucket),
+        scratch,
+        dataset,
+        config.GENERATION_FP,
+        files=list_input_files(source, revision),
+        fetch=lambda path: download(source, path, revision),
+        encode=chat_encoder(config.MODEL_ID, config.MODEL_REVISION),
+        template=_template(),
+        chunk_size=chunk_size,
+        should_stop=lambda: stop["requested"],
+        forget=lambda p: p.resolve().unlink(missing_ok=True),
+    )
+    typer.echo(json.dumps(report))
+
+
 # --- grid'5000 ------------------------------------------------------------------
 
 SITES = "grenoble,lille,lyon,nancy,rennes,sophia,toulouse,luxembourg"
@@ -350,6 +388,56 @@ def g5k_run(
         if once or (report["pending_chunks"] == 0 and report["live_jobs"] == 0):
             break
         time.sleep(interval)
+
+
+@g5k_app.command("plan-job")
+def g5k_plan_job(
+    site: str = typer.Option(..., help="Site to run the CPU planning job on."),
+    dataset: str = typer.Option(...),
+    revision: str = typer.Option(...),
+    walltime_minutes: int = typer.Option(60),
+) -> None:
+    """Submit one resumable planning job (default queue, one CPU node)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from landuse_filter.adapters import g5k
+    from landuse_filter.application.controller import commit, git_archive
+    from landuse_filter.domain.capacity import walltime_text
+    from landuse_filter.domain.policy import allowed_window
+
+    window = allowed_window(datetime.now(ZoneInfo("Europe/Paris")), starts_now=True)
+    wall = (
+        min(timedelta(minutes=walltime_minutes), window.max_walltime)
+        if window
+        else timedelta(hours=1)
+    )
+    code_commit = commit()
+    code = g5k.deploy_code(site, code_commit, git_archive(code_commit))
+    g5k.ssh(site, f"mkdir -p {g5k.REMOTE_ROOT}/logs")
+    g5k.policy_check(site)
+    args = (
+        ["-q", "default"]
+        + (["-t", window.job_type] if window and window.job_type else [])
+        + [
+            "-p",
+            "gpu_count = 0",
+            "-l",
+            f"host=1,walltime={walltime_text(wall)}",
+            "--checkpoint",
+            "300",
+            "-n",
+            f"{g5k.JOB_PREFIX}plan-{dataset[:20]}",
+            "-O",
+            f"{g5k.REMOTE_ROOT}/logs/%jobid%.out",
+            "-E",
+            f"{g5k.REMOTE_ROOT}/logs/%jobid%.err",
+            f"{code}/scripts/node_job.sh {code} plan {dataset} {revision}",
+        ]
+    )
+    job_id = g5k.submit(site, args)
+    g5k.policy_check(site)
+    typer.echo(f"planning job {job_id} on {site} ({walltime_text(wall)})")
 
 
 @g5k_app.command("pause")
