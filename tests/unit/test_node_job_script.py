@@ -82,3 +82,12 @@ def test_relative_code_path_points_python_to_deployed_source(tmp_path):
     )
     observed = json.loads(result.stdout.splitlines()[-1])
     assert observed == {"cwd": str(code), "pythonpath": str(code / "src")}
+
+
+def test_cpu_jobs_do_not_install_the_gpu_stack():
+    """Regression (Lyon jobs 2070709/2070898): planning installed sglang, torch and CUDA
+    into node-local /tmp, filled the disk and crashed with "No space left on device"."""
+    assert '--extra "$EXTRA"' in SCRIPT
+    assert "--extra gpu" not in SCRIPT
+    assert "EXTRA=tokenize" in SCRIPT
+    assert "EXTRA=gpu" in SCRIPT

@@ -57,7 +57,10 @@ t0=$(date +%s)
 # home quota per site and can be slow to create (regressions: Grenoble job 3122433
 # copying for an hour; sites over quota). Removed on exit.
 venv="/tmp/$USER-venv-${OAR_JOB_ID:-local}"
-UV_PROJECT_ENVIRONMENT="$venv" UV_LINK_MODE=copy uv sync --frozen --no-dev --no-install-project --extra gpu --python 3.12
+# Only GPU jobs need SGLang/torch/CUDA (~15 GB); CPU jobs (plan, publish) get the light
+# tokeniser stack (regression: Lyon planning jobs filled /tmp and died).
+if [[ "$MODE" == "run" || "$MODE" == "calibrate" ]]; then EXTRA=gpu; else EXTRA=tokenize; fi
+UV_PROJECT_ENVIRONMENT="$venv" UV_LINK_MODE=copy uv sync --frozen --no-dev --no-install-project --extra "$EXTRA" --python 3.12
 trap 'rm -rf "$UV_CACHE_DIR" "$LUF_SCRATCH" "$venv"' EXIT
 # FlashInfer JIT-compiles with the venv's ninja: the venv's bin must be on PATH
 # (regression: job 4165509, "No such file or directory: 'ninja'").
