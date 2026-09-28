@@ -4,6 +4,7 @@ theme:
   name: material
 nav:
   - Overview: index.md
+  - Architecture: architecture.md
   - Output schema: schema.md
   - Benchmark parity: benchmark.md
   - Sizing: sizing.md
@@ -21,3 +22,9 @@ nav:
       - adr/0009-work-store.md
       - adr/0010-parity-and-hardware.md
       - adr/0011-parallel-controllers.md
+markdown_extensions:
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
