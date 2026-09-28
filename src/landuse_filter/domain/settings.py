@@ -29,6 +29,15 @@ class OpsSettings:
         return f"{self.namespace}/{dataset}-landuse"
 
 
+INT_FIELDS = (
+    "walltime_minutes",
+    "night_walltime_minutes",
+    "max_jobs",
+    "max_jobs_per_site",
+    "interval_seconds",
+)
+
+
 def _need(table: Mapping[str, Any], key: str, kind: type[T]) -> T:
     value = table.get(key)
     if not isinstance(value, kind) or (isinstance(value, bool) and kind is int):
@@ -36,29 +45,35 @@ def _need(table: Mapping[str, Any], key: str, kind: type[T]) -> T:
     return value
 
 
-def parse_settings(raw: Mapping[str, Any]) -> OpsSettings:
-    if raw.get("schema_version") != SCHEMA_VERSION:
-        raise SettingsError(f"luf.toml: schema_version must be {SCHEMA_VERSION}")
-    hub, g5k = raw.get("hub", {}), raw.get("grid5000", {})
+def _table(raw: Mapping[str, Any], name: str) -> Mapping[str, Any]:
+    table = raw.get(name)
+    if not isinstance(table, Mapping):
+        raise SettingsError(f"luf.toml: missing [{name}] table")
+    return table
+
+
+def _sites(g5k: Mapping[str, Any]) -> tuple[str, ...]:
     sites = _need(g5k, "sites", list)
     if not sites or not all(isinstance(s, str) and s for s in sites):
         raise SettingsError("luf.toml: 'sites' must be a non-empty list of site names")
-    ints = {
-        k: _need(g5k, k, int)
-        for k in (
-            "walltime_minutes",
-            "night_walltime_minutes",
-            "max_jobs",
-            "max_jobs_per_site",
-            "interval_seconds",
-        )
-    }
-    if any(v <= 0 for v in ints.values()):
-        raise SettingsError("luf.toml: numeric settings must be positive")
+    return tuple(sites)
+
+
+def _positive(g5k: Mapping[str, Any], key: str) -> int:
+    value = _need(g5k, key, int)
+    if value < 1:
+        raise SettingsError(f"luf.toml: {key!r} must be positive")
+    return value
+
+
+def parse_settings(raw: Mapping[str, Any]) -> OpsSettings:
+    if raw.get("schema_version") != SCHEMA_VERSION:
+        raise SettingsError(f"luf.toml: schema_version must be {SCHEMA_VERSION}")
+    hub, g5k = _table(raw, "hub"), _table(raw, "grid5000")
     return OpsSettings(
         namespace=_need(hub, "namespace", str),
         bucket=_need(hub, "bucket", str),
-        sites=tuple(sites),
+        sites=_sites(g5k),
         cuda_module=_need(g5k, "cuda_module", str),
-        **ints,
+        **{key: _positive(g5k, key) for key in INT_FIELDS},
     )
