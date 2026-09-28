@@ -51,3 +51,32 @@ def test_killed_plan_resumes_from_bucket_on_another_node(tmp_path):
     lines = remote.root / f"plans/{WEBSITE}/fp/chunks.jsonl"
     ids = lines.read_text().splitlines()
     assert len(ids) == len(set(ids))
+
+
+def test_resume_works_when_the_downloaded_index_is_read_only(tmp_path, monkeypatch):
+    """Regression (Grenoble job 3123094): a read-only restored index broke resumed planning."""
+    remote, _, first = plan(tmp_path, "s1", stop_after=1)
+    original_get = remote.get
+
+    def read_only_get(files):
+        original_get(files)
+        for _, dst in files:
+            dst.chmod(0o444)
+
+    monkeypatch.setattr(remote, "get", read_only_get)
+    from landuse_filter.application.remote_plan import run_plan
+
+    scratch = WorkStore(tmp_path / "s3")
+    report = run_plan(
+        remote,
+        scratch,
+        WEBSITE,
+        "fp",
+        files=FILES,
+        fetch=lambda _: INPUTS / "website.parquet",
+        encode=lambda ps: [[len(p)] for p in ps],
+        template="S: {}",
+        chunk_size=7,
+        should_stop=lambda: False,
+    )
+    assert report["files_done"] == 3
