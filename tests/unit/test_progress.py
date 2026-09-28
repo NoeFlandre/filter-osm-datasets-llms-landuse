@@ -13,3 +13,7 @@ def test_eta_uses_the_aggregate_live_rate():
 def test_failed_rate_alert(completed, failed, n):
     assert len(alerts(completed, failed)) == n
     assert FAILED_RATE_ALERT == 0.05
+
+
+def test_alert_message_states_the_rate_and_threshold():
+    assert alerts(100, 20) == ["failed rate 20.0% > 5% (benchmark 2.4%)"]
