@@ -6,11 +6,14 @@ submits new short jobs where GPUs are free *now*. All state is files under the w
 tree, so killing the controller at any point loses nothing.
 """
 
+import json
 import subprocess
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -55,6 +58,9 @@ class Settings:
 
 
 DEPLOY_REF = "origin/main"
+# Absolute: a controller's working directory can vanish when the volume remounts
+# (regression: every controller died on `git rev-parse` with status 128).
+REPO = Path(__file__).resolve().parents[3]
 
 
 def commit(ref: str = DEPLOY_REF) -> str:
@@ -63,9 +69,10 @@ def commit(ref: str = DEPLOY_REF) -> str:
     Background loops share the working checkout, which may be on a branch; deploying
     HEAD would ship unreviewed code to Grid'5000.
     """
-    subprocess.run(["git", "fetch", "-q", "origin", "main"], capture_output=True, check=False)
+    git = ["git", "-C", str(REPO)]
+    subprocess.run([*git, "fetch", "-q", "origin", "main"], capture_output=True, check=False)
     return subprocess.run(
-        ["git", "rev-parse", ref], capture_output=True, text=True, check=True
+        [*git, "rev-parse", ref], capture_output=True, text=True, check=True
     ).stdout.strip()
 
 
@@ -425,5 +432,36 @@ class Controller:
 
 def git_archive(ref: str) -> bytes:
     return subprocess.run(
-        ["git", "archive", "--format=tar", ref], capture_output=True, check=True
+        ["git", "-C", str(REPO), "archive", "--format=tar", ref], capture_output=True, check=True
     ).stdout
+
+
+def run_loop(
+    ctl: "Controller",
+    *,
+    interval: float,
+    once: bool = False,
+    sleep: Callable[[float], None] = time.sleep,
+    emit: Callable[[str], None] = print,
+) -> None:
+    """Run cycles until nothing is left, surviving any transient failure.
+
+    A failed cycle (network, Hub, git, a vanished working directory) is logged and
+    retried at the next interval; the loop never dies because of one bad cycle
+    (regression: every controller crashed on a git error when the volume remounted).
+    """
+    while True:
+        if ctl.store.exists("PAUSED"):
+            ctl.settings.paused = True
+        try:
+            report = ctl.cycle()
+        except Exception as exc:  # noqa: BLE001 - keep the controller alive; state is on disk
+            ctl.log(f"cycle failed ({type(exc).__name__}: {exc}); retrying in {interval:.0f}s")
+            if once:
+                return
+            sleep(interval)
+            continue
+        emit(json.dumps(report))
+        if once or (report["pending_chunks"] == 0 and report["live_jobs"] == 0):
+            return
+        sleep(interval)

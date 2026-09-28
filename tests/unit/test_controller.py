@@ -239,3 +239,40 @@ def test_parallel_controllers_do_not_release_each_others_work(world):
     other.reconcile()  # sees none of nancy's jobs
     assert [a["id"] for a in c.live()] == [a["id"] for a in theirs]  # untouched
     assert other.live() == []
+
+
+def test_loop_survives_a_failing_cycle(world):
+    """Regression: one git error (vanished cwd) killed every controller."""
+    from landuse_filter.application.controller import run_loop
+
+    c, fake = world
+    calls = {"n": 0}
+    real = c.cycle
+
+    def flaky(now=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("git rev-parse failed")
+        return {"pending_chunks": 0, "live_jobs": 0, "submitted": []}
+
+    c.cycle = flaky
+    logs, sleeps, out = [], [], []
+    c.log = logs.append
+    run_loop(c, interval=5, sleep=sleeps.append, emit=out.append)
+    assert calls["n"] == 2
+    assert sleeps == [5]
+    assert "cycle failed (RuntimeError" in logs[0]
+    assert out
+    assert '"pending_chunks": 0' in out[0]
+    c.cycle = real
+
+
+def test_loop_once_returns_after_one_failed_cycle(world):
+    from landuse_filter.application.controller import run_loop
+
+    c, fake = world
+    c.cycle = lambda now=None: (_ for _ in ()).throw(OSError("boom"))
+    c.log = lambda m: None
+    run_loop(
+        c, interval=5, once=True, sleep=lambda s: (_ for _ in ()).throw(AssertionError("no sleep"))
+    )

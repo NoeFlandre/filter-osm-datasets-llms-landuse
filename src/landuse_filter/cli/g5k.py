@@ -1,8 +1,6 @@
 """`luf g5k` commands."""
 
 import hashlib
-import json
-import time
 from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -89,14 +87,9 @@ def g5k_run(
         bucket=bucket,
     )
     ctl = _controller(work, settings)
-    while True:
-        if ctl.store.exists("PAUSED"):
-            ctl.settings.paused = True
-        report = ctl.cycle()
-        typer.echo(json.dumps(report))
-        if once or (report["pending_chunks"] == 0 and report["live_jobs"] == 0):
-            break
-        time.sleep(interval)
+    from landuse_filter.application.controller import run_loop
+
+    run_loop(ctl, interval=interval, once=once, emit=typer.echo)
 
 
 @g5k_app.command("cpu-job")
