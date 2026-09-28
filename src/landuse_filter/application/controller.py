@@ -98,9 +98,18 @@ def profile_for(store: WorkStore, gpu: str) -> Profile:
     )
 
 
-def commit() -> str:
+DEPLOY_REF = "origin/main"
+
+
+def commit(ref: str = DEPLOY_REF) -> str:
+    """The commit jobs run: the latest merged main, never a local feature branch.
+
+    Background loops share the working checkout, which may be on a branch; deploying
+    HEAD would ship unreviewed code to Grid'5000.
+    """
+    subprocess.run(["git", "fetch", "-q", "origin", "main"], capture_output=True, check=False)
     return subprocess.run(
-        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+        ["git", "rev-parse", ref], capture_output=True, text=True, check=True
     ).stdout.strip()
 
 
