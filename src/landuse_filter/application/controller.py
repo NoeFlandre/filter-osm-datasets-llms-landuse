@@ -212,6 +212,11 @@ class Controller:
         for site in self.settings.sites:
             if not any(a["site"] == site and a.get("job_id") for a in self.ledger()):
                 continue
+            try:
+                g5k.ssh(site, f"mkdir -p {g5k.REMOTE_ROOT}/work/parts {g5k.REMOTE_ROOT}/work/jobs")
+            except g5k.RemoteError as exc:
+                self.log(f"{site}: unreachable for pull: {exc}")
+                continue
             for sub in ("parts", "jobs"):
                 self.store.path(sub).mkdir(parents=True, exist_ok=True)
                 try:
