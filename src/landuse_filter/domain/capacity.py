@@ -23,6 +23,11 @@ class Cluster:
     def production(self) -> bool:
         return "production" in self.queues or "abaca" in self.queues
 
+    @property
+    def submittable(self) -> bool:
+        """Reachable through abaca or default (e.g. Nancy's ``granite`` is testing-only)."""
+        return self.production or "default" in self.queues
+
 
 def _blocked(state: Mapping, now: float, walltime_s: float) -> bool:
     """A waiting reservation on the node starts before our job would end."""
@@ -90,8 +95,14 @@ def oarsub_arguments(  # noqa: PLR0913 - one parameter per OAR option
     log_dir: str = "luf/logs",
 ) -> list[str]:
     args: list[str] = []
-    if cluster.production and not besteffort:
+    # Always name the queue: some sites route unqualified jobs elsewhere
+    # (regression: Lyon rejected an unqualified sirius job with "queue 'abaca' does not exist").
+    if besteffort:
+        pass
+    elif cluster.production:
         args += ["-q", "abaca"]
+    else:
+        args += ["-q", "default"]
     if besteffort:
         args += ["-t", "besteffort"]
     if cluster.exotic:

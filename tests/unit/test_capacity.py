@@ -48,9 +48,24 @@ def test_production_cluster_uses_abaca_without_night_type():
 def test_default_cluster_gets_night_type_and_exotic():
     exotic = Cluster("lyon", "sirius", "A100", 40960, (8, 0), 8, 1, ("default",), exotic=True)
     args = oarsub_arguments(exotic, timedelta(minutes=90), "night", "n", command="c")
-    assert args[0:2] == ["-t", "exotic"]
+    assert args[:4] == ["-q", "default", "-t", "exotic"]  # regression: Lyon routes unqualified jobs
     assert "night" in args
-    assert "-q" not in args
+
+
+def test_testing_only_cluster_is_not_submittable():
+    granite = Cluster(
+        "nancy",
+        "granite",
+        "RTX PRO 6000",
+        97887,
+        (12, 0),
+        2,
+        18,
+        ("admin", "testing"),
+        exotic=False,
+    )
+    assert not granite.submittable
+    assert GRES.submittable
 
 
 def test_besteffort():

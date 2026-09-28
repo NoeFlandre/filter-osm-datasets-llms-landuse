@@ -74,6 +74,7 @@ def eligible(cluster: Cluster) -> bool:
     return (
         cluster.vendor.lower() == "nvidia"
         and cluster.arch == "x86_64"
+        and cluster.submittable
         and ineligibility(spec) is None
     )
 
