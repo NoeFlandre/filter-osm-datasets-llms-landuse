@@ -9,9 +9,11 @@ def test_cuda_home_is_exported_before_sglang_starts():
     assert "module load" in SCRIPT
 
 
-def test_env_is_built_once_under_a_lock():
-    assert "flock 9" in SCRIPT
+def test_missing_site_env_is_built_on_node_local_disk_not_nfs():
+    """Regression (Grenoble job 3122433): copying the venv onto slow NFS took the whole job."""
+    assert 'venv="/tmp/$USER-venv-' in SCRIPT
     assert ".ready" in SCRIPT
+    assert "flock" not in SCRIPT
 
 
 def test_token_is_read_from_a_private_file_never_echoed():

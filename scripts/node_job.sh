@@ -3,8 +3,8 @@
 #   node_job.sh <code-dir> <assignment-id>                 GPU generation job
 #   node_job.sh <code-dir> plan <dataset> <revision>       CPU planning job
 #   node_job.sh <code-dir> calibrate <chunk-id>             GPU concurrency sweep
-# The Python environment is built once per site and lockfile into ~/luf/cache (NFS),
-# serialised with flock, then reused read-only by every later job. Bulk data lives on
+# A finished per-site environment in ~/luf/cache (NFS) is reused read-only when
+# present; otherwise each job builds a private one on node-local /tmp. Bulk data lives on
 # node-local scratch and in the private HF Bucket; the NFS spool only carries small files.
 set -euo pipefail
 CODE=$1
@@ -56,14 +56,12 @@ lock_sha=$(sha256sum uv.lock | cut -c1-12)
 venv="$CACHE/venv-$lock_sha"
 t0=$(date +%s)
 if [[ ! -f "$venv/.ready" ]]; then
-  (
-    flock 9
-    if [[ ! -f "$venv/.ready" ]]; then
-      rm -rf "$venv"
-      UV_PROJECT_ENVIRONMENT="$venv" uv sync --frozen --no-dev --extra gpu --python 3.12
-      touch "$venv/.ready"
-    fi
-  ) 9>"$CACHE/venv-$lock_sha.lock"
+  # No finished site environment: build a private one on node-local disk. Copying
+  # ~8 GB onto a slow NFS home can outlast the walltime (regression: Grenoble job
+  # 3122433 spent its whole hour copying), and it would eat into the home quota.
+  venv="/tmp/$USER-venv-${OAR_JOB_ID:-local}"
+  UV_PROJECT_ENVIRONMENT="$venv" UV_LINK_MODE=copy uv sync --frozen --no-dev --extra gpu --python 3.12
+  trap 'rm -rf "$UV_CACHE_DIR" "$LUF_SCRATCH" "$venv"' EXIT
 fi
 # FlashInfer JIT-compiles with the venv's ninja: the venv's bin must be on PATH
 # (regression: job 4165509, "No such file or directory: 'ninja'").
