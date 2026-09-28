@@ -16,6 +16,9 @@ from typing import TYPE_CHECKING
 import typer
 
 from landuse_filter import __version__
+from landuse_filter.adapters.settings_file import load as load_settings
+
+OPS = load_settings()  # luf.toml (or $LUF_CONFIG): sites, bucket, walltimes, caps
 
 if TYPE_CHECKING:
     from landuse_filter.adapters.store import WorkStore
@@ -249,7 +252,7 @@ def node_run(
 def node_plan(
     dataset: str = typer.Option(...),
     revision: str = typer.Option(...),
-    bucket: str = typer.Option("NoeFlandre/landuse-filter-work"),
+    bucket: str = typer.Option(OPS.bucket),
     chunk_size: int = typer.Option(2000, min=1),
 ) -> None:
     """Scan a dataset on this node's scratch and publish chunks to the bucket."""
@@ -287,7 +290,7 @@ def node_plan(
 def node_calibrate(
     chunk: str = typer.Option(..., help="Chunk id whose prompts drive the sweep."),
     windows: str = typer.Option("16,32,64,128,256"),
-    bucket: str = typer.Option("NoeFlandre/landuse-filter-work"),
+    bucket: str = typer.Option(OPS.bucket),
 ) -> None:
     """Sweep concurrency on this GPU; write a candidate profile (speed only)."""
     from dataclasses import asdict
@@ -341,7 +344,7 @@ def node_calibrate(
 def node_publish(
     dataset: str = typer.Option(...),
     revision: str = typer.Option(...),
-    bucket: str = typer.Option("NoeFlandre/landuse-filter-work"),
+    bucket: str = typer.Option(OPS.bucket),
 ) -> None:
     """Build and upload the -landuse dataset on this node's scratch."""
     from dataclasses import asdict
@@ -357,7 +360,7 @@ def node_publish(
 
 # --- grid'5000 ------------------------------------------------------------------
 
-SITES = "grenoble,lille,lyon,nancy,rennes,sophia,toulouse,luxembourg"
+SITES = ",".join(OPS.sites)
 
 
 def _controller(work: Path, settings: "Settings") -> "Controller":
@@ -396,9 +399,9 @@ def g5k_run(
     gpu_models: str = typer.Option(
         "", help="Comma-separated gpu keys to allow (default: admitted models)."
     ),
-    max_jobs: int = typer.Option(12),
-    max_jobs_per_site: int = typer.Option(4),
-    walltime_minutes: int = typer.Option(60),
+    max_jobs: int = typer.Option(OPS.max_jobs),
+    max_jobs_per_site: int = typer.Option(OPS.max_jobs_per_site),
+    walltime_minutes: int = typer.Option(OPS.walltime_minutes),
     besteffort: bool = typer.Option(False),
     window: int | None = typer.Option(
         None, help="Candidate concurrency (tuning); default: GPU profile."
@@ -409,7 +412,7 @@ def g5k_run(
     bucket: str | None = typer.Option(
         None, help="Private HF Bucket for chunks and parts (keeps local disks empty)."
     ),
-    interval: int = typer.Option(300, help="Seconds between cycles."),
+    interval: int = typer.Option(OPS.interval_seconds, help="Seconds between cycles."),
     once: bool = typer.Option(False, help="Run a single cycle and exit."),
 ) -> None:
     """The controller loop: reconcile, pull results, submit where GPUs are free now."""
@@ -556,7 +559,7 @@ def g5k_storage(sites: str = typer.Option(SITES)) -> None:
 
 store_app = typer.Typer(no_args_is_help=True, help="Mirror the work tree to a private HF Bucket.")
 app.add_typer(store_app, name="store")
-BUCKET = typer.Option("NoeFlandre/landuse-filter-work", help="Private Hugging Face Bucket id.")
+BUCKET = typer.Option(OPS.bucket, help="Private Hugging Face Bucket id.")
 
 
 @store_app.command("push")

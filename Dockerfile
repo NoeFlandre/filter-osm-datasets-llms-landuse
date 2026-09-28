@@ -4,7 +4,7 @@ FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
 COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /usr/local/bin/uv
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv UV_PYTHON_INSTALL_DIR=/opt/python UV_LINK_MODE=copy
 WORKDIR /app
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock README.md luf.toml ./
 COPY src ./src
 COPY data ./data
 COPY scripts ./scripts
