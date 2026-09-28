@@ -35,3 +35,8 @@ def test_never_leaves_the_project_tree_or_touches_the_token(entries):
     plan = cleanup_plan(entries, KEEP)
     assert all(p.startswith("luf/") for p in plan)
     assert "luf/hf_token" not in plan
+
+
+def test_logs_are_kept_up_to_exactly_seven_days():
+    assert cleanup_plan([Entry("luf/logs/a.out", 7.0)], KEEP) == []
+    assert cleanup_plan([Entry("luf/logs/a.out", 7.01)], KEEP) == ["luf/logs/a.out"]
