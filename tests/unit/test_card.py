@@ -88,3 +88,14 @@ def test_card_without_failures_has_no_failed_section():
     f = facts()
     f = CardFacts(**{**{k: getattr(f, k) for k in f.__slots__}, "failures": {}})
     assert "### Failed rows" not in render_card(f)
+
+
+@pytest.mark.parametrize("dataset", sorted(JOINS))
+def test_join_recipe_reads_every_input_table_of_the_dataset(dataset):
+    """Wiki labels cover wikipedia/ and wikivoyage/ sentences: the recipe must read both."""
+    from landuse_filter.adapters.readers import SOURCES
+
+    card = render_card(facts(dataset=dataset))
+    for pattern in SOURCES[dataset].patterns:
+        assert f"'{pattern}'" in card
+        assert f"'labels/{pattern}'" in card
