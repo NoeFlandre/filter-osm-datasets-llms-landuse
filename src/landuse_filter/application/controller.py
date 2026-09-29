@@ -457,10 +457,30 @@ class Controller:
         return cancelled
 
 
+ARCHIVE_ATTEMPTS = 3
+_archives: dict[str, bytes] = {}
+
+
 def git_archive(ref: str) -> bytes:
-    return subprocess.run(
-        ["git", "-C", str(REPO), "archive", "--format=tar", ref], capture_output=True, check=True
-    ).stdout
+    """The repository at ``ref`` as a tar, read once per commit.
+
+    Retried because the external drive can fault under load (``git archive`` died with
+    SIGBUS), and cached because every cycle used to re-read a commit already deployed.
+    """
+    if ref not in _archives:
+        for attempt in range(ARCHIVE_ATTEMPTS):
+            try:
+                _archives[ref] = subprocess.run(
+                    ["git", "-C", str(REPO), "archive", "--format=tar", ref],
+                    capture_output=True,
+                    check=True,
+                ).stdout
+                break
+            except subprocess.CalledProcessError:
+                if attempt == ARCHIVE_ATTEMPTS - 1:
+                    raise
+                time.sleep(5)
+    return _archives[ref]
 
 
 def run_loop(
