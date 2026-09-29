@@ -24,6 +24,7 @@ def fake_hub(monkeypatch, tmp_path):
     monkeypatch.setattr(hub, "remote_files", lambda repo: set())
     monkeypatch.setattr(hub, "list_files", lambda repo, rev: ["polygons/a.parquet", "stats.json"])
     monkeypatch.setattr(hub, "download_all", lambda repo, rev, paths: [(local, p) for p in paths])
+    monkeypatch.setattr(hub, "open_file", lambda repo, path, revision=None: local)
     monkeypatch.setattr(
         hub, "upload", lambda repo, files, msg: uploads.append([d for _, d in files])
     )
@@ -62,6 +63,7 @@ def test_publishes_mirror_labels_generations_once(tmp_path, monkeypatch):
     assert "labels/polygons/a.parquet" in flat
     assert any(p.startswith("generations/") for p in flat)
     assert "README.md" in flat
+    assert "assets/yes_share_map.png" in flat  # website rows carry lat/lon: the map is drawn
     labels = pq.read_table(store.path(f"publish/{WEBSITE}/labels/polygons/a.parquet")).to_pylist()
     assert {r["decision"] for r in labels} <= {"yes", "skipped_unsplit"}
     before = len(uploads)
@@ -85,9 +87,13 @@ def test_card_counts_cover_files_published_by_earlier_runs(tmp_path, monkeypatch
     store.path(f"published/{WEBSITE}.card.sha256").unlink()
     gen_file = next(store.path("publish").glob(f"{WEBSITE}-gen-*/generations/*/*.parquet"))
     cards: list[str] = []
-    monkeypatch.setattr(
-        hub, "open_file", lambda repo, p: published if p.startswith("labels/") else gen_file
-    )
+
+    def open_file(repo, path, revision=None):
+        if path.startswith("labels/"):
+            return published
+        return gen_file if path.startswith("generations/") else INPUTS / "website.parquet"
+
+    monkeypatch.setattr(hub, "open_file", open_file)
     monkeypatch.setattr(
         hub,
         "upload",

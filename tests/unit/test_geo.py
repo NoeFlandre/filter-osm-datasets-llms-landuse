@@ -51,3 +51,20 @@ def test_polygons_with_missing_bbox_values_are_skipped():
     polygons = polygons.set_column(2, "bbox_min_x", pa.array([None, 10.0, 20.0], pa.float64()))
     result = description_cells(labels, language, polygons, cell_of)
     assert result.cells == {"11/41": [1, 0]}
+
+
+def test_website_rows_are_placed_at_the_polygon_lat_lon():
+    from landuse_filter.application.geo import website_cells
+
+    labels = pa.table(
+        {
+            "polygon_id": ["p1", "p1", "p2", "p3", "p4"],
+            "decision": ["yes", "no", "yes", "failed", "yes"],
+        }
+    )
+    polygons = pa.table(
+        {"polygon_id": ["p1", "p2", "p4"], "lat": [48.0, 10.0, None], "lon": [2.0, 20.0, 5.0]}
+    )
+    result = website_cells(labels, polygons, cell_of)
+    assert result.cells == {"2/48": [1, 1], "20/10": [1, 0]}
+    assert (result.labelled, result.located) == (4, 3)  # p4 has no coordinates
