@@ -5,17 +5,17 @@ from dataclasses import dataclass
 
 JOINS = {
     "osm-polygon-description-tag": (
-        "language-v1/data/*.parquet",
+        ("language-v1/data/*.parquet",),
         "USING (description_identity, tag_key)",
         "description_identity, tag_key, sentence_index",
     ),
     "osm-polygon-wikidata-and-wikipedia": (
-        "wikipedia/sentences/*.parquet",
+        ("wikipedia/sentences/*.parquet", "wikivoyage/sentences/*.parquet"),
         "USING (sentence_id)",
         "sentence_id",
     ),
     "osm-polygon-website-tag": (
-        "polygons/*.parquet",
+        ("polygons/*.parquet",),
         "USING (polygon_id)",
         "polygon_id, field (website | contact_website), sentence_index",
     ),
@@ -58,6 +58,13 @@ class CardFacts:
     unique_texts: int  # rows of the published generations/ tables
     gpu_rows: Mapping[str, int]  # generations per GPU key
     admitted: Mapping[str, Mapping[str, float]]  # gpu key -> gate numbers
+
+
+def _from(paths: tuple[str, ...], prefix: str = "") -> str:
+    """DuckDB table expression for one or several parquet globs."""
+    if len(paths) == 1:
+        return f"'{prefix}{paths[0]}'"
+    return "read_parquet([" + ", ".join(f"'{prefix}{p}'" for p in paths) + "])"
 
 
 def _ref(model: str) -> str:
@@ -149,8 +156,8 @@ A land-use / land-cover relevance label for every sentence of [`NoeFlandre/{f.da
 
 ```sql
 SELECT i.*, l.decision, g.raw_output
-FROM '{source}' i
-JOIN 'labels/{source}' l {using}
+FROM {_from(source)} i
+JOIN {_from(source, "labels/")} l {using}
 LEFT JOIN 'generations/*/*.parquet' g USING (generation_id);
 ```
 
