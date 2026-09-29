@@ -23,6 +23,7 @@ Gate results on the full benchmark (mixed A100-SXM4-40GB / A40 / L40S):
 | w64 | −0.0022 | −0.0070 (−0.0137) | −0.0026 | −0.14 pp | kn −0.043 | pass |
 | w96 | −0.0020 | −0.0069 (−0.0136) | −0.0025 | −0.16 pp | ar −0.039 | pass |
 | w128 | −0.0017 | −0.0047 (−0.0113) | −0.0021 | −0.09 pp | kn −0.050018 | **fail** |
+| w96 on H100 NVL / A100-PCIe / RTX A5000 / L4 (`w96b`) | −0.0019 | −0.0059 (−0.0126) | −0.0010 | −0.27 pp | tg −0.037 | pass |
 
 w128 fails only the per-language guard (limit 0.05), by 0.00002 on 300 items in one
 language. The guard is not loosened. **Production uses window 96** for the A100-SXM4-40GB,
