@@ -8,6 +8,7 @@
 Published files are recorded in ``published/<dataset>.jsonl``, so re-running resumes.
 """
 
+import hashlib
 import sqlite3
 from collections import Counter
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ from landuse_filter.adapters import hub
 from landuse_filter.adapters.indexes import ResolutionIndex
 from landuse_filter.adapters.readers import SOURCES
 from landuse_filter.adapters.store import WorkStore
+from landuse_filter.application import published_stats
 from landuse_filter.application.assemble import (
     MissingGenerationError,
     build_generations,
@@ -91,17 +93,18 @@ def publish(
         1 for _, d in new if d.startswith("labels/")
     )
     decisions = _decision_counts(out)
-    if new and not dry_run:
-        hub.upload(repo, new, f"Add land-use labels ({fp})")
-        store.append_jsonl(f"published/{dataset}.jsonl", [{"path": d} for _, d in new])
-        _card(
+    if not dry_run:
+        if new:
+            hub.upload(repo, new, f"Add land-use labels ({fp})")
+            store.append_jsonl(f"published/{dataset}.jsonl", [{"path": d} for _, d in new])
+        decisions = _refresh_card(
             store,
             dataset,
             repo=repo,
             revision=revision,
+            local={d: src for src, d in new},
             labelled=labelled,
             total=len(files),
-            decisions=decisions,
         )
     return PublishReport(labelled, len(files), len(new), decisions)
 
@@ -132,6 +135,39 @@ def _decision_counts(out: Path) -> dict[str, int]:
     return dict(counts)
 
 
+def _refresh_card(
+    store: WorkStore,
+    dataset: str,
+    *,
+    repo: str,
+    revision: str,
+    local: dict[str, Path],
+    labelled: int,
+    total: int,
+) -> dict[str, int]:
+    """Recount the card's numbers from every published file, then update the card."""
+    on_hub = {r["path"] for r in store.read_jsonl(f"published/{dataset}.jsonl")}
+    stats = published_stats.totals(
+        published_stats.complete(
+            store,
+            dataset,
+            on_hub | set(local),
+            lambda p: local[p] if p in local else hub.open_file(repo, p),
+        )
+    )
+    if stats["decisions"]:
+        _card(
+            store,
+            dataset,
+            repo=repo,
+            revision=revision,
+            labelled=labelled,
+            total=total,
+            stats=stats,
+        )
+    return stats["decisions"]
+
+
 def _card(
     store: WorkStore,
     dataset: str,
@@ -140,7 +176,7 @@ def _card(
     revision: str,
     labelled: int,
     total: int,
-    decisions: dict[str, int],
+    stats: dict,
 ) -> None:
     cfg = config.reference_config()
     admitted = {
@@ -158,10 +194,20 @@ def _card(
             fingerprint=config.GENERATION_FP,
             labelled_files=labelled,
             total_files=total,
-            decisions=decisions,
+            decisions=stats["decisions"],
+            failures=stats["failures"],
+            unique_texts=stats["unique_texts"],
+            gpu_rows=stats["gpus"],
             admitted=admitted,
         )
     )
+    digest = hashlib.sha256(text.encode()).hexdigest()
+    marker = store.path(f"published/{dataset}.card.sha256")
+    if marker.exists() and marker.read_text().strip() == digest:
+        return
     path = store.path(f"publish/{dataset}/README.md")
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     hub.upload(repo, [(path, "README.md")], "Update dataset card")
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(digest + "\n")

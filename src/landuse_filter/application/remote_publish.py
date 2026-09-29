@@ -18,10 +18,11 @@ def run_publish(
     if not restore_index(remote, scratch, dataset):
         raise FileNotFoundError(f"no planner index for {dataset} in the bucket; run planning first")
     fetch(remote, scratch, [p for p in remote.ls(f"parts/{fp}/") if p.endswith(".parquet")])
-    ledger = f"published/{dataset}.jsonl"
-    if ledger in remote.ls("published/"):
-        fetch(remote, scratch, [ledger])
+    fetch(remote, scratch, [g for g in remote.ls("gates/admission/") if g.endswith(".json")])
+    ledgers = [f"published/{dataset}.jsonl", f"published/{dataset}.stats.jsonl"]
+    fetch(remote, scratch, [p for p in ledgers if p in remote.ls("published/")])
+    card_marker = f"published/{dataset}.card.sha256"
+    fetch(remote, scratch, [card_marker] if card_marker in remote.ls("published/") else [])
     report = publish(scratch, dataset, revision)
-    if scratch.exists(ledger):
-        remote.put([(scratch.path(ledger), ledger)])
+    remote.put([(scratch.path(p), p) for p in [*ledgers, card_marker] if scratch.exists(p)])
     return report

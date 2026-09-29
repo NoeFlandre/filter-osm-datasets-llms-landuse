@@ -62,6 +62,7 @@ def bench_admit(
     from landuse_filter.adapters.remote import BucketRemote
     from landuse_filter.application.bench import compare
     from landuse_filter.application.results import gathered_decisions
+    from landuse_filter.application.sync import upload_gate
 
     store = _store(work)
     item_sha = store.read_json(f"plans/benchmark/{config.GENERATION_FP}/items.json")
@@ -76,6 +77,7 @@ def bench_admit(
     gate = compare(reference, candidate, resamples)
     status = "admitted" if gate.passed else "rejected"
     store.write_json(f"gates/admission/{gpu}.json", {"status": status, "gate": asdict(gate)})
+    upload_gate(BucketRemote(OPS.bucket), store, gpu)
     _emit({"gpu": gpu, "status": status, **asdict(gate)}, as_json)
     if not gate.passed:
         raise typer.Exit(3)

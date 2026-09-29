@@ -2,6 +2,7 @@
 
 from collections.abc import Iterable, Sequence
 from pathlib import Path
+from typing import IO
 
 BATCH = 200  # files per commit
 
@@ -49,3 +50,10 @@ def list_files(repo_id: str, revision: str) -> list[str]:
     from huggingface_hub import HfApi
 
     return sorted(HfApi().list_repo_files(repo_id, repo_type="dataset", revision=revision))
+
+
+def open_file(repo_id: str, path: str) -> IO[bytes]:
+    """Read-only file object of a file already on the Hub (ranged reads, no full download)."""
+    from huggingface_hub import HfFileSystem
+
+    return HfFileSystem().open(f"datasets/{repo_id}/{path}", "rb")
