@@ -6,6 +6,9 @@ task_categories: [text-classification]
 tags: [openstreetmap, land-use, land-cover, geospatial]
 dataset_status: in_progress
 configs:
+- config_name: sentences
+  default: true
+  data_files: "viewer/**/*.parquet"
 - config_name: labels
   data_files: "labels/**/*.parquet"
 - config_name: generations
@@ -37,6 +40,7 @@ usable answer. Reasons:
 
 ## Tables
 
+* `viewer/<input path>.parquet` (the default view): `sentence`, `label`, `language` and `region` (the input file), nothing else.
 * `labels/<input path>.parquet`: one row per sentence. Join keys (description_identity, tag_key, sentence_index), `text_sha256`, `decision`, `parse_mode`, `failure_reason`, `generation_id`.
 * `generations/<fingerprint>/*.parquet`: one row per **unique** text: raw output including the reasoning, token counts, finish reason, speculative-decoding statistics, GPU, site, job and code commit. Identical texts are generated once and share a `generation_id`.
 

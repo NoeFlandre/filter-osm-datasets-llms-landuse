@@ -44,3 +44,12 @@ its polygon's bounding box, binned into an H3 cell (resolution 3) and coloured b
 grey. The land outline is Natural Earth 110m (public domain), vendored in
 `src/landuse_filter/adapters/data/land_110m.json`. H3 and matplotlib come from the `map` extra,
 installed by publish jobs only.
+
+
+## Viewer table
+
+`viewer/<input path>.parquet` mirrors `labels/` row for row but carries only what a reader of the
+dataset viewer needs: `sentence` (the text; the whole text for `skipped_unsplit`), `label`
+(`yes`, `no`, `failed`, `skipped_unsplit`), `language` and `region` (the input file's name). The
+card lists it as the first, default config (`sentences`), so the Hub viewer opens on it. Files
+labelled before this table existed get theirs on the next publish.

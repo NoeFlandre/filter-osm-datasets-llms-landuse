@@ -31,6 +31,8 @@ LABEL_FIELDS = [
     ("input_revision", pa.string()),
 ]
 
+VIEWER_COLUMNS = ["sentence", "label", "language", "region"]  # what a dataset-viewer reader needs
+
 JOIN_KEYS = {
     "osm-polygon-description-tag": [
         ("description_identity", pa.string()),
@@ -110,6 +112,23 @@ def labels_table(dataset: str, rows: list[dict]) -> pa.Table:
     return pa.Table.from_pylist(rows, schema=schema)
 
 
+def viewer_table(refs: list[SentenceRef], rows: list[dict], region: str) -> pa.Table:
+    """The sentence next to its label: a plain table for the dataset viewer."""
+    return pa.table(
+        {
+            "sentence": pa.array([r.text for r in refs], pa.large_string()),
+            "label": pa.array([row["decision"] for row in rows], pa.string()),
+            "language": pa.array([r.language for r in refs], pa.string()),
+            "region": pa.array([region] * len(refs), pa.string()),
+        }
+    )
+
+
+def _write_viewer(out: Path, input_path: str, refs: list[SentenceRef], rows: list[dict]) -> None:
+    table = viewer_table(refs, rows, Path(input_path).stem)
+    write_atomic(out / "viewer" / input_path, table_bytes(table))
+
+
 def build_labels(
     dataset: str,
     input_path: str,
@@ -120,14 +139,24 @@ def build_labels(
     revision: str,
     out: Path,
 ) -> int:
-    """Write ``out/labels/<input_path>``.
+    """Write ``out/labels/<input_path>`` and its ``out/viewer/<input_path>`` companion.
 
     Raises ``MissingGenerationError`` if any text is unresolved.
     """
-    refs = SOURCES[dataset].read(local, input_path)
-    table = labels_table(dataset, label_rows(refs, resolved, fp, revision))
+    refs = list(SOURCES[dataset].read(local, input_path))
+    rows = label_rows(refs, resolved, fp, revision)
+    table = labels_table(dataset, rows)
     write_atomic(out / "labels" / input_path, table_bytes(table))
+    _write_viewer(out, input_path, refs, rows)
     return table.num_rows
+
+
+def build_viewer(dataset: str, input_path: str, local: Path, *, resolved: Lookup, out: Path) -> int:
+    """Write only ``out/viewer/<input_path>`` (files whose labels are already published)."""
+    refs = list(SOURCES[dataset].read(local, input_path))
+    rows = label_rows(refs, resolved, "", "")
+    _write_viewer(out, input_path, refs, rows)
+    return len(rows)
 
 
 def build_generations(

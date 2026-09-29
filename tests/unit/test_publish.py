@@ -64,6 +64,7 @@ def test_publishes_mirror_labels_generations_once(tmp_path, monkeypatch):
     assert any(p.startswith("generations/") for p in flat)
     assert "README.md" in flat
     assert "assets/yes_share_map.png" in flat  # website rows carry lat/lon: the map is drawn
+    assert "viewer/polygons/a.parquet" in flat  # the default dataset-viewer table
     labels = pq.read_table(store.path(f"publish/{WEBSITE}/labels/polygons/a.parquet")).to_pylist()
     assert {r["decision"] for r in labels} <= {"yes", "skipped_unsplit"}
     before = len(uploads)
@@ -210,3 +211,21 @@ def test_description_publish_uploads_the_yes_share_map_with_computed_figures(tmp
     card = uploads["README.md"].read_text()
     yes = report.decisions.get("yes", 0) + report.decisions.get("no", 0)
     assert f"{yes} of {yes} `yes`/`no` sentences (100.0%) are placed" in card
+
+
+def test_files_labelled_before_the_viewer_existed_get_their_viewer_table(tmp_path, monkeypatch):
+    uploads = fake_hub(monkeypatch, tmp_path)
+    store = WorkStore(tmp_path / "work")
+    planner = Planner(store, WEBSITE, config.GENERATION_FP)
+    planner.register(["polygons/a.parquet"])
+    planner.scan(lambda _: INPUTS / "website.parquet")
+    generate_all(store)
+    pub.publish(store, WEBSITE, "rev")
+    # Simulate a repo published by older code: labels are recorded, the viewer is not.
+    ledger = store.path(f"published/{WEBSITE}.jsonl")
+    kept = [r for r in store.read_jsonl(f"published/{WEBSITE}.jsonl") if "viewer/" not in r["path"]]
+    ledger.unlink()
+    store.append_jsonl(f"published/{WEBSITE}.jsonl", kept)
+    before = len(uploads)
+    pub.publish(store, WEBSITE, "rev")
+    assert ["viewer/polygons/a.parquet"] in uploads[before:]
