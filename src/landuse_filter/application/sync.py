@@ -6,6 +6,7 @@ from manifests alone and never downloads raw outputs.
 """
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 from landuse_filter.adapters.remote import Remote
@@ -32,9 +33,15 @@ def fetch(remote: Remote, store: WorkStore, paths: list[str]) -> None:
     remote.get([(p, store.path(p)) for p in missing])
 
 
-def fetch_manifests(remote: Remote, store: WorkStore, prefix: str) -> list[str]:
-    """Download manifests under ``prefix`` that are not local yet; returns their paths."""
-    wanted = [p for p in remote.ls(prefix) if p.endswith(".json") and not store.exists(p)]
+def fetch_manifests(
+    remote: Remote, store: WorkStore, prefix: str, seen: Callable[[str], bool] | None = None
+) -> list[str]:
+    """Download manifests under ``prefix`` that are neither local nor already ``seen``."""
+    wanted = [
+        p
+        for p in remote.ls(prefix)
+        if p.endswith(".json") and not store.exists(p) and not (seen and seen(p))
+    ]
     fetch(remote, store, wanted)
     return wanted
 

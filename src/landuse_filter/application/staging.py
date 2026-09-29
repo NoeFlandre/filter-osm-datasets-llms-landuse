@@ -46,6 +46,11 @@ class Transport:
             self.store.path(f"chunks/{c}.parquet").unlink()
 
     def pull(self, progress: WorkProgress) -> None:
-        new = fetch_manifests(self.remote, self.store, f"parts/{progress.work_fp}/")
-        progress.index(progress.work_fp).ingest(self.store.path(p) for p in new)
+        index = progress.index(progress.work_fp)
+        new = fetch_manifests(
+            self.remote, self.store, f"parts/{progress.work_fp}/", seen=index.has_seen
+        )
+        index.ingest(self.store.path(p) for p in new)
+        for p in new:  # the hashes are in the index: keep nothing on the scarce SSD
+            self.store.path(p).unlink(missing_ok=True)
         fetch_manifests(self.remote, self.store, "jobs/")
