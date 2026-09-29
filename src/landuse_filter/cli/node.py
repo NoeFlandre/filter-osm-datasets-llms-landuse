@@ -144,3 +144,40 @@ def node_publish(
     scratch = _store(Path(os.environ.get("LUF_SCRATCH", "/tmp/luf-scratch")))  # noqa: S108
     report = run_publish(BucketRemote(bucket), scratch, dataset, revision, config.GENERATION_FP)
     typer.echo(json.dumps(asdict(report)))
+
+
+@node_app.command("repair")
+def node_repair(
+    dataset: str = typer.Option(...),
+    bucket: str = typer.Option(OPS.bucket),
+) -> None:
+    """Remove duplicate rows from the published generations/ tables, then reset the card cache."""
+    import pyarrow.parquet as pq
+
+    from landuse_filter.adapters import hub
+    from landuse_filter.adapters.remote import BucketRemote
+    from landuse_filter.application.publish import output_repo
+    from landuse_filter.application.remote_publish import reset_card_cache
+    from landuse_filter.application.repair import dedupe_generations
+
+    repo = output_repo(dataset)
+    paths = sorted(p for p in hub.remote_files(repo) if p.startswith("generations/"))
+    local = {p: hub.download_all(repo, "main", [p])[0][0] for p in paths}
+    by_local = {path: repo_path for repo_path, path in local.items()}
+    scratch = _store(Path(os.environ.get("LUF_SCRATCH", "/tmp/luf-scratch")))  # noqa: S108
+    changed = dedupe_generations(list(local.values()))
+    rewrites, deletions = [], []
+    for path, table in changed.items():
+        if table is None:
+            deletions.append(by_local[path])
+            continue
+        out = scratch.path(f"repair/{path.name}")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        pq.write_table(table, out)
+        rewrites.append((out, by_local[path]))
+    if rewrites:
+        hub.upload(repo, rewrites, "Remove duplicate generation rows")
+    if deletions:
+        hub.delete(repo, deletions, "Remove emptied generation files")
+    reset_card_cache(BucketRemote(bucket), scratch, dataset)
+    typer.echo(json.dumps({"rewritten": len(rewrites), "deleted": len(deletions)}))

@@ -188,7 +188,7 @@ Usage: root g5k cpu-job [OPTIONS] {mode}
  Submit one resumable planning or publishing job (default queue, one CPU node).                     
                                                                                                     
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────╮
-│ *    mode      <str>  plan or publish [required]                                                 │
+│ *    mode      <str>  plan, publish or repair [required]                                         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
 │ *  --site                    <str>  Site to run the CPU job on. [required]                       │
@@ -336,6 +336,8 @@ Usage: root node [OPTIONS] COMMAND [ARGS]...
 │ plan       Scan a dataset on this node's scratch and publish chunks to the bucket.               │
 │ calibrate  Sweep concurrency on this GPU; write a candidate profile (speed only).                │
 │ publish    Build and upload the -landuse dataset on this node's scratch.                         │
+│ repair     Remove duplicate rows from the published generations/ tables, then reset the card     │
+│            cache.                                                                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -383,6 +385,20 @@ Usage: root node publish [OPTIONS]
 │ *  --revision        <str>  [required]                                                           │
 │    --bucket          <str>  [default: NoeFlandre/landuse-filter-work]                            │
 │    --help                   Show this message and exit.                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+```
+
+## `luf node repair`
+
+```text
+Usage: root node repair [OPTIONS]                                                                  
+                                                                                                    
+ Remove duplicate rows from the published generations/ tables, then reset the card cache.           
+                                                                                                    
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
+│ *  --dataset        <str>  [required]                                                            │
+│    --bucket         <str>  [default: NoeFlandre/landuse-filter-work]                             │
+│    --help                  Show this message and exit.                                           │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 

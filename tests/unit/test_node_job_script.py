@@ -100,3 +100,9 @@ def test_numpy_stays_below_the_cpu_baseline_bump():
     lock = (Path(__file__).parents[2] / "uv.lock").read_text()
     assert '"numpy>=2.0,<2.4"' in pyproject
     assert 'name = "numpy"\nversion = "2.3.5"' in lock
+
+
+def test_repair_mode_needs_no_gpu_stack():
+    """`repair` only rewrites parquet tables: it must take the light CPU environment."""
+    assert '"$MODE" == "repair"' in SCRIPT
+    assert 'if [[ "$MODE" == "run" || "$MODE" == "calibrate" ]]; then EXTRA=gpu' in SCRIPT

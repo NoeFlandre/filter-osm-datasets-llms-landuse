@@ -98,3 +98,50 @@ def test_card_counts_cover_files_published_by_earlier_runs(tmp_path, monkeypatch
     pub.publish(store, WEBSITE, "rev")
     assert f"**total** | **{total_rows:,}**" in cards[-1]
     assert uploads  # the earlier run did upload the labels
+
+
+def test_a_text_shared_by_two_files_is_uploaded_to_generations_once(tmp_path, monkeypatch):
+    """Regression: texts repeated across input files were re-uploaded in every later batch
+    (465,986 generation rows for 461,463 unique texts), which multiplies rows on the join."""
+    from landuse_filter.application import assemble
+
+    uploads = fake_hub(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        hub, "list_files", lambda repo, rev: ["polygons/a.parquet", "polygons/b.parquet"]
+    )
+    shutil.copy(INPUTS / "website.parquet", tmp_path / "hubcache" / "polygons" / "b.parquet")
+    monkeypatch.setattr(
+        hub,
+        "download_all",
+        lambda repo, rev, paths: [(tmp_path / "hubcache" / p, p) for p in paths],
+    )
+    store = WorkStore(tmp_path / "work")
+    planner = Planner(store, WEBSITE, config.GENERATION_FP)
+    planner.register(["polygons/a.parquet", "polygons/b.parquet"])
+    planner.scan(lambda _: INPUTS / "website.parquet")  # both files carry the same texts
+    generate_all(store)
+    real = assemble.build_labels
+
+    def only_a(dataset, path, *args, **kwargs):
+        if path == "polygons/b.parquet":
+            raise assemble.MissingGenerationError(path)
+        return real(dataset, path, *args, **kwargs)
+
+    monkeypatch.setattr(pub, "build_labels", only_a)
+    pub.publish(store, WEBSITE, "rev")  # run 1: only file a
+    monkeypatch.setattr(pub, "build_labels", real)
+    pub.publish(store, WEBSITE, "rev")  # run 2: file b, whose texts a already published
+    generation_files = [p for batch in uploads for p in batch if p.startswith("generations/")]
+    rows = sum(
+        pq.read_table(f).num_rows
+        for f in store.path("publish").glob(f"{WEBSITE}-gen-*/generations/*/*.parquet")
+    )
+    unique = len(
+        {
+            r["text_sha256"]
+            for f in store.path("publish").glob(f"{WEBSITE}-gen-*/generations/*/*.parquet")
+            for r in pq.read_table(f).to_pylist()
+        }
+    )
+    assert generation_files
+    assert rows == unique

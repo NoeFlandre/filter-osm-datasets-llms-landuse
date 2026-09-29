@@ -57,3 +57,14 @@ def open_file(repo_id: str, path: str) -> IO[bytes]:
     from huggingface_hub import HfFileSystem
 
     return HfFileSystem().open(f"datasets/{repo_id}/{path}", "rb")
+
+
+def delete(repo_id: str, paths: Sequence[str], message: str) -> None:
+    from huggingface_hub import CommitOperationDelete, HfApi
+
+    HfApi().create_commit(
+        repo_id,
+        [CommitOperationDelete(path_in_repo=p) for p in paths],
+        commit_message=message,
+        repo_type="dataset",
+    )
