@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from landuse_filter.application.card import JOINS, CardFacts, render_card
+from landuse_filter.application.card import JOINS, CardFacts, MapFacts, render_card
 
 GOLDEN = Path(__file__).parents[1] / "fixtures" / "card_description.md"
 
@@ -99,3 +99,16 @@ def test_join_recipe_reads_every_input_table_of_the_dataset(dataset):
     for pattern in SOURCES[dataset].patterns:
         assert f"'{pattern}'" in card
         assert f"'labels/{pattern}'" in card
+
+
+def test_map_section_shows_computed_figures_and_is_optional():
+    f = facts()
+    with_map = CardFacts(
+        **{k: getattr(f, k) for k in f.__slots__ if k != "world_map"},
+        world_map=MapFacts(cells=1234, located=950, labelled=1000, share=0.6861),
+    )
+    card = render_card(with_map)
+    assert "![Share of yes among yes/no sentences per H3 cell](assets/yes_share_map.png)" in card
+    assert "dataset-wide share (68.6%)" in card
+    assert "950 of 1,000 `yes`/`no` sentences (95.0%) are placed, in 1,234 cells" in card
+    assert "Where the labels are" not in render_card(facts())

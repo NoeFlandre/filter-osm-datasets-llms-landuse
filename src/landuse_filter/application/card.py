@@ -43,6 +43,19 @@ DECISION_MEANING = {
 }
 
 
+MAP_ASSET = "assets/yes_share_map.png"
+
+
+@dataclass(frozen=True, slots=True)
+class MapFacts:
+    """Figures of the world map, all counted from the published label tables."""
+
+    cells: int
+    located: int  # yes+no sentences placed on the map
+    labelled: int  # yes+no sentences in total
+    share: float  # dataset-wide share of yes among the located sentences
+
+
 @dataclass(frozen=True, slots=True)
 class CardFacts:
     dataset: str
@@ -58,6 +71,7 @@ class CardFacts:
     unique_texts: int  # rows of the published generations/ tables
     gpu_rows: Mapping[str, int]  # generations per GPU key
     admitted: Mapping[str, Mapping[str, float]]  # gpu key -> gate numbers
+    world_map: MapFacts | None = None  # None: the input has no coordinates
 
 
 def _from(paths: tuple[str, ...], prefix: str = "") -> str:
@@ -92,6 +106,18 @@ def _decision_table(decisions: Mapping[str, int]) -> str:
     ]
     rows.append(f"| **total** | **{total:,}** | | |")
     return "\n".join(rows)
+
+
+def _map_section(m: MapFacts | None) -> str:
+    if m is None:
+        return ""
+    return f"""
+## Where the labels are
+
+![Share of yes among yes/no sentences per H3 cell]({MAP_ASSET})
+
+Each hexagon is an [H3](https://h3geo.org) cell (resolution 3) holding the `yes`/`no` sentences of the polygons whose bounding-box centre falls in it. Colour is the share of `yes` in the cell, centred on the dataset-wide share ({m.share:.1%}); grey cells hold fewer than 10 sentences. {m.located:,} of {m.labelled:,} `yes`/`no` sentences ({m.located / m.labelled:.1%}) are placed, in {m.cells:,} cells; `failed` and `skipped_unsplit` rows are not.
+"""
 
 
 def _failure_table(failures: Mapping[str, int]) -> str:
@@ -148,7 +174,7 @@ A land-use / land-cover relevance label for every sentence of [`NoeFlandre/{f.da
 | `decision` | Rows | Share | Meaning |
 |---|---:|---:|---|
 {_decision_table(f.decisions)}
-{failed_section}
+{failed_section}{_map_section(f.world_map)}
 ## Tables
 
 * `labels/<input path>.parquet`: one row per sentence. Join keys ({keys}), `text_sha256`, `decision`, `parse_mode`, `failure_reason`, `generation_id`.

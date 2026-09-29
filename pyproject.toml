@@ -21,6 +21,11 @@ tokenize = [
     "transformers>=4.57",
     "jinja2>=3.1",
 ]
+# World map of the yes/no distribution on the dataset card (publish jobs only).
+map = [
+    "h3>=4.1",
+    "matplotlib>=3.9",
+]
 # SGLang pins its own torch and transformers; versions match the benchmark's
 # validated DSpark runtime (sglang 0.5.20, flashinfer 0.6.18).
 gpu = [

@@ -87,10 +87,10 @@ def test_relative_code_path_points_python_to_deployed_source(tmp_path):
 def test_cpu_jobs_do_not_install_the_gpu_stack():
     """Regression (Lyon jobs 2070709/2070898): planning installed sglang, torch and CUDA
     into node-local /tmp, filled the disk and crashed with "No space left on device"."""
-    assert '--extra "$EXTRA"' in SCRIPT
-    assert "--extra gpu" not in SCRIPT
-    assert "EXTRA=tokenize" in SCRIPT
-    assert "EXTRA=gpu" in SCRIPT
+    assert '"${EXTRAS[@]}"' in SCRIPT
+    assert "run | calibrate) EXTRAS=(--extra gpu)" in SCRIPT
+    assert "*) EXTRAS=(--extra tokenize)" in SCRIPT
+    assert SCRIPT.count("--extra gpu") == 1  # only the GPU modes
 
 
 def test_numpy_stays_below_the_cpu_baseline_bump():
@@ -105,4 +105,4 @@ def test_numpy_stays_below_the_cpu_baseline_bump():
 def test_repair_mode_needs_no_gpu_stack():
     """`repair` only rewrites parquet tables: it must take the light CPU environment."""
     assert '"$MODE" == "repair"' in SCRIPT
-    assert 'if [[ "$MODE" == "run" || "$MODE" == "calibrate" ]]; then EXTRA=gpu' in SCRIPT
+    assert "publish | repair) EXTRAS=(--extra tokenize --extra map)" in SCRIPT
