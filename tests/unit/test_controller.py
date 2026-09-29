@@ -457,3 +457,19 @@ def test_cpu_jobs_avoid_the_sagittaire_cluster(monkeypatch, tmp_path):
     assert result.exit_code == 0, result.output
     prop = submitted[0][submitted[0].index("-p") + 1]
     assert prop == "gpu_count = 0 AND cluster != 'sagittaire'"
+
+
+def test_run_admission_passes_the_queue_depth(monkeypatch, tmp_path):
+    """Admission used the default depth of 1 waiting job per site, starving busy clusters."""
+    from typer.testing import CliRunner
+
+    from landuse_filter.cli import g5k as cli
+
+    seen = {}
+    monkeypatch.setattr(ctl_mod, "run_many", lambda ctls, *a, **k: seen.update(ctls=ctls))
+    result = CliRunner().invoke(
+        cli.g5k_app,
+        ["run-admission", "--gpus", "l4", "--work", str(tmp_path), "--max-queued-per-site", "3"],
+    )
+    assert result.exit_code == 0, result.output
+    assert seen["ctls"][0].settings.max_queued_per_site == 3

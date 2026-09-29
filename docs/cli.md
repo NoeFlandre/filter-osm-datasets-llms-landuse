@@ -300,6 +300,9 @@ Usage: root g5k run-admission [OPTIONS]
 │    --max-jobs-per-site             <int>   [default: 3]                                          │
 │    --walltime-minutes              <int>   [default: 60]                                         │
 │    --night-walltime-minutes        <int>   Walltime cap for night/weekend jobs. [default: 120]   │
+│    --max-queued-per-site           <int>   Waiting jobs allowed per site when nothing is free    │
+│                                            (night/weekend).                                      │
+│                                            [default: 2]                                          │
 │    --interval                      <int>   [default: 300]                                        │
 │    --help                                  Show this message and exit.                           │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
