@@ -49,3 +49,9 @@ def manifest_shas(store: WorkStore, fp: str, chunk_id: str) -> set[str]:
 def prune_local_part(store: WorkStore, fp: str, chunk_id: str, part_id: str) -> None:
     """Drop a part's bulk bytes once uploaded; its manifest stays for progress."""
     Path(store.path(f"parts/{fp}/{chunk_id}/{part_id}.parquet")).unlink(missing_ok=True)
+
+
+def upload_gate(remote: Remote, store: WorkStore, gpu: str) -> None:
+    """Share a GPU admission gate with publish jobs, which build the card's quality table."""
+    path = f"gates/admission/{gpu}.json"
+    remote.put([(store.path(path), path)])

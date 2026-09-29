@@ -85,3 +85,15 @@ def test_dir_remote_round_trip(tmp_path):
     assert (tmp_path / "copy.txt").read_text() == "hello"
     r.delete(["x/y.txt"])
     assert r.ls("x/") == []
+
+
+def test_upload_gate_shares_the_admission_file_through_the_bucket(tmp_path):
+    from landuse_filter.adapters.remote import DirRemote
+    from landuse_filter.adapters.store import WorkStore
+    from landuse_filter.application.sync import upload_gate
+
+    store = WorkStore(tmp_path / "w")
+    store.write_json("gates/admission/l40s.json", {"status": "admitted", "gate": {}})
+    remote = DirRemote(tmp_path / "bucket")
+    upload_gate(remote, store, "l40s")
+    assert remote.ls("gates/admission/") == ["gates/admission/l40s.json"]

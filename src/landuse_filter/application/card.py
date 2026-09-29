@@ -27,13 +27,19 @@ TEXT_LICENSE = {
     ),
 }
 FAILURES = {
-    "truncated": "hit max_new_tokens before answering",
+    "truncated": "hit the token limit before answering",
     "unclosed_think": "never closed its reasoning block",
     "empty": "nothing after the reasoning",
     "ambiguous": "answer mentions both labels",
-    "non_english_token": "answered in another language (e.g. oui/ja), not mapped",
+    "non_english_token": "answered with a non-English word that is not mapped",
     "no_label": "no yes/no in the answer",
-    "unsplit_upstream": "text not segmented upstream (skipped_unsplit, no LLM call)",
+}
+DECISION_ORDER = ("yes", "no", "failed", "skipped_unsplit")
+DECISION_MEANING = {
+    "yes": "relevant to land use / land cover",
+    "no": "not relevant",
+    "failed": "the model output could not be parsed into yes/no",
+    "skipped_unsplit": "text not segmented upstream; not sent to the model",
 }
 
 
@@ -47,30 +53,78 @@ class CardFacts:
     fingerprint: str
     labelled_files: int
     total_files: int
-    decisions: Mapping[str, int]
+    decisions: Mapping[str, int]  # counted from the published labels/ tables
+    failures: Mapping[str, int]  # failure_reason of the failed rows
+    unique_texts: int  # rows of the published generations/ tables
+    gpu_rows: Mapping[str, int]  # generations per GPU key
     admitted: Mapping[str, Mapping[str, float]]  # gpu key -> gate numbers
 
 
-def _gate_row(gpu: str, g: Mapping[str, float]) -> str:
+def _ref(model: str) -> str:
+    """`org/name` (revision `abcdef0`) from a ``name@revision`` reference."""
+    name, _, revision = model.partition("@")
+    return f"`{name}`" + (f" (revision `{revision[:7]}`)" if revision else "")
+
+
+def _gate_row(gpu: str, generations: int, share: float, g: Mapping[str, float]) -> str:
     mcc = f"{g['delta_mcc']:+.4f} ({g['mcc_lower']:+.4f})"
     failed = f"{g['delta_failed_rate'] * 100:+.2f} pp"
-    return f"| `{gpu}` | {g['delta_f1']:+.4f} | {mcc} | {g['delta_accuracy']:+.4f} | {failed} |"
+    return (
+        f"| `{gpu}` | {generations:,} ({share:.1%}) | {g['delta_f1']:+.4f} | {mcc} | "
+        f"{g['delta_accuracy']:+.4f} | {failed} |"
+    )
+
+
+def _decision_table(decisions: Mapping[str, int]) -> str:
+    total = sum(decisions.values())
+    rows = [
+        f"| `{k}` | {decisions.get(k, 0):,} | {decisions.get(k, 0) / total:.1%} | "
+        f"{DECISION_MEANING[k]} |"
+        for k in DECISION_ORDER
+        if total
+    ]
+    rows.append(f"| **total** | **{total:,}** | | |")
+    return "\n".join(rows)
+
+
+def _failure_table(failures: Mapping[str, int]) -> str:
+    failed = sum(failures.values())
+    return "\n".join(
+        f"| `{k}` | {failures[k]:,} | {failures[k] / failed:.1%} | {FAILURES.get(k, '')} |"
+        for k in sorted(failures, key=lambda r: (-failures[r], r))
+    )
 
 
 def render_card(f: CardFacts) -> str:
     status = "complete" if f.labelled_files == f.total_files else "in_progress"
     source, using, keys = JOINS[f.dataset]
-    decisions = (
-        "\n".join(f"| `{k}` | {v:,} |" for k, v in sorted(f.decisions.items())) or "| — | 0 |"
+    total = sum(f.decisions.values())
+    generated = sum(f.gpu_rows.values())
+    used = sorted(g for g in f.gpu_rows if g in f.admitted)
+    gates = "\n".join(
+        _gate_row(g, f.gpu_rows[g], f.gpu_rows[g] / generated, f.admitted[g]) for g in used
     )
-    failures = "\n".join(f"| `{k}` | {v} |" for k, v in FAILURES.items())
-    rows = [_gate_row(gpu, g) for gpu, g in sorted(f.admitted.items())]
-    gates = "\n".join(rows) or "| — | | | | |"
+    failed_section = (
+        f"""
+### Failed rows
+
+{sum(f.failures.values()):,} rows ({f.decisions.get("failed", 0) / total:.1%} of all rows) have no
+usable answer. Reasons:
+
+| `failure_reason` | Rows | Share | Meaning |
+|---|---:|---:|---|
+{_failure_table(f.failures)}
+"""
+        if f.failures
+        else ""
+    )
     extra_license = f"\n{TEXT_LICENSE[f.dataset]}" if f.dataset in TEXT_LICENSE else ""
     return f"""---
 license: odbl
 pretty_name: {f.dataset} (land-use labels)
-tags: [openstreetmap, land-use, land-cover, remote-sensing, geospatial]
+language: [multilingual]
+task_categories: [text-classification]
+tags: [openstreetmap, land-use, land-cover, geospatial]
 dataset_status: {status}
 configs:
 - config_name: labels
@@ -80,31 +134,18 @@ configs:
 ---
 # {f.dataset}-landuse
 
-Every in-scope sentence of [`NoeFlandre/{f.dataset}`](https://huggingface.co/datasets/NoeFlandre/{f.dataset})
-(revision `{f.revision}`, mirrored here unchanged) labelled for land-use / land-cover
-relevance by **{f.model}** with the DSpark draft **{f.draft}** (SGLang, BF16, greedy,
-thinking mode, `max_new_tokens={f.max_new_tokens}`).
+A land-use / land-cover relevance label for every sentence of [`NoeFlandre/{f.dataset}`](https://huggingface.co/datasets/NoeFlandre/{f.dataset}) (revision `{f.revision[:7]}`). The input is mirrored here unchanged; labels and model outputs are separate tables that join back to it.
 
-**Status: {status}**: {f.labelled_files:,} / {f.total_files:,} input files labelled.
+**{status.replace("_", " ").capitalize()}: {f.labelled_files:,} of {f.total_files:,} input files labelled, {total:,} rows, {f.unique_texts:,} unique texts sent to the model.**
 
-| Decision | Sentence positions |
-|---|---:|
-{decisions}
+| `decision` | Rows | Share | Meaning |
+|---|---:|---:|---|
+{_decision_table(f.decisions)}
+{failed_section}
+## Tables
 
-## Files
-
-* `labels/<input path>.parquet`: one row per sentence position. Columns: `label_id` and the
-  join keys ({keys}), `text_sha256`, `decision` (`yes`, `no`, `failed`, `skipped_unsplit`),
-  `parse_mode`, `failure_reason` and `generation_id`.
-* `generations/<fingerprint>/*.parquet`: one row per **unique** sentence text, with the
-  raw output (including reasoning), token counts, finish reason, DSpark acceptance,
-  GPU, site, job and code commit. Duplicate sentences share one generation.
-
-| failure_reason | meaning |
-|---|---|
-{failures}
-
-## Join recipe (DuckDB)
+* `labels/<input path>.parquet`: one row per sentence. Join keys ({keys}), `text_sha256`, `decision`, `parse_mode`, `failure_reason`, `generation_id`.
+* `generations/<fingerprint>/*.parquet`: one row per **unique** text: raw output including the reasoning, token counts, finish reason, speculative-decoding statistics, GPU, site, job and code commit. Identical texts are generated once and share a `generation_id`.
 
 ```sql
 SELECT i.*, l.decision, g.raw_output
@@ -113,25 +154,23 @@ JOIN 'labels/{source}' l {using}
 LEFT JOIN 'generations/*/*.parquet' g USING (generation_id);
 ```
 
+## Method
+
+{_ref(f.model)} with the speculative-decoding draft {_ref(f.draft)}, served with SGLang (BF16), greedy decoding, thinking mode, at most {f.max_new_tokens:,} new tokens. The prompt is the one of [`NoeFlandre/benchmark-llms-landuse-relevance`](https://huggingface.co/datasets/NoeFlandre/benchmark-llms-landuse-relevance).
+
 ## Quality
 
-Prompt and serving configuration are those of the benchmark
-[`NoeFlandre/benchmark-llms-landuse-relevance`](https://huggingface.co/datasets/NoeFlandre/benchmark-llms-landuse-relevance).
-Only GPU types that passed a pre-registered non-inferiority gate on the full
-25,500-item benchmark were used. The table shows the Δ macro scores against the
-published reference; margins are -0.02, failed rate +0.5 pp.
+Only GPU types that passed a pre-registered non-inferiority gate on the full 25,500-item benchmark generated labels. Differences are against the published reference run (one-sided 95 % lower bounds must stay above -0.02; failed-rate increase under +0.5 pp).
 
-| GPU type | ΔF1 | ΔMCC (95 % low) | Δaccuracy | Δfailed |
-|---|---:|---:|---:|---:|
+| GPU type | Generations | ΔF1 | ΔMCC (95 % low) | Δaccuracy | Δfailed |
+|---|---:|---:|---:|---:|---:|
 {gates}
 
-Caveats: greedy decoding is not batch- or GPU-invariant, so about 12 % of individual
-decisions would flip between two runs of the reference setup; aggregate quality is
-what the gate guarantees.
+Greedy decoding is not batch- or GPU-invariant: about 12 % of individual decisions would flip between two runs of the reference setup. The gate guarantees aggregate quality, not per-row reproducibility.
 
 ## License and citation
 
 Labels: ODbL, like the OpenStreetMap-derived input.{extra_license}
-Code: https://github.com/NoeFlandre/filter-osm-datasets-llms-landuse (config
-fingerprint `{f.fingerprint}`).
+
+Code and configuration (fingerprint `{f.fingerprint}`): https://github.com/NoeFlandre/filter-osm-datasets-llms-landuse
 """

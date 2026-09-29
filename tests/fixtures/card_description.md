@@ -1,7 +1,9 @@
 ---
 license: odbl
 pretty_name: osm-polygon-description-tag (land-use labels)
-tags: [openstreetmap, land-use, land-cover, remote-sensing, geospatial]
+language: [multilingual]
+task_categories: [text-classification]
+tags: [openstreetmap, land-use, land-cover, geospatial]
 dataset_status: in_progress
 configs:
 - config_name: labels
@@ -11,40 +13,32 @@ configs:
 ---
 # osm-polygon-description-tag-landuse
 
-Every in-scope sentence of [`NoeFlandre/osm-polygon-description-tag`](https://huggingface.co/datasets/NoeFlandre/osm-polygon-description-tag)
-(revision `b4706eb`, mirrored here unchanged) labelled for land-use / land-cover
-relevance by **LiquidAI/LFM2.5-2.6B@654f** with the DSpark draft **LiquidAI/LFM2.5-2.6B-DSpark@458c** (SGLang, BF16, greedy,
-thinking mode, `max_new_tokens=4096`).
+A land-use / land-cover relevance label for every sentence of [`NoeFlandre/osm-polygon-description-tag`](https://huggingface.co/datasets/NoeFlandre/osm-polygon-description-tag) (revision `b4706eb`). The input is mirrored here unchanged; labels and model outputs are separate tables that join back to it.
 
-**Status: in_progress**: 3 / 386 input files labelled.
+**In progress: 3 of 386 input files labelled, 20 rows, 12 unique texts sent to the model.**
 
-| Decision | Sentence positions |
-|---|---:|
-| `failed` | 1 |
-| `no` | 5 |
-| `skipped_unsplit` | 2 |
-| `yes` | 10 |
+| `decision` | Rows | Share | Meaning |
+|---|---:|---:|---|
+| `yes` | 10 | 50.0% | relevant to land use / land cover |
+| `no` | 5 | 25.0% | not relevant |
+| `failed` | 3 | 15.0% | the model output could not be parsed into yes/no |
+| `skipped_unsplit` | 2 | 10.0% | text not segmented upstream; not sent to the model |
+| **total** | **20** | | |
 
-## Files
+### Failed rows
 
-* `labels/<input path>.parquet`: one row per sentence position. Columns: `label_id` and the
-  join keys (description_identity, tag_key, sentence_index), `text_sha256`, `decision` (`yes`, `no`, `failed`, `skipped_unsplit`),
-  `parse_mode`, `failure_reason` and `generation_id`.
-* `generations/<fingerprint>/*.parquet`: one row per **unique** sentence text, with the
-  raw output (including reasoning), token counts, finish reason, DSpark acceptance,
-  GPU, site, job and code commit. Duplicate sentences share one generation.
+3 rows (15.0% of all rows) have no
+usable answer. Reasons:
 
-| failure_reason | meaning |
-|---|---|
-| `truncated` | hit max_new_tokens before answering |
-| `unclosed_think` | never closed its reasoning block |
-| `empty` | nothing after the reasoning |
-| `ambiguous` | answer mentions both labels |
-| `non_english_token` | answered in another language (e.g. oui/ja), not mapped |
-| `no_label` | no yes/no in the answer |
-| `unsplit_upstream` | text not segmented upstream (skipped_unsplit, no LLM call) |
+| `failure_reason` | Rows | Share | Meaning |
+|---|---:|---:|---|
+| `truncated` | 2 | 66.7% | hit the token limit before answering |
+| `no_label` | 1 | 33.3% | no yes/no in the answer |
 
-## Join recipe (DuckDB)
+## Tables
+
+* `labels/<input path>.parquet`: one row per sentence. Join keys (description_identity, tag_key, sentence_index), `text_sha256`, `decision`, `parse_mode`, `failure_reason`, `generation_id`.
+* `generations/<fingerprint>/*.parquet`: one row per **unique** text: raw output including the reasoning, token counts, finish reason, speculative-decoding statistics, GPU, site, job and code commit. Identical texts are generated once and share a `generation_id`.
 
 ```sql
 SELECT i.*, l.decision, g.raw_output
@@ -53,24 +47,23 @@ JOIN 'labels/language-v1/data/*.parquet' l USING (description_identity, tag_key)
 LEFT JOIN 'generations/*/*.parquet' g USING (generation_id);
 ```
 
+## Method
+
+`LiquidAI/LFM2.5-2.6B` (revision `654f`) with the speculative-decoding draft `LiquidAI/LFM2.5-2.6B-DSpark` (revision `458c`), served with SGLang (BF16), greedy decoding, thinking mode, at most 4,096 new tokens. The prompt is the one of [`NoeFlandre/benchmark-llms-landuse-relevance`](https://huggingface.co/datasets/NoeFlandre/benchmark-llms-landuse-relevance).
+
 ## Quality
 
-Prompt and serving configuration are those of the benchmark
-[`NoeFlandre/benchmark-llms-landuse-relevance`](https://huggingface.co/datasets/NoeFlandre/benchmark-llms-landuse-relevance).
-Only GPU types that passed a pre-registered non-inferiority gate on the full
-25,500-item benchmark were used. The table shows the Δ macro scores against the
-published reference; margins are -0.02, failed rate +0.5 pp.
+Only GPU types that passed a pre-registered non-inferiority gate on the full 25,500-item benchmark generated labels. Differences are against the published reference run (one-sided 95 % lower bounds must stay above -0.02; failed-rate increase under +0.5 pp).
 
-| GPU type | ΔF1 | ΔMCC (95 % low) | Δaccuracy | Δfailed |
-|---|---:|---:|---:|---:|
-| `a100_sxm4_40gb` | -0.0000 | -0.0014 (-0.0080) | +0.0016 | -0.33 pp |
+| GPU type | Generations | ΔF1 | ΔMCC (95 % low) | Δaccuracy | Δfailed |
+|---|---:|---:|---:|---:|---:|
+| `a100_sxm4_40gb` | 9 (75.0%) | -0.0000 | -0.0014 (-0.0080) | +0.0016 | -0.33 pp |
+| `l40s` | 3 (25.0%) | -0.0018 | -0.0060 (-0.0123) | -0.0018 | -0.16 pp |
 
-Caveats: greedy decoding is not batch- or GPU-invariant, so about 12 % of individual
-decisions would flip between two runs of the reference setup; aggregate quality is
-what the gate guarantees.
+Greedy decoding is not batch- or GPU-invariant: about 12 % of individual decisions would flip between two runs of the reference setup. The gate guarantees aggregate quality, not per-row reproducibility.
 
 ## License and citation
 
 Labels: ODbL, like the OpenStreetMap-derived input.
-Code: https://github.com/NoeFlandre/filter-osm-datasets-llms-landuse (config
-fingerprint `71dd8471f52321ab`).
+
+Code and configuration (fingerprint `71dd8471f52321ab`): https://github.com/NoeFlandre/filter-osm-datasets-llms-landuse

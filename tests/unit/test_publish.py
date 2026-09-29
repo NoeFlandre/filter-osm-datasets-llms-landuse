@@ -67,3 +67,34 @@ def test_publishes_mirror_labels_generations_once(tmp_path, monkeypatch):
     before = len(uploads)
     assert pub.publish(store, WEBSITE, "rev").new_files == 0  # idempotent
     assert len(uploads) == before
+
+
+def test_card_counts_cover_files_published_by_earlier_runs(tmp_path, monkeypatch):
+    """Regression: the card showed only the last run's new files (638,229 of 1,057,002 rows)."""
+    uploads = fake_hub(monkeypatch, tmp_path)
+    store = WorkStore(tmp_path / "work")
+    planner = Planner(store, WEBSITE, config.GENERATION_FP)
+    planner.register(["polygons/a.parquet"])
+    planner.scan(lambda _: INPUTS / "website.parquet")
+    generate_all(store)
+    pub.publish(store, WEBSITE, "rev")
+    published = store.path(f"publish/{WEBSITE}/labels/polygons/a.parquet")
+    total_rows = pq.read_table(published).num_rows
+    # Simulate a dataset published by older code: no stats ledger, no card marker.
+    store.path(f"published/{WEBSITE}.stats.jsonl").unlink()
+    store.path(f"published/{WEBSITE}.card.sha256").unlink()
+    gen_file = next(store.path("publish").glob(f"{WEBSITE}-gen-*/generations/*/*.parquet"))
+    cards: list[str] = []
+    monkeypatch.setattr(
+        hub, "open_file", lambda repo, p: published if p.startswith("labels/") else gen_file
+    )
+    monkeypatch.setattr(
+        hub,
+        "upload",
+        lambda repo, files, msg: cards.extend(
+            src.read_text() for src, dst in files if dst == "README.md"
+        ),
+    )
+    pub.publish(store, WEBSITE, "rev")
+    assert f"**total** | **{total_rows:,}**" in cards[-1]
+    assert uploads  # the earlier run did upload the labels
