@@ -26,3 +26,18 @@ def run_publish(
     report = publish(scratch, dataset, revision)
     remote.put([(scratch.path(p), p) for p in [*ledgers, card_marker] if scratch.exists(p)])
     return report
+
+
+def reset_card_cache(remote: Remote, scratch: WorkStore, dataset: str) -> None:
+    """Forget the generation counts and the card hash so the next publish recounts the card."""
+    stats = f"published/{dataset}.stats.jsonl"
+    if stats in remote.ls("published/"):
+        fetch(remote, scratch, [stats])
+        keep = [r for r in scratch.read_jsonl(stats) if not r["path"].startswith("generations/")]
+        scratch.path(stats).unlink()
+        scratch.append_jsonl(stats, keep)
+        remote.put([(scratch.path(stats), stats)])
+    marker = f"published/{dataset}.card.sha256"
+    scratch.path(marker).parent.mkdir(parents=True, exist_ok=True)
+    scratch.path(marker).write_text("reset\n")
+    remote.put([(scratch.path(marker), marker)])

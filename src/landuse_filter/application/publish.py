@@ -59,7 +59,9 @@ def publish(
     resolved = ResolutionIndex(store.path(f"index/resolve-{fp}.sqlite"))
     resolved.build(canonical_generations(store, fp))
     db = sqlite3.connect(store.path(f"index/{dataset}.sqlite"))
-    files = [p for (p,) in db.execute("SELECT path FROM files WHERE done = 1 ORDER BY idx")]
+    indexed = db.execute("SELECT idx, path FROM files WHERE done = 1 ORDER BY idx").fetchall()
+    files = [p for _, p in indexed]
+    first_file = dict(zip(files, [i for i, _ in indexed], strict=True))
     new: list[tuple[Path, str]] = []
     new_shas: set[str] = set()
     for path in files:
@@ -72,13 +74,21 @@ def publish(
         except MissingGenerationError:
             continue
         table = pq.read_table(out / target, columns=["text_sha256", "generation_id"])
+        # A generation ships with the file where its text first appears (the planner index
+        # records that file), so repeated texts are never uploaded twice.
+        owned = {
+            sha
+            for (sha,) in db.execute(
+                "SELECT sha FROM texts WHERE file_idx = ?", (first_file[path],)
+            )
+        }
         new_shas.update(
             s
             for s, g in zip(
                 *[table.column(c).to_pylist() for c in ("text_sha256", "generation_id")],
                 strict=True,
             )
-            if g
+            if g and s in owned
         )
         new.append((out / target, target))
     if new_shas:

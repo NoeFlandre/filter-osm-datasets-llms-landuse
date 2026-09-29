@@ -9,7 +9,7 @@ set -euo pipefail
 CODE=$1
 shift
 CODE="$(cd -- "$CODE" && pwd)"
-if [[ "${1:-}" == "plan" || "${1:-}" == "publish" || "${1:-}" == "calibrate" ]]; then
+if [[ "${1:-}" == "plan" || "${1:-}" == "publish" || "${1:-}" == "calibrate" || "${1:-}" == "repair" ]]; then
   MODE=$1
   shift
 else
@@ -73,6 +73,11 @@ luf() { "$venv/bin/python" -c 'import sys; from landuse_filter.cli import app; s
 echo "luf: env ready in $(( $(date +%s) - t0 ))s ($venv)"
 if [[ "$MODE" == "calibrate" ]]; then
   luf node calibrate --chunk "$1"
+  exit $?
+fi
+if [[ "$MODE" == "repair" ]]; then
+  export HF_HOME="$LUF_SCRATCH/hf"
+  luf node repair --dataset "$1"
   exit $?
 fi
 if [[ "$MODE" != "run" ]]; then

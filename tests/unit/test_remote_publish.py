@@ -38,3 +38,25 @@ def test_publish_job_requires_planning(tmp_path):
         remote_publish.run_publish(
             DirRemote(tmp_path / "b"), WorkStore(tmp_path / "s"), WEBSITE, "rev", "fp"
         )
+
+
+def test_reset_card_cache_drops_generation_counts_and_the_card_hash(tmp_path):
+    from landuse_filter.adapters.remote import DirRemote
+    from landuse_filter.adapters.store import WorkStore
+    from landuse_filter.application.remote_publish import reset_card_cache
+
+    remote = DirRemote(tmp_path / "bucket")
+    source = WorkStore(tmp_path / "src")
+    source.append_jsonl(
+        "published/d.stats.jsonl",
+        [
+            {"path": "labels/a.parquet", "decisions": {"yes": 1}},
+            {"path": "generations/x", "rows": 3},
+        ],
+    )
+    remote.put([(source.path("published/d.stats.jsonl"), "published/d.stats.jsonl")])
+    scratch = WorkStore(tmp_path / "scratch")
+    reset_card_cache(remote, scratch, "d")
+    kept = scratch.read_jsonl("published/d.stats.jsonl")
+    assert [r["path"] for r in kept] == ["labels/a.parquet"]
+    assert "published/d.card.sha256" in remote.ls("published/")
