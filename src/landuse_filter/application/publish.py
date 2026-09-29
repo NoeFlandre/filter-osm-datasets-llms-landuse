@@ -19,7 +19,7 @@ import pyarrow.parquet as pq
 from landuse_filter import config
 from landuse_filter.adapters import hub
 from landuse_filter.adapters.indexes import ResolutionIndex
-from landuse_filter.adapters.readers import DESCRIPTION, SOURCES
+from landuse_filter.adapters.readers import DESCRIPTION, SOURCES, WEBSITE
 from landuse_filter.adapters.store import WorkStore
 from landuse_filter.application import published_stats
 from landuse_filter.application.assemble import (
@@ -28,7 +28,7 @@ from landuse_filter.application.assemble import (
     build_labels,
 )
 from landuse_filter.application.card import MAP_ASSET, CardFacts, MapFacts, render_card
-from landuse_filter.application.geo import BBOX, Located, description_cells
+from landuse_filter.application.geo import BBOX, Located, description_cells, website_cells
 from landuse_filter.application.results import canonical_generations
 
 
@@ -182,7 +182,7 @@ def _refresh_card(
 
 def _locator(dataset: str, revision: str) -> published_stats.Locator | None:
     """Where the rows of a labels file are, for datasets whose input has coordinates."""
-    if dataset != DESCRIPTION:
+    if dataset not in (DESCRIPTION, WEBSITE):
         return None
     input_repo = SOURCES[dataset].repo_id
 
@@ -190,6 +190,14 @@ def _locator(dataset: str, revision: str) -> published_stats.Locator | None:
         from landuse_filter.adapters import hexmap
 
         rel = path.removeprefix("labels/")
+        if dataset == WEBSITE:
+            return website_cells(
+                pq.read_table(labels_source, columns=["polygon_id", "decision"]),
+                pq.read_table(
+                    hub.open_file(input_repo, rel, revision), columns=["polygon_id", "lat", "lon"]
+                ),
+                hexmap.cell_of,
+            )
         language_file = hub.open_file(input_repo, rel, revision)
         polygon_file = hub.open_file(input_repo, f"data/{Path(rel).name}", revision)
         return description_cells(
