@@ -152,6 +152,27 @@ class Planner:
             )
         return 1
 
+    def recover_plan_lines(self) -> int:
+        """Re-create plan lines the index assigned to chunks but the plan file lost.
+
+        The order key is the chunk's earliest input file (priority only); prompt_tokens is
+        not recoverable from the index and nothing downstream reads it.
+        """
+        path = f"plans/{self.source.dataset}/{self.fp}/chunks.jsonl"
+        known = {row["chunk_id"] for row in self.store.read_jsonl(path)}
+        rank = DATASET_RANK[self.source.dataset]
+        rows = self.db.execute(
+            "SELECT chunk_id, COUNT(*), MIN(file_idx) FROM texts "
+            "WHERE chunk_id IS NOT NULL GROUP BY chunk_id"
+        ).fetchall()
+        lost = [
+            {"chunk_id": cid, "order": [rank, first], "size": n, "prompt_tokens": 0}
+            for cid, n, first in rows
+            if cid not in known
+        ]
+        self.store.append_jsonl(path, lost)
+        return len(lost)
+
     def report(self) -> PlanReport:
         f = self.db.execute(
             "SELECT COUNT(*), SUM(done), SUM(sentences), SUM(unsplit) FROM files"
