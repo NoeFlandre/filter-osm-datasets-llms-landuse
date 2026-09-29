@@ -473,3 +473,37 @@ def test_run_admission_passes_the_queue_depth(monkeypatch, tmp_path):
     )
     assert result.exit_code == 0, result.output
     assert seen["ctls"][0].settings.max_queued_per_site == 3
+
+
+def test_git_archive_is_read_once_per_commit_and_retried_on_a_faulting_drive(monkeypatch):
+    """Regression: `git archive` died with SIGBUS on the external drive under load, and every
+    controller cycle re-read the repository for a commit that was already deployed."""
+    import subprocess
+
+    calls = []
+
+    def flaky(cmd, **kwargs):
+        calls.append(cmd)
+        if len(calls) < 3:
+            raise subprocess.CalledProcessError(-10, cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout=b"tar-bytes")
+
+    monkeypatch.setattr(ctl_mod.subprocess, "run", flaky)
+    monkeypatch.setattr(ctl_mod.time, "sleep", lambda s: None)
+    ctl_mod._archives.clear()
+    assert ctl_mod.git_archive("abc") == b"tar-bytes"
+    assert ctl_mod.git_archive("abc") == b"tar-bytes"  # cached
+    assert len(calls) == 3
+
+
+def test_git_archive_gives_up_after_three_attempts(monkeypatch):
+    import subprocess
+
+    def broken(cmd, **kwargs):
+        raise subprocess.CalledProcessError(128, cmd)
+
+    monkeypatch.setattr(ctl_mod.subprocess, "run", broken)
+    monkeypatch.setattr(ctl_mod.time, "sleep", lambda s: None)
+    ctl_mod._archives.clear()
+    with pytest.raises(subprocess.CalledProcessError):
+        ctl_mod.git_archive("nope")
