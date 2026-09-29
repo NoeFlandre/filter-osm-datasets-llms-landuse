@@ -25,6 +25,7 @@ class WorkProgress:
         self.complete_log = complete_log
         self.log = log
         self._indexes: dict[str, ProgressIndex] = {}
+        self._compacted = False
 
     def plan_lines(self) -> list[dict]:
         seen: set[str] = set()
@@ -40,7 +41,10 @@ class WorkProgress:
         """Per-namespace index of generated hashes, backfilled once from local manifests."""
         if fp not in self._indexes:
             index = ProgressIndex(self.store.path(f"index/progress-{fp}.sqlite"))
-            index.ingest(sorted(self.store.path(f"parts/{fp}").glob("*/*.json")))
+            local = sorted(self.store.path(f"parts/{fp}").glob("*/*.json"))
+            index.ingest(local)
+            for path in local:  # ingested: the manifest is no longer needed on disk
+                path.unlink(missing_ok=True)
             self._indexes[fp] = index
         return self._indexes[fp]
 
@@ -67,6 +71,10 @@ class WorkProgress:
 
     def pending(self) -> list[tuple[str, int]]:
         complete = {r["chunk_id"] for r in self.store.read_jsonl(self.complete_log)}
+        if not self._compacted:  # once per process: drop what earlier runs kept for finished chunks
+            self._compacted = True
+            if self.index(self.work_fp).forget(complete):
+                self.index(self.work_fp).compact()
         pending, newly = [], []
         for row in self.plan_lines():
             cid = row["chunk_id"]
@@ -78,4 +86,5 @@ class WorkProgress:
                 pending.append((cid, row["size"]))
         if newly:
             self.store.append_jsonl(self.complete_log, newly)
+            self.index(self.work_fp).forget(c["chunk_id"] for c in newly)
         return pending

@@ -16,7 +16,19 @@ from landuse_filter.domain.parsing import parse_generation
 INSERT_BATCH = 10_000
 
 
+def _key(location: str) -> str:
+    """``<fp>/<chunk>/<part>.json``: a manifest's identity, whatever root it sits under."""
+    return "/".join(location.replace("\\", "/").split("/")[-3:])
+
+
 class ProgressIndex:
+    """Generated hashes of the chunks still in flight, plus every manifest ever consumed.
+
+    A chunk's hashes are dropped once it is complete (:meth:`forget`), so the index stays
+    small however many sentences a dataset has; ``seen`` keeps the manifests from being
+    fetched again.
+    """
+
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path)
@@ -30,7 +42,7 @@ class ProgressIndex:
         new = 0
         with self.db:
             for path in manifests:
-                cur = self.db.execute("INSERT OR IGNORE INTO seen VALUES (?)", (str(path),))
+                cur = self.db.execute("INSERT OR IGNORE INTO seen VALUES (?)", (_key(str(path)),))
                 if not cur.rowcount:
                     continue
                 new += 1
@@ -40,6 +52,23 @@ class ProgressIndex:
                     "INSERT OR IGNORE INTO done VALUES (?, ?)", [(chunk, s) for s in shas]
                 )
         return new
+
+    def has_seen(self, manifest_location: str) -> bool:
+        """Whether a manifest (repo path or local path) was already ingested."""
+        row = self.db.execute("SELECT 1 FROM seen WHERE path = ?", (_key(manifest_location),))
+        return row.fetchone() is not None
+
+    def forget(self, chunks: Iterable[str]) -> int:
+        """Drop the hashes of finished chunks (their manifests stay marked as seen)."""
+        with self.db:
+            return sum(
+                self.db.execute("DELETE FROM done WHERE chunk = ?", (chunk,)).rowcount
+                for chunk in chunks
+            )
+
+    def compact(self) -> None:
+        """Give the freed pages back to the disk."""
+        self.db.execute("VACUUM")
 
     def count(self, chunk: str) -> int:
         return self.db.execute("SELECT COUNT(*) FROM done WHERE chunk = ?", (chunk,)).fetchone()[0]
