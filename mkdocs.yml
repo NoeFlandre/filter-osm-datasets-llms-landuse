@@ -9,6 +9,7 @@ nav:
   - Output schema: schema.md
   - Benchmark parity: benchmark.md
   - Sizing: sizing.md
+  - Speed tuning: tuning.md
   - Grid'5000: grid5000.md
   - CLI reference: cli.md
   - Known weaknesses: debt.md
@@ -24,6 +25,7 @@ nav:
       - adr/0009-work-store.md
       - adr/0010-parity-and-hardware.md
       - adr/0011-parallel-controllers.md
+      - adr/0012-concurrency-window.md
 markdown_extensions:
   - pymdownx.superfences:
       custom_fences:
