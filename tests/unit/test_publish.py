@@ -145,3 +145,62 @@ def test_a_text_shared_by_two_files_is_uploaded_to_generations_once(tmp_path, mo
     )
     assert generation_files
     assert rows == unique
+
+
+def test_description_publish_uploads_the_yes_share_map_with_computed_figures(tmp_path, monkeypatch):
+    import pyarrow as pa
+
+    from landuse_filter.adapters.readers import DESCRIPTION, read_description
+
+    uploads: dict[str, Path] = {}
+    monkeypatch.setattr(hub, "ensure_dataset", lambda repo: None)
+    monkeypatch.setattr(hub, "remote_files", lambda repo: set())
+    monkeypatch.setattr(hub, "list_files", lambda repo, rev: ["language-v1/data/a.parquet"])
+    language = INPUTS / "description.parquet"
+    monkeypatch.setattr(
+        hub, "download_all", lambda repo, rev, paths: [(language, p) for p in paths]
+    )
+    monkeypatch.setattr(
+        hub, "upload", lambda repo, files, msg: uploads.update({d: s for s, d in files})
+    )
+    ids = pq.read_table(language, columns=["osm_type", "osm_id"]).to_pylist()
+    polygons = tmp_path / "polygons.parquet"
+    pq.write_table(
+        pa.table(
+            {
+                "osm_type": [r["osm_type"] for r in ids],
+                "osm_id": [r["osm_id"] for r in ids],
+                "bbox_min_x": [2.0 + i for i in range(len(ids))],
+                "bbox_min_y": [48.0] * len(ids),
+                "bbox_max_x": [2.1 + i for i in range(len(ids))],
+                "bbox_max_y": [48.1] * len(ids),
+            }
+        ),
+        polygons,
+    )
+    monkeypatch.setattr(
+        hub,
+        "open_file",
+        lambda repo, path, revision=None: polygons if path.startswith("data/") else language,
+    )
+    store = WorkStore(tmp_path / "work")
+    planner = Planner(store, DESCRIPTION, config.GENERATION_FP)
+    planner.register(["language-v1/data/a.parquet"])
+    planner.scan(lambda _: language)
+    rows = [
+        Generation(r.text_sha256, "x</think>yes", 5, 3, "stop", False, None, None, None, None)
+        for r in read_description(language, "language-v1/data/a.parquet")
+        if not r.unsplit
+    ]
+    prov = {name: "p" for name, _ in PROVENANCE}
+    store.write_part(
+        config.GENERATION_FP,
+        "c",
+        generation_table(list({g.text_sha256: g for g in rows}.values()), prov),
+    )
+    report = pub.publish(store, DESCRIPTION, "rev")
+    assert report.labelled_files == 1
+    assert uploads["assets/yes_share_map.png"].read_bytes()[:4] == b"\x89PNG"
+    card = uploads["README.md"].read_text()
+    yes = report.decisions.get("yes", 0) + report.decisions.get("no", 0)
+    assert f"{yes} of {yes} `yes`/`no` sentences (100.0%) are placed" in card

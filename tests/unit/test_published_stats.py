@@ -67,4 +67,51 @@ def test_totals_sum_every_record():
         "failures": {"empty": 1},
         "gpus": {"l40s": 6, "a40": 1},
         "unique_texts": 7,
+        "cells": {},
+        "labelled": 0,
+        "located": 0,
     }
+
+
+def where():
+    from landuse_filter.application.geo import Located
+
+    return Located({"c1": [2, 1]}, labelled=4, located=3)
+
+
+def test_label_stats_carry_the_map_cells_when_a_locator_is_given(tmp_path):
+    path = labels_file(tmp_path, "a.parquet", [("yes", None), ("no", None)])
+    stats = ps.file_stats("labels/a.parquet", path, lambda p, s: where())
+    assert stats["cells"] == {"c1": [2, 1]}
+    assert (stats["labelled"], stats["located"]) == (4, 3)
+
+
+def test_records_without_cells_are_counted_again_when_a_locator_is_given(tmp_path):
+    store = WorkStore(tmp_path / "w")
+    path = labels_file(tmp_path, "a.parquet", [("yes", None)])
+    ps.complete(store, "d", {"labels/a.parquet"}, lambda p: path)  # old record, no cells
+    calls = []
+
+    def locate(p, source):
+        calls.append(p)
+        return where()
+
+    records = ps.complete(store, "d", {"labels/a.parquet"}, lambda p: path, locate)
+    ps.complete(store, "d", {"labels/a.parquet"}, lambda p: path, locate)  # now cached
+    assert calls == ["labels/a.parquet"]
+    assert records[0]["cells"] == {"c1": [2, 1]}
+
+
+def test_totals_merge_cells_and_sum_located_rows():
+    records = [
+        {"path": "labels/a", "cells": {"c1": [1, 1]}, "labelled": 3, "located": 2},
+        {
+            "path": "labels/b",
+            "cells": {"c1": [2, 0], "c2": [0, 1]},
+            "labelled": 4,
+            "located": 3,
+        },
+    ]
+    totals = ps.totals(records)
+    assert totals["cells"] == {"c1": (3, 1), "c2": (0, 1)}
+    assert (totals["labelled"], totals["located"]) == (7, 5)

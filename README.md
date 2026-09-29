@@ -32,7 +32,7 @@ passing it. Plan and progress: [epic #1](https://github.com/NoeFlandre/filter-os
 ```bash
 export UV_PROJECT_ENVIRONMENT=~/.venvs/luf   # keep the env off slow or external disks
 export LUF_WORK=~/luf-work                     # controller ledger (small)
-uv sync --extra tokenize
+uv sync --extra tokenize --extra map
 luf g5k inventory                              # eligible GPU clusters on all sites
 ```
 

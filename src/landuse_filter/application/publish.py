@@ -19,7 +19,7 @@ import pyarrow.parquet as pq
 from landuse_filter import config
 from landuse_filter.adapters import hub
 from landuse_filter.adapters.indexes import ResolutionIndex
-from landuse_filter.adapters.readers import SOURCES
+from landuse_filter.adapters.readers import DESCRIPTION, SOURCES
 from landuse_filter.adapters.store import WorkStore
 from landuse_filter.application import published_stats
 from landuse_filter.application.assemble import (
@@ -27,7 +27,8 @@ from landuse_filter.application.assemble import (
     build_generations,
     build_labels,
 )
-from landuse_filter.application.card import CardFacts, render_card
+from landuse_filter.application.card import MAP_ASSET, CardFacts, MapFacts, render_card
+from landuse_filter.application.geo import BBOX, Located, description_cells
 from landuse_filter.application.results import canonical_generations
 
 
@@ -163,6 +164,7 @@ def _refresh_card(
             dataset,
             on_hub | set(local),
             lambda p: local[p] if p in local else hub.open_file(repo, p),
+            _locator(dataset, revision),
         )
     )
     if stats["decisions"]:
@@ -178,6 +180,45 @@ def _refresh_card(
     return stats["decisions"]
 
 
+def _locator(dataset: str, revision: str) -> published_stats.Locator | None:
+    """Where the rows of a labels file are, for datasets whose input has coordinates."""
+    if dataset != DESCRIPTION:
+        return None
+    input_repo = SOURCES[dataset].repo_id
+
+    def locate(path: str, labels_source: published_stats.Source) -> Located:
+        from landuse_filter.adapters import hexmap
+
+        rel = path.removeprefix("labels/")
+        language_file = hub.open_file(input_repo, rel, revision)
+        polygon_file = hub.open_file(input_repo, f"data/{Path(rel).name}", revision)
+        return description_cells(
+            pq.read_table(labels_source, columns=["description_identity", "decision"]),
+            pq.read_table(language_file, columns=["description_identity", "osm_type", "osm_id"]),
+            pq.read_table(polygon_file, columns=["osm_type", "osm_id", *BBOX]),
+            hexmap.cell_of,
+        )
+
+    return locate
+
+
+def _world_map(stats: dict, png: Path, dataset: str) -> MapFacts | None:
+    """Render the yes-share map and return its figures; ``None`` without coordinates."""
+    if not stats["cells"]:
+        return None
+    from landuse_filter.adapters import hexmap
+    from landuse_filter.domain import geomap
+
+    png.parent.mkdir(parents=True, exist_ok=True)
+    hexmap.render(stats["cells"], png, title=f"{dataset}-landuse: share of yes per H3 cell")
+    return MapFacts(
+        cells=len(stats["cells"]),
+        located=stats["located"],
+        labelled=stats["labelled"],
+        share=geomap.global_share(stats["cells"]),
+    )
+
+
 def _card(
     store: WorkStore,
     dataset: str,
@@ -189,6 +230,8 @@ def _card(
     stats: dict,
 ) -> None:
     cfg = config.reference_config()
+    png = store.path(f"publish/{dataset}/{MAP_ASSET}")
+    world_map = _world_map(stats, png, dataset)
     admitted = {
         p.stem: store.read_json(str(p.relative_to(store.root)))["gate"]
         for p in sorted(store.path("gates/admission").glob("*.json"))
@@ -209,15 +252,20 @@ def _card(
             unique_texts=stats["unique_texts"],
             gpu_rows=stats["gpus"],
             admitted=admitted,
+            world_map=world_map,
         )
     )
-    digest = hashlib.sha256(text.encode()).hexdigest()
+    files = [("README.md", text.encode())]
+    if world_map:
+        files.append((MAP_ASSET, png.read_bytes()))
+    digest = hashlib.sha256(b"\0".join(name.encode() + data for name, data in files)).hexdigest()
     marker = store.path(f"published/{dataset}.card.sha256")
     if marker.exists() and marker.read_text().strip() == digest:
         return
     path = store.path(f"publish/{dataset}/README.md")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
-    hub.upload(repo, [(path, "README.md")], "Update dataset card")
+    uploads = [(path, "README.md"), *([(png, MAP_ASSET)] if world_map else [])]
+    hub.upload(repo, uploads, "Update dataset card")
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(digest + "\n")

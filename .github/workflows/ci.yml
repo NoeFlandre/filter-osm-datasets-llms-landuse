@@ -26,7 +26,7 @@ jobs:
         with:
           enable-cache: true
           python-version: "3.12"
-      - run: uv sync --extra tokenize
+      - run: uv sync --extra tokenize --extra map
       - run: make lint
       - run: make types
       - run: make test
@@ -45,7 +45,7 @@ jobs:
         with:
           enable-cache: true
           python-version: "3.12"
-      - run: uv sync --extra tokenize
+      - run: uv sync --extra tokenize --extra map
       - run: make mutation
 
   docs:

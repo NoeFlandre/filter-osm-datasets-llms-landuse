@@ -52,11 +52,12 @@ def list_files(repo_id: str, revision: str) -> list[str]:
     return sorted(HfApi().list_repo_files(repo_id, repo_type="dataset", revision=revision))
 
 
-def open_file(repo_id: str, path: str) -> IO[bytes]:
+def open_file(repo_id: str, path: str, revision: str | None = None) -> IO[bytes]:
     """Read-only file object of a file already on the Hub (ranged reads, no full download)."""
     from huggingface_hub import HfFileSystem
 
-    return HfFileSystem().open(f"datasets/{repo_id}/{path}", "rb")
+    at = f"@{revision}" if revision else ""
+    return HfFileSystem().open(f"datasets/{repo_id}{at}/{path}", "rb")
 
 
 def delete(repo_id: str, paths: Sequence[str], message: str) -> None:
