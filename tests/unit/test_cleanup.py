@@ -40,3 +40,11 @@ def test_never_leaves_the_project_tree_or_touches_the_token(entries):
 def test_logs_are_kept_up_to_exactly_seven_days():
     assert cleanup_plan([Entry("luf/logs/a.out", 7.0)], KEEP) == []
     assert cleanup_plan([Entry("luf/logs/a.out", 7.01)], KEEP) == ["luf/logs/a.out"]
+
+
+def test_clean_finds_the_project_lockfile_whatever_the_working_directory():
+    """Regression: `luf g5k clean` looked for src/uv.lock (one parent too few) and crashed."""
+    from landuse_filter.cli import g5k
+
+    assert g5k.LOCKFILE.name == "uv.lock"
+    assert g5k.LOCKFILE.is_file()

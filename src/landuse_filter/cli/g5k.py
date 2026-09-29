@@ -141,6 +141,8 @@ def g5k_run_admission(
     run_many(controllers, cache, interval=interval, emit=typer.echo)
 
 
+LOCKFILE = Path(__file__).resolve().parents[3] / "uv.lock"
+
 # sagittaire's ancient CPUs crash modern wheels (SIGILL) and its /tmp is tiny.
 CPU_JOB_PROPERTY = "gpu_count = 0 AND cluster != 'sagittaire'"
 
@@ -291,9 +293,7 @@ def g5k_clean(
     ]
     live = [a for a in assignments if a.get("state") in ("submitting", "submitted")]
     commits = {a["provenance"]["code_commit"] for a in live} | {commit()}
-    lock = hashlib.sha256(
-        (Path(__file__).resolve().parents[2] / "uv.lock").read_bytes()
-    ).hexdigest()[:12]
+    lock = hashlib.sha256(LOCKFILE.read_bytes()).hexdigest()[:12]
     for site in sites.split(","):
         try:
             listing = g5k.project_listing(site)
