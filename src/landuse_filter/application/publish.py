@@ -26,6 +26,7 @@ from landuse_filter.application.assemble import (
     MissingGenerationError,
     build_generations,
     build_labels,
+    build_viewer,
 )
 from landuse_filter.application.card import MAP_ASSET, CardFacts, MapFacts, render_card
 from landuse_filter.application.geo import BBOX, Located, description_cells, website_cells
@@ -92,6 +93,8 @@ def publish(
             if g and s in owned
         )
         new.append((out / target, target))
+        new.append((out / f"viewer/{path}", f"viewer/{path}"))
+    new += _missing_viewers(dataset, files, done, revision, resolved=resolved, out=out)
     if new_shas:
         batch = len(list(store.read_jsonl(f"published/{dataset}.jsonl")))
         gen_dir = store.path(f"publish/{dataset}-gen-{batch:05d}")
@@ -118,6 +121,27 @@ def publish(
             total=len(files),
         )
     return PublishReport(labelled, len(files), len(new), decisions)
+
+
+def _missing_viewers(
+    dataset: str,
+    files: list[str],
+    done: set[str],
+    revision: str,
+    *,
+    resolved: ResolutionIndex,
+    out: Path,
+) -> list[tuple[Path, str]]:
+    """Viewer tables of files that were labelled before the viewer table existed."""
+    made = []
+    for path in files:
+        target = f"viewer/{path}"
+        if f"labels/{path}" not in done or target in done:
+            continue
+        local = Path(hub.download_all(SOURCES[dataset].repo_id, revision, [path])[0][0])
+        build_viewer(dataset, path, local, resolved=resolved, out=out)
+        made.append((out / target, target))
+    return made
 
 
 def _mirror(

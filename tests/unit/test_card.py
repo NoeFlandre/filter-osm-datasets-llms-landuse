@@ -112,3 +112,12 @@ def test_map_section_shows_computed_figures_and_is_optional():
     assert "dataset-wide share (68.6%)" in card
     assert "950 of 1,000 `yes`/`no` sentences (95.0%) are placed, in 1,234 cells" in card
     assert "Where the labels are" not in render_card(facts())
+
+
+def test_the_sentence_viewer_is_the_default_and_first_config():
+    """The dataset viewer opens the first config marked default: sentence + label only."""
+    front = render_card(facts()).split("---")[1]
+    configs = front[front.index("configs:") :]
+    assert configs.index("config_name: sentences") < configs.index("config_name: labels")
+    assert "default: true" in configs.split("config_name: labels")[0]
+    assert 'data_files: "viewer/**/*.parquet"' in configs
