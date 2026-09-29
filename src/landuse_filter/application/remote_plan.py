@@ -41,6 +41,18 @@ def restore_index(remote: Remote, scratch: WorkStore, dataset: str) -> bool:
     return True
 
 
+def restore_plan(remote: Remote, scratch: WorkStore, dataset: str, fp: str) -> None:
+    """Start from the bucket's plan lines: the file is append-only across nodes.
+
+    A resumed job used to begin with an empty scratch file and overwrite the bucket's,
+    losing every earlier chunk line (wiki: 1,586 of 26,389 survived).
+    """
+    plan = f"plans/{dataset}/{fp}/chunks.jsonl"
+    if plan in remote.ls(f"plans/{dataset}/{fp}/"):
+        remote.get([(plan, scratch.path(plan))])
+        scratch.path(plan).chmod(0o644)
+
+
 def publish_new_chunks(remote: Remote, scratch: WorkStore, dataset: str, fp: str) -> int:
     """Upload emitted chunk files and the plan lines; drop local chunk copies."""
     chunks = (
@@ -76,8 +88,10 @@ def run_plan(  # noqa: PLR0913 - one use case, explicit collaborators
 ) -> dict:
     """Scan every file (resumably), emitting and publishing chunks as it goes."""
     restore_index(remote, scratch, dataset)
+    restore_plan(remote, scratch, dataset, fp)
     planner = Planner(scratch, dataset, fp)
     planner.register(files)
+    planner.recover_plan_lines()
     last = time.monotonic()
     fetched: list[Path] = []
 

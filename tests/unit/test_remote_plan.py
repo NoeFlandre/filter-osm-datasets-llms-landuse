@@ -80,3 +80,32 @@ def test_resume_works_when_the_downloaded_index_is_read_only(tmp_path, monkeypat
         should_stop=lambda: False,
     )
     assert report["files_done"] == 3
+
+
+def plan_line_ids(remote):
+    import json
+
+    text = (remote.root / f"plans/{WEBSITE}/fp/chunks.jsonl").read_text()
+    return {json.loads(line)["chunk_id"] for line in text.splitlines()}
+
+
+def test_resumed_plan_keeps_the_plan_lines_of_earlier_nodes(tmp_path):
+    """Regression (wiki planning): each resumed job started with an empty scratch plan file
+    and overwrote the bucket's, losing every earlier chunk line (1,586 of 26,389 survived)."""
+    remote, _, _ = plan(tmp_path, "s1", stop_after=1)
+    before = plan_line_ids(remote)
+    assert before
+    _, _, report = plan(tmp_path, "s2")
+    after = plan_line_ids(remote)
+    assert before <= after
+    assert len(after) == report["chunks_emitted"]
+
+
+def test_missing_plan_lines_are_rebuilt_from_the_index(tmp_path):
+    """Recovery for the loss above: chunks the index assigned but the plan file forgot."""
+    remote, _, report = plan(tmp_path, "s1")
+    plan_file = remote.root / f"plans/{WEBSITE}/fp/chunks.jsonl"
+    first_line = plan_file.read_text().splitlines()[0]
+    plan_file.write_text(first_line + "\n")
+    plan(tmp_path, "s2")  # nothing left to scan: only the rebuild runs
+    assert len(plan_line_ids(remote)) == report["chunks_emitted"]
