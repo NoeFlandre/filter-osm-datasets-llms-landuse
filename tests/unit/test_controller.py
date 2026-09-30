@@ -264,7 +264,8 @@ def test_loop_survives_a_failing_cycle(world):
     run_loop(c, interval=5, sleep=sleeps.append, emit=out.append)
     assert calls["n"] == 2
     assert sleeps == [5]
-    assert "cycle failed (RuntimeError" in logs[0]
+    assert logs[0] == "cycle failed; retrying in 5s (RuntimeError: git rev-parse failed)"
+    assert any(line.startswith("  | ") and "flaky" in line for line in logs[1:])  # traceback
     assert out
     assert '"pending_chunks": 0' in out[0]
     c.cycle = real
@@ -489,8 +490,7 @@ def test_git_archive_is_read_once_per_commit_and_retried_on_a_faulting_drive(mon
         return subprocess.CompletedProcess(cmd, 0, stdout=b"tar-bytes")
 
     monkeypatch.setattr(ctl_mod.subprocess, "run", flaky)
-    monkeypatch.setattr(ctl_mod.time, "sleep", lambda s: None)
-    ctl_mod._archives.clear()
+    monkeypatch.setattr(ctl_mod, "_ARCHIVES", ctl_mod.ArchiveCache(sleep=lambda s: None))
     assert ctl_mod.git_archive("abc") == b"tar-bytes"
     assert ctl_mod.git_archive("abc") == b"tar-bytes"  # cached
     assert len(calls) == 3
@@ -503,7 +503,74 @@ def test_git_archive_gives_up_after_three_attempts(monkeypatch):
         raise subprocess.CalledProcessError(128, cmd)
 
     monkeypatch.setattr(ctl_mod.subprocess, "run", broken)
-    monkeypatch.setattr(ctl_mod.time, "sleep", lambda s: None)
-    ctl_mod._archives.clear()
+    monkeypatch.setattr(ctl_mod, "_ARCHIVES", ctl_mod.ArchiveCache(sleep=lambda s: None))
     with pytest.raises(subprocess.CalledProcessError):
         ctl_mod.git_archive("nope")
+
+
+def test_run_many_logs_the_traceback_of_a_failing_cycle(world):
+    from landuse_filter.application.controller import run_many
+    from landuse_filter.application.site_cache import SiteCache
+
+    c, _ = world
+    logs: list[str] = []
+    c.log = logs.append
+
+    def boom(now=None):
+        raise RuntimeError("hub down")
+
+    c.cycle = boom
+
+    # the failing namespace never finishes; end the loop at its first sleep
+    def sleeper(seconds):
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        run_many([c], SiteCache(), interval=1, sleep=sleeper, emit=lambda _: None)
+    assert f"{c.work_fp}: cycle failed (RuntimeError: hub down)" == logs[0]
+    assert any(line.startswith("  | ") and "boom" in line for line in logs[1:])
+
+
+def _failing(times: int, payload: bytes = b"tar"):
+    import subprocess
+
+    calls: list[str] = []
+
+    def read(ref: str) -> bytes:
+        calls.append(ref)
+        if len(calls) <= times:
+            raise subprocess.CalledProcessError(135, "git archive")
+        return payload
+
+    return read, calls
+
+
+def test_archive_cache_reads_each_ref_once():
+    read, calls = _failing(0)
+    archive = ctl_mod.ArchiveCache(read, sleep=lambda s: None)
+    assert archive("abc") == archive("abc") == b"tar"
+    assert calls == ["abc"]
+    archive("def")
+    assert calls == ["abc", "def"]
+
+
+def test_archive_retries_transient_faults_without_sleeping_for_real():
+    read, calls = _failing(2)
+    sleeps: list[float] = []
+    archive = ctl_mod.ArchiveCache(read, sleep=sleeps.append, delay=5.0)
+    assert archive("abc") == b"tar"
+    assert len(calls) == 3
+    assert sleeps == [5.0, 5.0]
+
+
+def test_archive_raises_after_the_last_attempt_and_does_not_cache_failure():
+    import subprocess
+
+    read, calls = _failing(99)
+    sleeps: list[float] = []
+    archive = ctl_mod.ArchiveCache(read, sleep=sleeps.append, attempts=3)
+    with pytest.raises(subprocess.CalledProcessError):
+        archive("abc")
+    assert len(calls) == 3
+    assert len(sleeps) == 2  # no sleep after the final failure
+    assert archive.cache == {}
