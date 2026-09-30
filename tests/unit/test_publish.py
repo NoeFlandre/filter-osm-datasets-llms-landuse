@@ -1,3 +1,4 @@
+import contextlib
 import shutil
 from pathlib import Path
 
@@ -294,3 +295,35 @@ def test_a_file_becoming_complete_replaces_its_partial_version(tmp_path, monkeyp
     assert "pending" not in report.decisions  # the card counts the final file, not the partial
     done = {r["path"] for r in store.read_jsonl(f"published/{WEBSITE}.jsonl")}
     assert "labels/polygons/a.parquet" in done
+
+
+def test_partial_uploads_are_recorded_as_they_happen(tmp_path, monkeypatch):
+    """Regression: a job checkpointed after its last commit lost the whole partial upload
+    (the ledger and card were written only at the end) and redid 50 minutes of work."""
+    uploads = fake_hub(monkeypatch, tmp_path)
+    monkeypatch.setattr(pub, "PARTIAL_FLUSH", 1)
+    store = planned(tmp_path)
+    generate_some(store, "p1", 0, 20)
+    real = pub._refresh_card
+
+    def die(*args, **kwargs):
+        raise KeyboardInterrupt  # the job is stopped after the commits, before the card
+
+    monkeypatch.setattr(pub, "_refresh_card", die)
+    with contextlib.suppress(KeyboardInterrupt):
+        pub.publish(store, WEBSITE, "rev")
+    monkeypatch.setattr(pub, "_refresh_card", real)
+    served = tmp_path / "served.parquet"  # what the stopped job uploaded
+    shutil.copy(store.path(f"publish/{WEBSITE}/labels/polygons/a.parquet"), served)
+    monkeypatch.setattr(
+        hub,
+        "open_file",
+        lambda repo, path, revision=None: (
+            served if path.startswith("labels/") else INPUTS / "website.parquet"
+        ),
+    )
+    assert any("labels/polygons/a.parquet" in batch for batch in uploads)
+    before = len(uploads)
+    pub.publish(store, WEBSITE, "rev")  # the next run does not upload the partial file again
+    assert sum("labels/polygons/a.parquet" in batch for batch in uploads[:before]) == 1
+    assert sum("labels/polygons/a.parquet" in batch for batch in uploads[before:]) == 0
