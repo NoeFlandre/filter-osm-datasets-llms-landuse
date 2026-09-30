@@ -127,7 +127,6 @@ omit = [
     "src/landuse_filter/adapters/tokenizer.py",
     "src/landuse_filter/adapters/frontend/*",
     "src/landuse_filter/application/node_main.py",
-    "src/landuse_filter/cli/*",
 ]
 
 [tool.coverage.report]

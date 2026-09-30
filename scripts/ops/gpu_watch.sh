@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Compact periodic summary: running/waiting GPUs, per-dataset chunks, admission pending, last error.
 # Needs LUF_WORK (the controllers' work tree) and runs from the project's .venv.
+# GPU_WATCH_ONCE=1 prints one summary line and exits (used by tests/unit/test_gpu_watch.py).
 : "${LUF_WORK:?set LUF_WORK to the controllers work tree}"
 W=$LUF_WORK
 PROJECT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -19,8 +20,11 @@ for f in glob.glob(os.environ['LUF_WORK'] + '/assignments/*.json'):
 run = collections.Counter(); wait = 0; down = []
 for s in "grenoble lille lyon nancy rennes sophia toulouse luxembourg".split():
     try:
-        out = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", s, "oarstat -u | grep ' luf-'"],
-                             capture_output=True, text=True, timeout=60).stdout
+        r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", s, "oarstat -u | grep ' luf-'"],
+                           capture_output=True, text=True, timeout=60)
+        if r.returncode == 255:  # ssh itself failed (grep finding no job exits 1, not 255)
+            raise OSError("ssh failed")
+        out = r.stdout
     except Exception:
         down.append(s)  # an unreachable site must not look like an empty one
         continue
@@ -56,5 +60,6 @@ for line in sys.stdin:
 print(' '.join(f'{k}={v}' for k, v in sorted(last.items()) if v))")
   err=$(tail -n 60 $W/controller-production.log $W/controller-admission.log 2>/dev/null | grep -hE "cycle failed|submission failed" | grep -v "besteffort. Reserve" | tail -1 | cut -c1-140)
   echo "$(date +%H:%M) GPUS $gpus | chunks $ds | admission pending: ${adm:-none} ${err:+| error: $err}"
+  [ -n "${GPU_WATCH_ONCE:-}" ] && exit 0
   sleep 600
 done
