@@ -60,6 +60,15 @@ class WorkStore:
     def read_json(self, relative: str) -> Any:
         return json.loads(self.path(relative).read_text(encoding="utf-8"))
 
+    def admitted_gates(self) -> dict[str, Any]:
+        """Admission gate of every GPU type whose benchmark was admitted, by GPU key."""
+        gates: dict[str, Any] = {}
+        for path in sorted(self.path("gates/admission").glob("*.json")):
+            record = self.read_json(str(path.relative_to(self.root)))
+            if record.get("status") == "admitted":
+                gates[path.stem] = record["gate"]
+        return gates
+
     def exists(self, relative: str) -> bool:
         return self.path(relative).exists()
 
