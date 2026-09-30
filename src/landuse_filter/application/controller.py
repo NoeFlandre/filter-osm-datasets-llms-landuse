@@ -9,6 +9,7 @@ tree, so killing the controller at any point loses nothing.
 import json
 import subprocess
 import time
+import traceback
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -474,29 +475,68 @@ class Controller:
 
 
 ARCHIVE_ATTEMPTS = 3
-_archives: dict[str, bytes] = {}
+ARCHIVE_RETRY_DELAY = 5.0
 
 
-def git_archive(ref: str) -> bytes:
-    """The repository at ``ref`` as a tar, read once per commit.
+def _tar_of(ref: str) -> bytes:
+    return subprocess.run(
+        ["git", "-C", str(REPO), "archive", "--format=tar", ref],
+        capture_output=True,
+        check=True,
+    ).stdout
+
+
+class ArchiveCache:
+    """``git archive`` of a ref, read once per commit and retried on transient faults.
 
     Retried because the external drive can fault under load (``git archive`` died with
     SIGBUS), and cached because every cycle used to re-read a commit already deployed.
+    The reader and the sleep are injectable so the policy is testable without git.
     """
-    if ref not in _archives:
-        for attempt in range(ARCHIVE_ATTEMPTS):
-            try:
-                _archives[ref] = subprocess.run(
-                    ["git", "-C", str(REPO), "archive", "--format=tar", ref],
-                    capture_output=True,
-                    check=True,
-                ).stdout
-                break
-            except subprocess.CalledProcessError:
-                if attempt == ARCHIVE_ATTEMPTS - 1:
-                    raise
-                time.sleep(5)
-    return _archives[ref]
+
+    def __init__(
+        self,
+        read: Callable[[str], bytes] = _tar_of,
+        sleep: Callable[[float], None] = time.sleep,
+        attempts: int = ARCHIVE_ATTEMPTS,
+        delay: float = ARCHIVE_RETRY_DELAY,
+    ) -> None:
+        self.read = read
+        self.sleep = sleep
+        self.attempts = attempts
+        self.delay = delay
+        self.cache: dict[str, bytes] = {}
+
+    def __call__(self, ref: str) -> bytes:
+        if ref not in self.cache:
+            for attempt in range(self.attempts):
+                try:
+                    self.cache[ref] = self.read(ref)
+                    break
+                except subprocess.CalledProcessError:
+                    if attempt == self.attempts - 1:
+                        raise
+                    self.sleep(self.delay)
+        return self.cache[ref]
+
+
+_ARCHIVES = ArchiveCache()
+
+
+def git_archive(ref: str) -> bytes:
+    """The repository at ``ref`` as a tar (process-wide cache)."""
+    return _ARCHIVES(ref)
+
+
+def log_failure(log: Callable[[str], None], headline: str, exc: Exception) -> None:
+    """Headline on one line, then the traceback on clearly marked ``  | `` lines.
+
+    Keep-alive handlers swallow the error; without the traceback the failing line in
+    the code is unknowable from the production log.
+    """
+    log(f"{headline} ({type(exc).__name__}: {exc})")
+    for line in "".join(traceback.format_exception(exc)).rstrip().splitlines():
+        log(f"  | {line}")
 
 
 def run_loop(
@@ -519,7 +559,7 @@ def run_loop(
         try:
             report = ctl.cycle()
         except Exception as exc:  # noqa: BLE001 - keep the controller alive; state is on disk
-            ctl.log(f"cycle failed ({type(exc).__name__}: {exc}); retrying in {interval:.0f}s")
+            log_failure(ctl.log, f"cycle failed; retrying in {interval:.0f}s", exc)
             if once:
                 return
             sleep(interval)
@@ -547,7 +587,7 @@ def run_many(
             try:
                 report = ctl.cycle()
             except Exception as exc:  # noqa: BLE001 - keep the others running; state is on disk
-                ctl.log(f"{ctl.work_fp}: cycle failed ({type(exc).__name__}: {exc})")
+                log_failure(ctl.log, f"{ctl.work_fp}: cycle failed", exc)
                 continue
             emit(json.dumps({"namespace": ctl.settings.namespace, **report}))
             # Done when this namespace has no pending chunks and no live jobs of its own
