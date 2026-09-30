@@ -31,7 +31,7 @@ from landuse_filter.domain.fingerprint import config_fingerprint, serving_finger
 from landuse_filter.domain.gpu import Admission, gpu_key
 from landuse_filter.domain.policy import Window, allowed_window
 from landuse_filter.domain.prompting import PROMPT_SHA256
-from landuse_filter.domain.scheduling import Slot, assign_chunks, rank_slots
+from landuse_filter.domain.scheduling import Slot, assign_chunks, rank_slots, slot_for
 
 PARIS = ZoneInfo("Europe/Paris")
 # oarsub's refusal when the account has no Abaca priority on a cluster.
@@ -166,17 +166,7 @@ class Controller:
         return report
 
     def reconcile(self) -> dict[str, list[g5k.Job]]:
-        jobs: dict[str, list[g5k.Job]] = {}
-        for site in self.settings.sites:
-            try:
-                jobs[site] = self.sites.our_jobs(site) if self.sites else g5k.our_jobs(site)
-            except g5k.RemoteError as exc:
-                self.log(f"{site}: unreachable ({exc}); keeping its assignments")
-                jobs[site] = [
-                    g5k.Job(site, a["job_id"], a["name"], "Unknown", "")
-                    for a in self.live()
-                    if a["site"] == site and a.get("job_id")
-                ]
+        jobs = {site: self._our_jobs(site) for site in self.settings.sites}
         self.drop_drifted(jobs)
         by_name = {j.name: j for js in jobs.values() for j in js}
         for a in self.live():
@@ -187,6 +177,18 @@ class Controller:
                 a["state"] = "ended"
             self.store.write_json(f"assignments/{a['id']}.json", a)
         return jobs
+
+    def _our_jobs(self, site: str) -> list[g5k.Job]:
+        """Our jobs on a site; when it is unreachable, the ones we believe are still there."""
+        try:
+            return self.sites.our_jobs(site) if self.sites else g5k.our_jobs(site)
+        except g5k.RemoteError as exc:
+            self.log(f"{site}: unreachable ({exc}); keeping its assignments")
+            return [
+                g5k.Job(site, a["job_id"], a["name"], "Unknown", "")
+                for a in self.live()
+                if a["site"] == site and a.get("job_id")
+            ]
 
     def drop_drifted(self, jobs: dict[str, list[g5k.Job]]) -> None:
         """Cancel waiting jobs whose predicted start slipped past their tolerance."""
@@ -220,63 +222,73 @@ class Controller:
         allow: Callable[[str], bool] | None = None,
     ) -> list[tuple[Slot, Cluster]]:
         allow = allow or self.allowed_gpu
-        out = []
         clusters = [
             c for c in load_clusters(self.store) if c.site in self.settings.sites and eligible(c)
         ]
-        for site in self.settings.sites:
-            site_clusters = [
-                c for c in clusters if c.site == site and allow(c.gpu) and self.accessible(c)
-            ]
-            if not site_clusters or len(jobs.get(site, [])) >= self.settings.max_jobs_per_site:
-                continue
-            try:
-                nodes = (self.sites.site_status(site) if self.sites else g5k.site_status(site))[
-                    "nodes"
-                ]
-            except (g5k.RemoteError, KeyError, ValueError) as exc:
-                self.log(f"{site}: status failed: {exc}")
-                continue
-            for c in site_clusters:
-                window = allowed_window(now, starts_now=True) if not c.production else None
-                wall, job_type = self.walltime_for(c, window)
-                if self.memory.backed_off(c, now):
-                    continue
-                free = free_gpus(
-                    c,
-                    nodes,
-                    # A regular job preempts besteffort ones; a besteffort job needs free GPUs.
-                    besteffort_counts=not self.memory.besteffort_only(c),
-                    now=now.timestamp(),
-                    walltime_s=wall.total_seconds() if wall else 0.0,
-                )
-                if wall is None:
-                    continue
-                queued = free <= 0
-                if queued and (self.memory.besteffort_only(c) or not self.queue_room(site, jobs)):
-                    continue
-                prof = profile_for(self.store, c.gpu)
-                out.append(
-                    (
-                        Slot(
-                            site,
-                            c.name,
-                            c.gpu,
-                            1,
-                            1 if queued else free,
-                            QUEUED_WAIT if queued else timedelta(0),
-                            wall,
-                            job_type,
-                            prof.sentences_per_second,
-                            besteffort=self.memory.besteffort_only(c),
-                            queued=queued,
-                        ),
-                        c,
-                    )
-                )
+        out = [
+            pair
+            for site in self.settings.sites
+            for pair in self._site_slots(site, clusters, now, jobs, allow)
+        ]
         ranked = rank_slots([s for s, _ in out], SETUP)
         by_key = {(s.site, s.cluster): c for s, c in out}
         return [(s, by_key[(s.site, s.cluster)]) for s in ranked]
+
+    def _site_slots(
+        self,
+        site: str,
+        clusters: list[Cluster],
+        now: datetime,
+        jobs: dict[str, list[g5k.Job]],
+        allow: Callable[[str], bool],
+    ) -> list[tuple[Slot, Cluster]]:
+        """The slots of one site's usable clusters (none when it is full or unreadable)."""
+        usable = [c for c in clusters if c.site == site and allow(c.gpu) and self.accessible(c)]
+        if not usable or len(jobs.get(site, [])) >= self.settings.max_jobs_per_site:
+            return []
+        nodes = self._site_nodes(site)
+        if nodes is None:
+            return []
+        slots = ((self._cluster_slot(c, nodes, now, jobs), c) for c in usable)
+        return [(slot, c) for slot, c in slots if slot]
+
+    def _site_nodes(self, site: str) -> dict | None:
+        """The site's live node states, or ``None`` (logged) when they cannot be read."""
+        try:
+            status = self.sites.site_status(site) if self.sites else g5k.site_status(site)
+            return status["nodes"]
+        except (g5k.RemoteError, KeyError, ValueError) as exc:
+            self.log(f"{site}: status failed: {exc}")
+            return None
+
+    def _cluster_slot(
+        self, c: Cluster, nodes: dict, now: datetime, jobs: dict[str, list[g5k.Job]]
+    ) -> Slot | None:
+        if self.memory.backed_off(c, now):
+            return None
+        window = allowed_window(now, starts_now=True) if not c.production else None
+        wall, job_type = self.walltime_for(c, window)
+        besteffort = self.memory.besteffort_only(c)
+        free = free_gpus(
+            c,
+            nodes,
+            # A regular job preempts besteffort ones; a besteffort job needs free GPUs.
+            besteffort_counts=not besteffort,
+            now=now.timestamp(),
+            walltime_s=wall.total_seconds() if wall else 0.0,
+        )
+        return slot_for(
+            site=c.site,
+            cluster=c.name,
+            gpu=c.gpu,
+            free=free,
+            walltime=wall,
+            job_type=job_type,
+            sentences_per_second=profile_for(self.store, c.gpu).sentences_per_second,
+            besteffort=besteffort,
+            queue_room=self.queue_room(c.site, jobs),
+            queued_wait=QUEUED_WAIT,
+        )
 
     def queue_room(self, site: str, jobs: dict[str, list[g5k.Job]]) -> bool:
         waiting = sum(j.state == "Waiting" for j in jobs.get(site, []))
@@ -315,12 +327,7 @@ class Controller:
         self, now: datetime, jobs: dict[str, list[g5k.Job]], pending: list[tuple[str, int]]
     ) -> list[str]:
         submitted: list[str] = []
-        taken = {
-            c
-            for a in self.live()
-            if a.get("kind", "work") == "work" and a["fp"] == self.work_fp
-            for c in a["chunks"]
-        }
+        taken = self._taken_chunks()
         total = sum(len(v) for v in jobs.values())
         per_site = {s: len(v) for s, v in jobs.items()}
         code_commit = commit()
@@ -345,6 +352,15 @@ class Controller:
                 per_site[slot.site] = per_site.get(slot.site, 0) + 1
                 submitted.append(f"{slot.site}/{cluster.name}:{job_id}")
         return submitted
+
+    def _taken_chunks(self) -> set[str]:
+        """Chunks held by a live work job of this namespace."""
+        return {
+            c
+            for a in self.live()
+            if a.get("kind", "work") == "work" and a["fp"] == self.work_fp
+            for c in a["chunks"]
+        }
 
     def assignment(
         self,

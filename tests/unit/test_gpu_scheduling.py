@@ -68,3 +68,49 @@ def test_rank_keeps_slots_with_less_than_one_useful_sentence():
 def test_assign_budget_is_capacity_times_overflow():
     pending = [("a", 10), ("b", 10), ("c", 10)]
     assert assign_chunks(pending, set(), capacity=10, overflow=2.0) == ["a", "b"]
+
+
+def _slot_args(**over):
+    from datetime import timedelta
+
+    base = {
+        "site": "lyon",
+        "cluster": "sirius",
+        "gpu": "A100",
+        "free": 3,
+        "walltime": timedelta(minutes=30),
+        "job_type": None,
+        "sentences_per_second": 8.0,
+        "besteffort": False,
+        "queue_room": True,
+        "queued_wait": timedelta(hours=1),
+    }
+    return {**base, **over}
+
+
+def test_a_free_gpu_makes_an_immediate_slot_with_all_free_nodes():
+    from landuse_filter.domain.scheduling import slot_for
+
+    slot = slot_for(**_slot_args(free=3))
+    assert (slot.free_nodes, slot.queued, slot.wait.total_seconds()) == (3, False, 0)
+
+
+def test_no_free_gpu_makes_a_queued_slot_only_if_the_site_has_queue_room():
+    from landuse_filter.domain.scheduling import slot_for
+
+    queued = slot_for(**_slot_args(free=0))
+    assert (queued.free_nodes, queued.queued, queued.wait.total_seconds()) == (1, True, 3600)
+    assert slot_for(**_slot_args(free=0, queue_room=False)) is None
+
+
+def test_besteffort_only_clusters_never_queue():
+    from landuse_filter.domain.scheduling import slot_for
+
+    assert slot_for(**_slot_args(free=0, besteffort=True)) is None
+    assert slot_for(**_slot_args(free=2, besteffort=True)).besteffort
+
+
+def test_no_walltime_means_no_slot():
+    from landuse_filter.domain.scheduling import slot_for
+
+    assert slot_for(**_slot_args(walltime=None)) is None
