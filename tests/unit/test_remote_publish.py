@@ -60,3 +60,33 @@ def test_reset_card_cache_drops_generation_counts_and_the_card_hash(tmp_path):
     kept = scratch.read_jsonl("published/d.stats.jsonl")
     assert [r["path"] for r in kept] == ["labels/a.parquet"]
     assert "published/d.card.sha256" in remote.ls("published/")
+
+
+def test_publish_job_saves_the_partial_ledger_to_the_bucket_while_it_works(tmp_path, monkeypatch):
+    """Regression: a job stopped at its walltime lost the node-local ledger, so the next job
+    rebuilt and re-uploaded every partial file again."""
+    from landuse_filter.application import publish as pub
+    from tests.unit.test_publish import generate_some
+
+    fake_hub(monkeypatch, tmp_path)
+    monkeypatch.setattr(pub, "PARTIAL_FLUSH", 1)
+    planning = WorkStore(tmp_path / "planning-node")
+    planner = Planner(planning, WEBSITE, config.GENERATION_FP)
+    planner.register(["polygons/a.parquet"])
+    planner.scan(lambda _: INPUTS / "website.parquet")
+    planner.db.commit()
+    generate_some(planning, "p1", 0, 20)
+    remote = DirRemote(tmp_path / "bucket")
+    remote.put([(planning.path(f"index/{WEBSITE}.sqlite"), f"index/{WEBSITE}.sqlite")])
+    for p in planning.part_paths(config.GENERATION_FP):
+        remote.put([(p, str(p.relative_to(planning.root)))])
+
+    def stopped(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(pub, "_refresh_card", stopped)
+    with pytest.raises(KeyboardInterrupt):
+        remote_publish.run_publish(
+            remote, WorkStore(tmp_path / "publish-node"), WEBSITE, "rev", config.GENERATION_FP
+        )
+    assert remote.ls(f"published/{WEBSITE}.partial.jsonl")

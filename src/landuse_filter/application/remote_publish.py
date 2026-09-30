@@ -27,8 +27,12 @@ def run_publish(
     fetch(remote, scratch, [p for p in ledgers if p in remote.ls("published/")])
     card_marker = f"published/{dataset}.card.sha256"
     fetch(remote, scratch, [card_marker] if card_marker in remote.ls("published/") else [])
-    report = publish(scratch, dataset, revision)
-    remote.put([(scratch.path(p), p) for p in [*ledgers, card_marker] if scratch.exists(p)])
+
+    def save() -> None:
+        remote.put([(scratch.path(p), p) for p in [*ledgers, card_marker] if scratch.exists(p)])
+
+    report = publish(scratch, dataset, revision, on_progress=save)
+    save()
     return report
 
 
