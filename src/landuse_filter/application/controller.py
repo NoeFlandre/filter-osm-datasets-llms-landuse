@@ -356,10 +356,7 @@ class Controller:
     def _taken_chunks(self) -> set[str]:
         """Chunks held by a live work job of this namespace."""
         return {
-            c
-            for a in self.live()
-            if a.kind == "work" and a.fp == self.work_fp
-            for c in a.chunks
+            c for a in self.live() if a.kind == "work" and a.fp == self.work_fp for c in a.chunks
         }
 
     def assignment(
