@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import IO
+from typing import IO, Protocol
 
 BATCH = 200  # files per commit
 
@@ -69,3 +69,40 @@ def delete(repo_id: str, paths: Sequence[str], message: str) -> None:
         commit_message=message,
         repo_type="dataset",
     )
+
+
+class Hub(Protocol):
+    """The Hub operations publication needs (tests pass a fake, production :class:`HfHub`)."""
+
+    def ensure_dataset(self, repo_id: str) -> None: ...
+    def remote_files(self, repo_id: str) -> set[str]: ...
+    def upload(self, repo_id: str, files: Sequence[tuple[Path, str]], message: str) -> None: ...
+    def download_all(
+        self, repo_id: str, revision: str, paths: Iterable[str]
+    ) -> list[tuple[Path, str]]: ...
+    def open_file(self, repo_id: str, path: str, revision: str | None = None) -> IO[bytes]: ...
+    def list_files(self, repo_id: str, revision: str) -> list[str]: ...
+
+
+class HfHub:
+    """The real Hugging Face Hub, through the module functions above."""
+
+    def ensure_dataset(self, repo_id: str) -> None:
+        ensure_dataset(repo_id)
+
+    def remote_files(self, repo_id: str) -> set[str]:
+        return remote_files(repo_id)
+
+    def upload(self, repo_id: str, files: Sequence[tuple[Path, str]], message: str) -> None:
+        upload(repo_id, files, message)
+
+    def download_all(
+        self, repo_id: str, revision: str, paths: Iterable[str]
+    ) -> list[tuple[Path, str]]:
+        return download_all(repo_id, revision, paths)
+
+    def open_file(self, repo_id: str, path: str, revision: str | None = None) -> IO[bytes]:
+        return open_file(repo_id, path, revision)
+
+    def list_files(self, repo_id: str, revision: str) -> list[str]:
+        return list_files(repo_id, revision)

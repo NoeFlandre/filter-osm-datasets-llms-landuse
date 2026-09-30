@@ -24,9 +24,9 @@ from pathlib import Path
 import pyarrow.parquet as pq
 
 from landuse_filter import config
-from landuse_filter.adapters import hub
+from landuse_filter.adapters.hub import BATCH, HfHub, Hub
 from landuse_filter.adapters.indexes import ResolutionIndex
-from landuse_filter.adapters.readers import DESCRIPTION, SOURCES, WEBSITE
+from landuse_filter.adapters.readers import SOURCES
 from landuse_filter.adapters.store import WorkStore
 from landuse_filter.application import published_stats
 from landuse_filter.application.assemble import (
@@ -37,7 +37,7 @@ from landuse_filter.application.assemble import (
     build_viewer,
 )
 from landuse_filter.application.card import MAP_ASSET, CardFacts, MapFacts, render_card
-from landuse_filter.application.geo import BBOX, Located, description_cells, website_cells
+from landuse_filter.application.map_locator import map_locator
 from landuse_filter.application.results import canonical_generations
 
 PARTIAL_STEP = 0.10  # share of a file's sentences that must be newly labelled to refresh it
@@ -90,11 +90,13 @@ class _PartialSink:
         store: WorkStore,
         dataset: str,
         repo: str,
+        hub: Hub,
         *,
         dry_run: bool,
         on_progress: Callable[[], None] | None,
     ) -> None:
         self.store, self.dataset, self.repo, self.dry_run = store, dataset, repo, dry_run
+        self.hub = hub
         self.on_progress = on_progress
         self.pending: list[tuple[Path, str]] = []
         self.resolved: dict[str, int] = {}  # labels path -> resolved sentences, this run
@@ -108,7 +110,7 @@ class _PartialSink:
 
     def flush(self) -> None:
         if self.pending and not self.dry_run:
-            hub.upload(
+            self.hub.upload(
                 self.repo, self.pending, f"Add partial land-use labels ({config.GENERATION_FP})"
             )
             self.store.append_jsonl(
@@ -138,6 +140,7 @@ class _Run:
     done: set[str]  # paths recorded as published (complete files, generations, mirror marker)
     resolved_before: dict[str, int]  # labels path -> sentences resolved at its last partial upload
     sink: _PartialSink
+    hub: Hub
     db: sqlite3.Connection
     files: list[str]  # scanned input files, in planner order
     first_file: dict[str, int]  # input file -> planner index
@@ -150,12 +153,13 @@ def publish(
     *,
     dry_run: bool = False,
     on_progress: Callable[[], None] | None = None,
+    hub: Hub | None = None,
 ) -> PublishReport:
-    run = _prepare(store, dataset, revision, dry_run=dry_run, on_progress=on_progress)
-    new, new_shas = _build_files(run)
-    new += _missing_viewers(
-        dataset, run.files, run.done, revision, resolved=run.ctx.resolved, out=run.ctx.out
+    run = _prepare(
+        store, dataset, revision, hub or HfHub(), dry_run=dry_run, on_progress=on_progress
     )
+    new, new_shas = _build_files(run)
+    new += _missing_viewers(run, resolved=run.ctx.resolved, out=run.ctx.out)
     new += _generation_files(run, new_shas)
     return _finish(run, new)
 
@@ -164,6 +168,7 @@ def _prepare(
     store: WorkStore,
     dataset: str,
     revision: str,
+    hub: Hub,
     *,
     dry_run: bool,
     on_progress: Callable[[], None] | None,
@@ -174,6 +179,7 @@ def _prepare(
     if not dry_run:
         hub.ensure_dataset(repo)
         _mirror(
+            hub,
             store,
             dataset,
             input_repo=SOURCES[dataset].repo_id,
@@ -197,7 +203,8 @@ def _prepare(
         resolved_before={
             r["path"]: r["resolved"] for r in store.read_jsonl(partial_ledger(dataset))
         },
-        sink=_PartialSink(store, dataset, repo, dry_run=dry_run, on_progress=on_progress),
+        sink=_PartialSink(store, dataset, repo, hub, dry_run=dry_run, on_progress=on_progress),
+        hub=hub,
         db=db,
         files=files,
         first_file=dict(zip(files, [i for i, _ in indexed], strict=True)),
@@ -214,7 +221,7 @@ def _build_files(run: _Run) -> tuple[list[tuple[Path, str]], set[str]]:
         target = f"labels/{path}"
         if target in run.done:
             continue
-        local = Path(hub.download_all(SOURCES[run.dataset].repo_id, run.revision, [path])[0][0])
+        local = Path(run.hub.download_all(SOURCES[run.dataset].repo_id, run.revision, [path])[0][0])
         try:
             build_labels(
                 run.dataset,
@@ -260,18 +267,21 @@ def _finish(run: _Run, new: list[tuple[Path, str]]) -> PublishReport:
     if not run.dry_run:
         decisions = _upload(
             run.store,
+            run.hub,
             (run.dataset, run.repo, run.revision),
             new,
-            run.sink.uploaded,
-            Coverage(labelled, len(run.files), sorted(partial_paths)),
+            partial=run.sink.uploaded,
+            coverage=Coverage(labelled, len(run.files), sorted(partial_paths)),
         )
     return PublishReport(labelled, len(run.files), len(new), decisions, len(partial_paths))
 
 
 def _upload(
     store: WorkStore,
+    hub: Hub,
     target: tuple[str, str, str],
     new: list[tuple[Path, str]],
+    *,
     partial: dict[str, Path],
     coverage: Coverage,
 ) -> dict[str, int]:
@@ -283,6 +293,7 @@ def _upload(
         store.append_jsonl(f"published/{dataset}.jsonl", [{"path": d} for _, d in new])
     return _refresh_card(
         store,
+        hub,
         dataset,
         repo=repo,
         revision=revision,
@@ -331,29 +342,28 @@ def _build_partial(ctx: _Ctx, path: str, local: Path, *, last: int) -> int | Non
     return None
 
 
-def _missing_viewers(
-    dataset: str,
-    files: list[str],
-    done: set[str],
-    revision: str,
-    *,
-    resolved: ResolutionIndex,
-    out: Path,
-) -> list[tuple[Path, str]]:
+def _missing_viewers(run: _Run, *, resolved: ResolutionIndex, out: Path) -> list[tuple[Path, str]]:
     """Viewer tables of files that were labelled before the viewer table existed."""
     made = []
-    for path in files:
+    for path in run.files:
         target = f"viewer/{path}"
-        if f"labels/{path}" not in done or target in done:
+        if f"labels/{path}" not in run.done or target in run.done:
             continue
-        local = Path(hub.download_all(SOURCES[dataset].repo_id, revision, [path])[0][0])
-        build_viewer(dataset, path, local, resolved=resolved, out=out)
+        local = Path(run.hub.download_all(SOURCES[run.dataset].repo_id, run.revision, [path])[0][0])
+        build_viewer(run.dataset, path, local, resolved=resolved, out=out)
         made.append((out / target, target))
     return made
 
 
 def _mirror(
-    store: WorkStore, dataset: str, *, input_repo: str, revision: str, repo: str, done: set[str]
+    hub: Hub,
+    store: WorkStore,
+    dataset: str,
+    *,
+    input_repo: str,
+    revision: str,
+    repo: str,
+    done: set[str],
 ) -> None:
     marker = f"mirror:{revision}"
     if marker in done:
@@ -362,10 +372,10 @@ def _mirror(
     wanted = [
         p for p in hub.list_files(input_repo, revision) if p not in present and p != "README.md"
     ]
-    for start in range(0, len(wanted), hub.BATCH):
+    for start in range(0, len(wanted), BATCH):
         hub.upload(
             repo,
-            hub.download_all(input_repo, revision, wanted[start : start + hub.BATCH]),
+            hub.download_all(input_repo, revision, wanted[start : start + BATCH]),
             f"Mirror {input_repo}@{revision[:7]}",
         )
     store.append_jsonl(f"published/{dataset}.jsonl", [{"path": marker}])
@@ -380,6 +390,7 @@ def _decision_counts(out: Path) -> dict[str, int]:
 
 def _refresh_card(
     store: WorkStore,
+    hub: Hub,
     dataset: str,
     *,
     repo: str,
@@ -395,13 +406,14 @@ def _refresh_card(
             dataset,
             on_hub | set(coverage.partial) | set(local),
             lambda p: local[p] if p in local else hub.open_file(repo, p),
-            _locator(dataset, revision),
+            map_locator(dataset, revision, hub),
             refresh=set(local),  # uploaded now: a partial record of the same path is stale
         )
     )
     if stats["decisions"]:
         _card(
             store,
+            hub,
             dataset,
             repo=repo,
             revision=revision,
@@ -409,36 +421,6 @@ def _refresh_card(
             stats=stats,
         )
     return stats["decisions"]
-
-
-def _locator(dataset: str, revision: str) -> published_stats.Locator | None:
-    """Where the rows of a labels file are, for datasets whose input has coordinates."""
-    if dataset not in (DESCRIPTION, WEBSITE):
-        return None
-    input_repo = SOURCES[dataset].repo_id
-
-    def locate(path: str, labels_source: published_stats.Source) -> Located:
-        from landuse_filter.adapters import hexmap
-
-        rel = path.removeprefix("labels/")
-        if dataset == WEBSITE:
-            return website_cells(
-                pq.read_table(labels_source, columns=["polygon_id", "decision"]),
-                pq.read_table(
-                    hub.open_file(input_repo, rel, revision), columns=["polygon_id", "lat", "lon"]
-                ),
-                hexmap.cell_of,
-            )
-        language_file = hub.open_file(input_repo, rel, revision)
-        polygon_file = hub.open_file(input_repo, f"data/{Path(rel).name}", revision)
-        return description_cells(
-            pq.read_table(labels_source, columns=["description_identity", "decision"]),
-            pq.read_table(language_file, columns=["description_identity", "osm_type", "osm_id"]),
-            pq.read_table(polygon_file, columns=["osm_type", "osm_id", *BBOX]),
-            hexmap.cell_of,
-        )
-
-    return locate
 
 
 def _world_map(stats: dict, png: Path, dataset: str) -> MapFacts | None:
@@ -460,6 +442,7 @@ def _world_map(stats: dict, png: Path, dataset: str) -> MapFacts | None:
 
 def _card(
     store: WorkStore,
+    hub: Hub,
     dataset: str,
     *,
     repo: str,
@@ -470,11 +453,7 @@ def _card(
     cfg = config.reference_config()
     png = store.path(f"publish/{dataset}/{MAP_ASSET}")
     world_map = _world_map(stats, png, dataset)
-    admitted = {
-        p.stem: store.read_json(str(p.relative_to(store.root)))["gate"]
-        for p in sorted(store.path("gates/admission").glob("*.json"))
-        if store.read_json(str(p.relative_to(store.root))).get("status") == "admitted"
-    }
+    admitted = store.admitted_gates()
     text = render_card(
         CardFacts(
             dataset=dataset,

@@ -1,11 +1,11 @@
 import contextlib
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 
 import pyarrow.parquet as pq
 
 from landuse_filter import config
-from landuse_filter.adapters import hub
 from landuse_filter.adapters.readers import WEBSITE, read_website
 from landuse_filter.adapters.schema import PROVENANCE, generation_table
 from landuse_filter.adapters.store import WorkStore
@@ -16,20 +16,42 @@ from landuse_filter.domain.records import Generation
 INPUTS = Path(__file__).parents[1] / "fixtures" / "inputs"
 
 
-def fake_hub(monkeypatch, tmp_path):
-    uploads: list[list[str]] = []
+class FakeHub:
+    """In-memory Hub port: records uploads, serves local files."""
+
+    def __init__(self, local: Path, files: list[str] | None = None) -> None:
+        self.local = local
+        self.files = files or ["polygons/a.parquet", "stats.json"]
+        self.uploads: list[list[str]] = []
+        self.sources: dict[str, Path] = {}  # repo path -> local file, last upload wins
+        self.opened: Callable[[str, str, str | None], Path] | None = None
+        self.downloaded: Callable[[str], Path] | None = None
+
+    def ensure_dataset(self, repo_id):
+        pass
+
+    def remote_files(self, repo_id):
+        return set()
+
+    def list_files(self, repo_id, revision):
+        return self.files
+
+    def download_all(self, repo_id, revision, paths):
+        return [((self.downloaded(p) if self.downloaded else self.local), p) for p in paths]
+
+    def open_file(self, repo_id, path, revision=None):
+        return self.opened(repo_id, path, revision) if self.opened else self.local
+
+    def upload(self, repo_id, files, message):
+        self.uploads.append([d for _, d in files])
+        self.sources.update({d: s for s, d in files})
+
+
+def fake_hub(tmp_path):
     local = tmp_path / "hubcache" / "polygons" / "a.parquet"
     local.parent.mkdir(parents=True)
     shutil.copy(INPUTS / "website.parquet", local)
-    monkeypatch.setattr(hub, "ensure_dataset", lambda repo: None)
-    monkeypatch.setattr(hub, "remote_files", lambda repo: set())
-    monkeypatch.setattr(hub, "list_files", lambda repo, rev: ["polygons/a.parquet", "stats.json"])
-    monkeypatch.setattr(hub, "download_all", lambda repo, rev, paths: [(local, p) for p in paths])
-    monkeypatch.setattr(hub, "open_file", lambda repo, path, revision=None: local)
-    monkeypatch.setattr(
-        hub, "upload", lambda repo, files, msg: uploads.append([d for _, d in files])
-    )
-    return uploads
+    return FakeHub(local)
 
 
 def generate_all(store):
@@ -49,16 +71,17 @@ def generate_all(store):
 
 
 def test_publishes_mirror_labels_generations_once(tmp_path, monkeypatch):
-    uploads = fake_hub(monkeypatch, tmp_path)
+    hub = fake_hub(tmp_path)
+    uploads = hub.uploads
     store = WorkStore(tmp_path / "work")
     planner = Planner(store, WEBSITE, config.GENERATION_FP)
     planner.register(["polygons/a.parquet"])
     planner.scan(lambda _: INPUTS / "website.parquet")
-    first = pub.publish(store, WEBSITE, "rev")
+    first = pub.publish(store, WEBSITE, "rev", hub=hub)
     assert first.new_files == 0  # nothing generated yet: only the mirror goes up
     assert uploads == [["polygons/a.parquet", "stats.json"]]
     generate_all(store)
-    second = pub.publish(store, WEBSITE, "rev")
+    second = pub.publish(store, WEBSITE, "rev", hub=hub)
     assert second.labelled_files == second.total_files == 1
     flat = [p for batch in uploads for p in batch]
     assert "labels/polygons/a.parquet" in flat
@@ -69,42 +92,35 @@ def test_publishes_mirror_labels_generations_once(tmp_path, monkeypatch):
     labels = pq.read_table(store.path(f"publish/{WEBSITE}/labels/polygons/a.parquet")).to_pylist()
     assert {r["decision"] for r in labels} <= {"yes", "skipped_unsplit"}
     before = len(uploads)
-    assert pub.publish(store, WEBSITE, "rev").new_files == 0  # idempotent
+    assert pub.publish(store, WEBSITE, "rev", hub=hub).new_files == 0  # idempotent
     assert len(uploads) == before
 
 
 def test_card_counts_cover_files_published_by_earlier_runs(tmp_path, monkeypatch):
     """Regression: the card showed only the last run's new files (638,229 of 1,057,002 rows)."""
-    uploads = fake_hub(monkeypatch, tmp_path)
+    hub = fake_hub(tmp_path)
+    uploads = hub.uploads
     store = WorkStore(tmp_path / "work")
     planner = Planner(store, WEBSITE, config.GENERATION_FP)
     planner.register(["polygons/a.parquet"])
     planner.scan(lambda _: INPUTS / "website.parquet")
     generate_all(store)
-    pub.publish(store, WEBSITE, "rev")
+    pub.publish(store, WEBSITE, "rev", hub=hub)
     published = store.path(f"publish/{WEBSITE}/labels/polygons/a.parquet")
     total_rows = pq.read_table(published).num_rows
     # Simulate a dataset published by older code: no stats ledger, no card marker.
     store.path(f"published/{WEBSITE}.stats.jsonl").unlink()
     store.path(f"published/{WEBSITE}.card.sha256").unlink()
     gen_file = next(store.path("publish").glob(f"{WEBSITE}-gen-*/generations/*/*.parquet"))
-    cards: list[str] = []
 
     def open_file(repo, path, revision=None):
         if path.startswith("labels/"):
             return published
         return gen_file if path.startswith("generations/") else INPUTS / "website.parquet"
 
-    monkeypatch.setattr(hub, "open_file", open_file)
-    monkeypatch.setattr(
-        hub,
-        "upload",
-        lambda repo, files, msg: cards.extend(
-            src.read_text() for src, dst in files if dst == "README.md"
-        ),
-    )
-    pub.publish(store, WEBSITE, "rev")
-    assert f"**total** | **{total_rows:,}**" in cards[-1]
+    hub.opened = open_file
+    pub.publish(store, WEBSITE, "rev", hub=hub)
+    assert f"**total** | **{total_rows:,}**" in hub.sources["README.md"].read_text()
     assert uploads  # the earlier run did upload the labels
 
 
@@ -113,16 +129,11 @@ def test_a_text_shared_by_two_files_is_uploaded_to_generations_once(tmp_path, mo
     (465,986 generation rows for 461,463 unique texts), which multiplies rows on the join."""
     from landuse_filter.application import assemble
 
-    uploads = fake_hub(monkeypatch, tmp_path)
-    monkeypatch.setattr(
-        hub, "list_files", lambda repo, rev: ["polygons/a.parquet", "polygons/b.parquet"]
-    )
+    hub = fake_hub(tmp_path)
+    uploads = hub.uploads
+    hub.files = ["polygons/a.parquet", "polygons/b.parquet"]
     shutil.copy(INPUTS / "website.parquet", tmp_path / "hubcache" / "polygons" / "b.parquet")
-    monkeypatch.setattr(
-        hub,
-        "download_all",
-        lambda repo, rev, paths: [(tmp_path / "hubcache" / p, p) for p in paths],
-    )
+    hub.downloaded = lambda p: tmp_path / "hubcache" / p
     store = WorkStore(tmp_path / "work")
     planner = Planner(store, WEBSITE, config.GENERATION_FP)
     planner.register(["polygons/a.parquet", "polygons/b.parquet"])
@@ -136,9 +147,9 @@ def test_a_text_shared_by_two_files_is_uploaded_to_generations_once(tmp_path, mo
         return real(dataset, path, *args, **kwargs)
 
     monkeypatch.setattr(pub, "build_labels", only_a)
-    pub.publish(store, WEBSITE, "rev")  # run 1: only file a
+    pub.publish(store, WEBSITE, "rev", hub=hub)  # run 1: only file a
     monkeypatch.setattr(pub, "build_labels", real)
-    pub.publish(store, WEBSITE, "rev")  # run 2: file b, whose texts a already published
+    pub.publish(store, WEBSITE, "rev", hub=hub)  # run 2: file b, whose texts a already published
     generation_files = [p for batch in uploads for p in batch if p.startswith("generations/")]
     rows = sum(
         pq.read_table(f).num_rows
@@ -160,17 +171,8 @@ def test_description_publish_uploads_the_yes_share_map_with_computed_figures(tmp
 
     from landuse_filter.adapters.readers import DESCRIPTION, read_description
 
-    uploads: dict[str, Path] = {}
-    monkeypatch.setattr(hub, "ensure_dataset", lambda repo: None)
-    monkeypatch.setattr(hub, "remote_files", lambda repo: set())
-    monkeypatch.setattr(hub, "list_files", lambda repo, rev: ["language-v1/data/a.parquet"])
     language = INPUTS / "description.parquet"
-    monkeypatch.setattr(
-        hub, "download_all", lambda repo, rev, paths: [(language, p) for p in paths]
-    )
-    monkeypatch.setattr(
-        hub, "upload", lambda repo, files, msg: uploads.update({d: s for s, d in files})
-    )
+    hub = FakeHub(language, ["language-v1/data/a.parquet"])
     ids = pq.read_table(language, columns=["osm_type", "osm_id"]).to_pylist()
     polygons = tmp_path / "polygons.parquet"
     pq.write_table(
@@ -186,11 +188,7 @@ def test_description_publish_uploads_the_yes_share_map_with_computed_figures(tmp
         ),
         polygons,
     )
-    monkeypatch.setattr(
-        hub,
-        "open_file",
-        lambda repo, path, revision=None: polygons if path.startswith("data/") else language,
-    )
+    hub.opened = lambda repo, path, revision: polygons if path.startswith("data/") else language
     store = WorkStore(tmp_path / "work")
     planner = Planner(store, DESCRIPTION, config.GENERATION_FP)
     planner.register(["language-v1/data/a.parquet"])
@@ -206,29 +204,30 @@ def test_description_publish_uploads_the_yes_share_map_with_computed_figures(tmp
         "c",
         generation_table(list({g.text_sha256: g for g in rows}.values()), prov),
     )
-    report = pub.publish(store, DESCRIPTION, "rev")
+    report = pub.publish(store, DESCRIPTION, "rev", hub=hub)
     assert report.labelled_files == 1
-    assert uploads["assets/yes_share_map.png"].read_bytes()[:4] == b"\x89PNG"
-    card = uploads["README.md"].read_text()
+    assert hub.sources["assets/yes_share_map.png"].read_bytes()[:4] == b"\x89PNG"
+    card = hub.sources["README.md"].read_text()
     yes = report.decisions.get("yes", 0) + report.decisions.get("no", 0)
     assert f"{yes} of {yes} `yes`/`no` sentences (100.0%) are placed" in card
 
 
 def test_files_labelled_before_the_viewer_existed_get_their_viewer_table(tmp_path, monkeypatch):
-    uploads = fake_hub(monkeypatch, tmp_path)
+    hub = fake_hub(tmp_path)
+    uploads = hub.uploads
     store = WorkStore(tmp_path / "work")
     planner = Planner(store, WEBSITE, config.GENERATION_FP)
     planner.register(["polygons/a.parquet"])
     planner.scan(lambda _: INPUTS / "website.parquet")
     generate_all(store)
-    pub.publish(store, WEBSITE, "rev")
+    pub.publish(store, WEBSITE, "rev", hub=hub)
     # Simulate a repo published by older code: labels are recorded, the viewer is not.
     ledger = store.path(f"published/{WEBSITE}.jsonl")
     kept = [r for r in store.read_jsonl(f"published/{WEBSITE}.jsonl") if "viewer/" not in r["path"]]
     ledger.unlink()
     store.append_jsonl(f"published/{WEBSITE}.jsonl", kept)
     before = len(uploads)
-    pub.publish(store, WEBSITE, "rev")
+    pub.publish(store, WEBSITE, "rev", hub=hub)
     assert ["viewer/polygons/a.parquet"] in uploads[before:]
 
 
@@ -253,10 +252,11 @@ def planned(tmp_path):
 
 
 def test_a_partly_generated_file_is_published_with_pending_rows(tmp_path, monkeypatch):
-    uploads = fake_hub(monkeypatch, tmp_path)
+    hub = fake_hub(tmp_path)
+    uploads = hub.uploads
     store = planned(tmp_path)
     generate_some(store, "p1", 0, 20)
-    report = pub.publish(store, WEBSITE, "rev")
+    report = pub.publish(store, WEBSITE, "rev", hub=hub)
     flat = [p for batch in uploads for p in batch]
     assert (report.labelled_files, report.partial_files) == (0, 1)
     assert "labels/polygons/a.parquet" in flat
@@ -270,25 +270,27 @@ def test_a_partly_generated_file_is_published_with_pending_rows(tmp_path, monkey
 
 
 def test_partial_files_are_refreshed_only_after_enough_progress(tmp_path, monkeypatch):
-    uploads = fake_hub(monkeypatch, tmp_path)
+    hub = fake_hub(tmp_path)
+    uploads = hub.uploads
     store = planned(tmp_path)
     generate_some(store, "p1", 0, 20)
-    pub.publish(store, WEBSITE, "rev")
+    pub.publish(store, WEBSITE, "rev", hub=hub)
     generate_some(store, "p2", 20, 22)  # +2 of 46: under the 10 % step
-    pub.publish(store, WEBSITE, "rev")
+    pub.publish(store, WEBSITE, "rev", hub=hub)
     assert sum("labels/polygons/a.parquet" in batch for batch in uploads) == 1
     generate_some(store, "p3", 22, 30)  # +10 in total
-    pub.publish(store, WEBSITE, "rev")
+    pub.publish(store, WEBSITE, "rev", hub=hub)
     assert sum("labels/polygons/a.parquet" in batch for batch in uploads) == 2
 
 
 def test_a_file_becoming_complete_replaces_its_partial_version(tmp_path, monkeypatch):
-    uploads = fake_hub(monkeypatch, tmp_path)
+    hub = fake_hub(tmp_path)
+    uploads = hub.uploads
     store = planned(tmp_path)
     generate_some(store, "p1", 0, 20)
-    pub.publish(store, WEBSITE, "rev")
+    pub.publish(store, WEBSITE, "rev", hub=hub)
     generate_some(store, "p2", 20, 46)
-    report = pub.publish(store, WEBSITE, "rev")
+    report = pub.publish(store, WEBSITE, "rev", hub=hub)
     flat = [p for batch in uploads for p in batch]
     assert (report.labelled_files, report.partial_files) == (1, 0)
     assert any(p.startswith("generations/") for p in flat)
@@ -300,7 +302,8 @@ def test_a_file_becoming_complete_replaces_its_partial_version(tmp_path, monkeyp
 def test_partial_uploads_are_recorded_as_they_happen(tmp_path, monkeypatch):
     """Regression: a job checkpointed after its last commit lost the whole partial upload
     (the ledger and card were written only at the end) and redid 50 minutes of work."""
-    uploads = fake_hub(monkeypatch, tmp_path)
+    hub = fake_hub(tmp_path)
+    uploads = hub.uploads
     monkeypatch.setattr(pub, "PARTIAL_FLUSH", 1)
     store = planned(tmp_path)
     generate_some(store, "p1", 0, 20)
@@ -311,19 +314,23 @@ def test_partial_uploads_are_recorded_as_they_happen(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pub, "_refresh_card", die)
     with contextlib.suppress(KeyboardInterrupt):
-        pub.publish(store, WEBSITE, "rev")
+        pub.publish(store, WEBSITE, "rev", hub=hub)
     monkeypatch.setattr(pub, "_refresh_card", real)
     served = tmp_path / "served.parquet"  # what the stopped job uploaded
     shutil.copy(store.path(f"publish/{WEBSITE}/labels/polygons/a.parquet"), served)
-    monkeypatch.setattr(
-        hub,
-        "open_file",
-        lambda repo, path, revision=None: (
-            served if path.startswith("labels/") else INPUTS / "website.parquet"
-        ),
+    hub.opened = lambda repo, path, revision: (
+        served if path.startswith("labels/") else INPUTS / "website.parquet"
     )
     assert any("labels/polygons/a.parquet" in batch for batch in uploads)
     before = len(uploads)
-    pub.publish(store, WEBSITE, "rev")  # the next run does not upload the partial file again
+    pub.publish(store, WEBSITE, "rev", hub=hub)  # the next run skips the partial file
     assert sum("labels/polygons/a.parquet" in batch for batch in uploads[:before]) == 1
     assert sum("labels/polygons/a.parquet" in batch for batch in uploads[before:]) == 0
+
+
+def test_admitted_gates_keep_only_admitted_gpu_types(tmp_path):
+    store = WorkStore(tmp_path)
+    store.write_json("gates/admission/a100.json", {"status": "admitted", "gate": {"x": 1}})
+    store.write_json("gates/admission/t4.json", {"status": "rejected", "gate": {"x": 2}})
+    assert store.admitted_gates() == {"a100": {"x": 1}}
+    assert WorkStore(tmp_path / "empty").admitted_gates() == {}

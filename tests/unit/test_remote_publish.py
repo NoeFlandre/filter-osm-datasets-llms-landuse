@@ -14,7 +14,7 @@ INPUTS = Path(__file__).parents[1] / "fixtures" / "inputs"
 
 
 def test_publish_job_restores_index_and_parts_from_the_bucket(tmp_path, monkeypatch):
-    uploads = fake_hub(monkeypatch, tmp_path)
+    hub = fake_hub(tmp_path)
     planning = WorkStore(tmp_path / "planning-node")
     planner = Planner(planning, WEBSITE, config.GENERATION_FP)
     planner.register(["polygons/a.parquet"])
@@ -26,10 +26,10 @@ def test_publish_job_restores_index_and_parts_from_the_bucket(tmp_path, monkeypa
     for p in planning.part_paths(config.GENERATION_FP):
         remote.put([(p, str(p.relative_to(planning.root)))])
     report = remote_publish.run_publish(
-        remote, WorkStore(tmp_path / "publish-node"), WEBSITE, "rev", config.GENERATION_FP
+        remote, WorkStore(tmp_path / "publish-node"), WEBSITE, "rev", config.GENERATION_FP, hub=hub
     )
     assert report.labelled_files == 1
-    assert "labels/polygons/a.parquet" in [p for batch in uploads for p in batch]
+    assert "labels/polygons/a.parquet" in [p for batch in hub.uploads for p in batch]
     assert remote.ls(f"published/{WEBSITE}.jsonl")
 
 
@@ -68,7 +68,7 @@ def test_publish_job_saves_the_partial_ledger_to_the_bucket_while_it_works(tmp_p
     from landuse_filter.application import publish as pub
     from tests.unit.test_publish import generate_some
 
-    fake_hub(monkeypatch, tmp_path)
+    hub = fake_hub(tmp_path)
     monkeypatch.setattr(pub, "PARTIAL_FLUSH", 1)
     planning = WorkStore(tmp_path / "planning-node")
     planner = Planner(planning, WEBSITE, config.GENERATION_FP)
@@ -87,6 +87,11 @@ def test_publish_job_saves_the_partial_ledger_to_the_bucket_while_it_works(tmp_p
     monkeypatch.setattr(pub, "_refresh_card", stopped)
     with pytest.raises(KeyboardInterrupt):
         remote_publish.run_publish(
-            remote, WorkStore(tmp_path / "publish-node"), WEBSITE, "rev", config.GENERATION_FP
+            remote,
+            WorkStore(tmp_path / "publish-node"),
+            WEBSITE,
+            "rev",
+            config.GENERATION_FP,
+            hub=hub,
         )
     assert remote.ls(f"published/{WEBSITE}.partial.jsonl")
