@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from landuse_filter.domain.fingerprint import config_fingerprint
 from landuse_filter.domain.prompting import PROMPT_SHA256
@@ -24,7 +24,32 @@ def work_dir() -> Path:
     return Path(os.environ.get("LUF_WORK", "work"))
 
 
-def reference_config() -> dict[str, Any]:
+class Sampling(TypedDict):
+    temperature: float
+    max_new_tokens: int
+
+
+class EngineArgs(TypedDict):
+    dtype: str
+    random_seed: int
+    speculative_algorithm: str
+    speculative_draft_attention_backend: str
+    disable_radix_cache: bool
+    mem_fraction_static: float
+
+
+class ReferenceConfig(TypedDict):
+    """The output-affecting serving configuration (its fingerprint is ``GENERATION_FP``)."""
+
+    model: str
+    draft: str
+    prompt_sha256: str
+    chat_template_kwargs: dict[str, bool]
+    sampling: Sampling
+    engine: EngineArgs
+
+
+def reference_config() -> ReferenceConfig:
     """Benchmark run ``LiquidAI/LFM2.5-2.6B+DSpark-throughput-b16``, output-affecting part."""
     return {
         "model": f"{MODEL_ID}@{MODEL_REVISION}",
@@ -43,7 +68,7 @@ def reference_config() -> dict[str, Any]:
     }
 
 
-def engine_kwargs(config: dict[str, Any], speed: dict[str, Any]) -> dict[str, Any]:
+def engine_kwargs(config: ReferenceConfig, speed: dict[str, Any]) -> dict[str, Any]:
     """``sglang.Engine`` kwargs: model paths, output args and per-GPU speed args."""
     return {
         "model_path": MODEL_ID,

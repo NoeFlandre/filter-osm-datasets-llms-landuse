@@ -6,13 +6,14 @@ applies: GPU memory is released only when the spawned scheduler exits.
 
 import multiprocessing
 import time
+from collections.abc import Mapping
 from typing import Any
 
 SHUTDOWN_TIMEOUT = 120.0
 
 
 class SGLangEngine:
-    def __init__(self, engine_kwargs: dict[str, Any], sampling: dict[str, Any]) -> None:
+    def __init__(self, engine_kwargs: Mapping[str, Any], sampling: Mapping[str, Any]) -> None:
         import sglang  # ty: ignore[unresolved-import]  # the `gpu` extra, nodes only
 
         self._engine: Any = sglang.Engine(**engine_kwargs)
