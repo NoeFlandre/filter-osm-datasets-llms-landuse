@@ -125,6 +125,24 @@ class _PartialSink:
         self.pending = []
 
 
+@dataclass
+class _Run:
+    """Everything one publish run shares between its steps."""
+
+    store: WorkStore
+    dataset: str
+    revision: str
+    repo: str
+    dry_run: bool
+    ctx: _Ctx
+    done: set[str]  # paths recorded as published (complete files, generations, mirror marker)
+    resolved_before: dict[str, int]  # labels path -> sentences resolved at its last partial upload
+    sink: _PartialSink
+    db: sqlite3.Connection
+    files: list[str]  # scanned input files, in planner order
+    first_file: dict[str, int]  # input file -> planner index
+
+
 def publish(
     store: WorkStore,
     dataset: str,
@@ -133,62 +151,121 @@ def publish(
     dry_run: bool = False,
     on_progress: Callable[[], None] | None = None,
 ) -> PublishReport:
-    source = SOURCES[dataset]
+    run = _prepare(store, dataset, revision, dry_run=dry_run, on_progress=on_progress)
+    new, new_shas = _build_files(run)
+    new += _missing_viewers(
+        dataset, run.files, run.done, revision, resolved=run.ctx.resolved, out=run.ctx.out
+    )
+    new += _generation_files(run, new_shas)
+    return _finish(run, new)
+
+
+def _prepare(
+    store: WorkStore,
+    dataset: str,
+    revision: str,
+    *,
+    dry_run: bool,
+    on_progress: Callable[[], None] | None,
+) -> _Run:
     repo = output_repo(dataset)
     fp = config.GENERATION_FP
-    out = store.path(f"publish/{dataset}")
     done = {r["path"] for r in store.read_jsonl(f"published/{dataset}.jsonl")}
-    resolved_before = {r["path"]: r["resolved"] for r in store.read_jsonl(partial_ledger(dataset))}
     if not dry_run:
         hub.ensure_dataset(repo)
-        _mirror(store, dataset, input_repo=source.repo_id, revision=revision, repo=repo, done=done)
+        _mirror(
+            store,
+            dataset,
+            input_repo=SOURCES[dataset].repo_id,
+            revision=revision,
+            repo=repo,
+            done=done,
+        )
     resolved = ResolutionIndex(store.path(f"index/resolve-{fp}.sqlite"))
     resolved.build(canonical_generations(store, fp))
-    ctx = _Ctx(dataset, revision, fp, out, resolved)
     db = sqlite3.connect(store.path(f"index/{dataset}.sqlite"))
     indexed = db.execute("SELECT idx, path FROM files WHERE done = 1 ORDER BY idx").fetchall()
     files = [p for _, p in indexed]
-    first_file = dict(zip(files, [i for i, _ in indexed], strict=True))
+    return _Run(
+        store=store,
+        dataset=dataset,
+        revision=revision,
+        repo=repo,
+        dry_run=dry_run,
+        ctx=_Ctx(dataset, revision, fp, store.path(f"publish/{dataset}"), resolved),
+        done=done,
+        resolved_before={
+            r["path"]: r["resolved"] for r in store.read_jsonl(partial_ledger(dataset))
+        },
+        sink=_PartialSink(store, dataset, repo, dry_run=dry_run, on_progress=on_progress),
+        db=db,
+        files=files,
+        first_file=dict(zip(files, [i for i, _ in indexed], strict=True)),
+    )
+
+
+def _build_files(run: _Run) -> tuple[list[tuple[Path, str]], set[str]]:
+    """Build the tables of every unpublished file: complete ones are returned (with the texts
+    whose generation ships with them); partial ones go to the sink as they are built."""
+    ctx, out = run.ctx, run.ctx.out
     new: list[tuple[Path, str]] = []
     new_shas: set[str] = set()
-    sink = _PartialSink(store, dataset, repo, dry_run=dry_run, on_progress=on_progress)
-    for path in files:
+    for path in run.files:
         target = f"labels/{path}"
-        if target in done:
+        if target in run.done:
             continue
-        local = Path(hub.download_all(source.repo_id, revision, [path])[0][0])
+        local = Path(hub.download_all(SOURCES[run.dataset].repo_id, run.revision, [path])[0][0])
         try:
-            build_labels(dataset, path, local, resolved=resolved, fp=fp, revision=revision, out=out)
+            build_labels(
+                run.dataset,
+                path,
+                local,
+                resolved=ctx.resolved,
+                fp=ctx.fp,
+                revision=run.revision,
+                out=out,
+            )
         except MissingGenerationError:
-            known = _build_partial(ctx, path, local, last=resolved_before.get(target, 0))
+            known = _build_partial(ctx, path, local, last=run.resolved_before.get(target, 0))
             if known is not None:
-                sink.add((out / target, target), (out / f"viewer/{path}", f"viewer/{path}"), known)
+                labels, viewer = (out / target, target), (out / f"viewer/{path}", f"viewer/{path}")
+                run.sink.add(labels, viewer, known)
             continue
-        new_shas |= _owned_generations(db, first_file[path], out / target)
+        new_shas |= _owned_generations(run.db, run.first_file[path], out / target)
         new += [(out / target, target), (out / f"viewer/{path}", f"viewer/{path}")]
-    new += _missing_viewers(dataset, files, done, revision, resolved=resolved, out=out)
-    if new_shas:
-        batch = len(list(store.read_jsonl(f"published/{dataset}.jsonl")))
-        gen_dir = store.path(f"publish/{dataset}-gen-{batch:05d}")
-        build_generations(store, fp, gen_dir, new_shas)
-        new += [
-            (p, f"generations/{fp}/batch-{batch:05d}-{p.name}")
-            for p in sorted((gen_dir / "generations" / fp).glob("*.parquet"))
-        ]
+    return new, new_shas
+
+
+def _generation_files(run: _Run, new_shas: set[str]) -> list[tuple[Path, str]]:
+    """The generations shipping with this run's complete files, as one numbered batch."""
+    if not new_shas:
+        return []
+    fp = run.ctx.fp
+    batch = len(list(run.store.read_jsonl(f"published/{run.dataset}.jsonl")))
+    gen_dir = run.store.path(f"publish/{run.dataset}-gen-{batch:05d}")
+    build_generations(run.store, fp, gen_dir, new_shas)
+    return [
+        (p, f"generations/{fp}/batch-{batch:05d}-{p.name}")
+        for p in sorted((gen_dir / "generations" / fp).glob("*.parquet"))
+    ]
+
+
+def _finish(run: _Run, new: list[tuple[Path, str]]) -> PublishReport:
+    """Upload what is left, refresh the card and report the coverage."""
     completed = {d for _, d in new if d.startswith("labels/")}
-    labelled = len([p for p in files if f"labels/{p}" in done]) + len(completed)
-    sink.flush()
-    partial_paths = (set(resolved_before) | set(sink.resolved)) - done - completed
-    decisions = _decision_counts(out)
-    if not dry_run:
+    labelled = len([p for p in run.files if f"labels/{p}" in run.done]) + len(completed)
+    run.sink.flush()
+    partial_paths = (set(run.resolved_before) | set(run.sink.resolved)) - run.done - completed
+    decisions = _decision_counts(run.ctx.out)
+    if not run.dry_run:
         decisions = _upload(
-            store,
-            (dataset, repo, revision),
+            run.store,
+            (run.dataset, run.repo, run.revision),
             new,
-            sink.uploaded,
-            Coverage(labelled, len(files), sorted(partial_paths)),
+            run.sink.uploaded,
+            Coverage(labelled, len(run.files), sorted(partial_paths)),
         )
-    return PublishReport(labelled, len(files), len(new), decisions, len(partial_paths))
+    return PublishReport(labelled, len(run.files), len(new), decisions, len(partial_paths))
 
 
 def _upload(
