@@ -94,7 +94,7 @@ ban-relative-imports = "all"
 "src/landuse_filter/adapters/g5k.py" = ["S603", "S607"]
 "src/landuse_filter/adapters/engine.py" = ["S603", "S607"]
 # Shipped to a frontend and run with the stdlib only: prints JSON, fetches the G5K API.
-"src/landuse_filter/adapters/remote/*" = ["T201", "S310", "ANN"]
+"src/landuse_filter/adapters/frontend/*" = ["T201", "S310", "ANN"]
 # Use cases import optional runtimes lazily and shell out to git for the code commit.
 "src/landuse_filter/application/*" = ["PLC0415", "S603", "S607"]
 # The card is Markdown that shows an example DuckDB recipe; nothing is executed.
@@ -120,7 +120,7 @@ branch = true
 omit = [
     "src/landuse_filter/adapters/engine.py",
     "src/landuse_filter/adapters/tokenizer.py",
-    "src/landuse_filter/adapters/remote/*",
+    "src/landuse_filter/adapters/frontend/*",
     "src/landuse_filter/application/node_main.py",
     "src/landuse_filter/cli/*",
 ]
