@@ -4,7 +4,7 @@ SHELL := bash
 RUN := $(UV) run --no-sync
 HYPOTHESIS_PROFILE ?= ci
 # Application modules under mutation testing and CRAP (keep in step with [tool.mutmut] source_paths).
-PURE_APPLICATION := assignment plan repair results status
+PURE_APPLICATION := assignment card plan repair results status
 
 .PHONY: help install baseline lint format types test property acceptance architecture crap mutation smoke docs-build gauntlet
 
