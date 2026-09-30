@@ -44,21 +44,27 @@ def slot_for(  # noqa: PLR0913 - one value per fact the decision needs
     if walltime is None:
         return None
     queued = free <= 0
-    if queued and (besteffort or not queue_room):
+    if queued and not _may_queue(besteffort=besteffort, queue_room=queue_room):
         return None
+    nodes, wait = (1, queued_wait) if queued else (free, timedelta(0))
     return Slot(
         site,
         cluster,
         gpu,
         1,
-        1 if queued else free,
-        queued_wait if queued else timedelta(0),
+        nodes,
+        wait,
         walltime,
         job_type,
         sentences_per_second,
         besteffort=besteffort,
         queued=queued,
     )
+
+
+def _may_queue(*, besteffort: bool, queue_room: bool) -> bool:
+    """Besteffort-only clusters cannot queue; others may while the site has queue room."""
+    return queue_room and not besteffort
 
 
 def useful_sentences(slot: Slot, setup: timedelta) -> float:

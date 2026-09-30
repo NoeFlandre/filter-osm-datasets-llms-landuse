@@ -89,17 +89,32 @@ def _slot_args(**over):
 
 
 def test_a_free_gpu_makes_an_immediate_slot_with_all_free_nodes():
-    from landuse_filter.domain.scheduling import slot_for
+    from datetime import timedelta
 
-    slot = slot_for(**_slot_args(free=3))
-    assert (slot.free_nodes, slot.queued, slot.wait.total_seconds()) == (3, False, 0)
+    from landuse_filter.domain.scheduling import Slot, slot_for
+
+    assert slot_for(**_slot_args(free=3, job_type="night")) == Slot(
+        "lyon", "sirius", "A100", 1, 3, timedelta(0), timedelta(minutes=30), "night", 8.0
+    )
 
 
 def test_no_free_gpu_makes_a_queued_slot_only_if_the_site_has_queue_room():
-    from landuse_filter.domain.scheduling import slot_for
+    from datetime import timedelta
 
-    queued = slot_for(**_slot_args(free=0))
-    assert (queued.free_nodes, queued.queued, queued.wait.total_seconds()) == (1, True, 3600)
+    from landuse_filter.domain.scheduling import Slot, slot_for
+
+    assert slot_for(**_slot_args(free=0)) == Slot(
+        "lyon",
+        "sirius",
+        "A100",
+        1,
+        1,
+        timedelta(hours=1),
+        timedelta(minutes=30),
+        None,
+        8.0,
+        queued=True,
+    )
     assert slot_for(**_slot_args(free=0, queue_room=False)) is None
 
 
@@ -107,7 +122,8 @@ def test_besteffort_only_clusters_never_queue():
     from landuse_filter.domain.scheduling import slot_for
 
     assert slot_for(**_slot_args(free=0, besteffort=True)) is None
-    assert slot_for(**_slot_args(free=2, besteffort=True)).besteffort
+    slot = slot_for(**_slot_args(free=2, besteffort=True))
+    assert (slot.free_nodes, slot.besteffort, slot.queued) == (2, True, False)
 
 
 def test_no_walltime_means_no_slot():
