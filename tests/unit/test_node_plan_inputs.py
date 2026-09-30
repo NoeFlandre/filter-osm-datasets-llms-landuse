@@ -10,10 +10,6 @@ def test_plan_inputs_keys(monkeypatch):
     monkeypatch.setattr(tokenizer, "chat_encoder", lambda *_: "enc")
     monkeypatch.setattr(node, "_template", lambda: "tpl")
     got = node._plan_inputs("fake", "rev", 7)
-    assert set(got) == {"files", "fetch", "encode", "template", "chunk_size", "forget"}
-    assert (got["files"], got["encode"], got["template"], got["chunk_size"]) == (
-        ["a", "b"],
-        "enc",
-        "tpl",
-        7,
-    )
+    assert (got.files, got.encode, got.template, got.chunk_size) == (["a", "b"], "enc", "tpl", 7)
+    assert callable(got.fetch)
+    assert callable(got.forget)

@@ -13,7 +13,6 @@ from landuse_filter.cli import (
     node_app,
 )
 
-
 if TYPE_CHECKING:
     from landuse_filter.application.remote_plan import PlanInputs
 
