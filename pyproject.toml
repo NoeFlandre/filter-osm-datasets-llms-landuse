@@ -176,6 +176,7 @@ layers = [
 source_paths = [
     "src/landuse_filter/domain/",
     "src/landuse_filter/application/assignment.py",
+    "src/landuse_filter/application/card.py",
     "src/landuse_filter/application/repair.py",
     "src/landuse_filter/application/results.py",
     "src/landuse_filter/application/status.py",
