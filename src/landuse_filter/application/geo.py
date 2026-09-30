@@ -1,12 +1,13 @@
 """Where the labelled sentences are: label rows -> polygon -> bounding-box centre -> H3 cell."""
 
 from collections import Counter
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 
 import pyarrow as pa
 
 from landuse_filter.domain.geomap import bbox_centre
+from landuse_filter.domain.sentences import SentenceRef
 
 CellOf = Callable[[float, float], str]  # (lon, lat) -> cell id
 BBOX = ("bbox_min_x", "bbox_min_y", "bbox_max_x", "bbox_max_y")
@@ -84,3 +85,54 @@ def website_cells(labels: pa.Table, polygons: pa.Table, cell_of: CellOf) -> Loca
         (d, cell_of_polygon.get(i))
         for i, d in zip(ids, labels.column("decision").to_pylist(), strict=True)
     )
+
+
+def website_text_cells(
+    refs: Iterable[SentenceRef], polygons: pa.Table, cell_of: CellOf
+) -> Iterator[tuple[str, str]]:
+    """``(text sha, cell)`` of every model-bound website sentence whose polygon has lat/lon."""
+    cell_of_polygon = {
+        i: cell_of(lon, lat)
+        for i, lat, lon in zip(
+            *[polygons.column(c).to_pylist() for c in ("polygon_id", "lat", "lon")], strict=True
+        )
+        if lat is not None and lon is not None
+    }
+    for ref in refs:
+        cell = cell_of_polygon.get(dict(ref.locator)["polygon_id"])
+        if cell and not ref.unsplit:
+            yield ref.text_sha256, cell
+
+
+def wiki_text_cells(
+    refs: Iterable[SentenceRef],
+    documents: pa.Table,
+    links: pa.Table,
+    polygons: pa.Table,
+    cell_of: CellOf,
+) -> Iterator[tuple[str, str]]:
+    """``(text sha, cell)`` of wiki sentences, placed at the first polygon linked to their document.
+
+    ``documents`` maps ``sentence_id`` to ``document_id``, ``links`` ``polygon_id`` to
+    ``document_id`` and ``polygons`` carries ``lat``/``lon``; "first" is the smallest
+    ``polygon_id`` that has coordinates, so the choice never depends on row order.
+    """
+    cell_of_polygon = {
+        i: cell_of(lon, lat)
+        for i, lat, lon in zip(
+            *[polygons.column(c).to_pylist() for c in ("polygon_id", "lat", "lon")], strict=True
+        )
+        if lat is not None and lon is not None
+    }
+    cell_of_document: dict[str, str] = {}
+    pairs = zip(*[links.column(c).to_pylist() for c in ("polygon_id", "document_id")], strict=True)
+    for polygon, document in sorted(pairs):
+        if polygon in cell_of_polygon:
+            cell_of_document.setdefault(document, cell_of_polygon[polygon])
+    document_of = dict(
+        zip(*[documents.column(c).to_pylist() for c in ("sentence_id", "document_id")], strict=True)
+    )
+    for ref in refs:
+        cell = cell_of_document.get(document_of.get(dict(ref.locator)["sentence_id"], ""))
+        if cell and not ref.unsplit:
+            yield ref.text_sha256, cell

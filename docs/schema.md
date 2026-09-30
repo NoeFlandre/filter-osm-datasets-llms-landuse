@@ -57,8 +57,8 @@ labelled before this table existed get theirs on the next publish.
 
 ## Partial publication
 
-Chunks are ordered globally (most frequent texts first), so a dataset at 20 % of its chunks has
-almost no input file with every sentence labelled. To publish early, a file with some but not all
+Until ADR-0014 chunks were cut in input-file order and, because repeated texts are generated
+once, a dataset at 20 % of its chunks had almost no input file with every sentence labelled. To publish early, a file with some but not all
 texts generated goes to the Hub as a *partial* file: `labels/` and `viewer/` hold every sentence,
 and a sentence whose text has no answer yet has `decision = pending` (no `generation_id`, no
 `failure_reason`). A partial file is refreshed when it gained 10 % of its sentences since its last

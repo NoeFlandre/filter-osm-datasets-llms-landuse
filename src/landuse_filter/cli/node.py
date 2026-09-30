@@ -66,6 +66,41 @@ def node_plan(
     typer.echo(json.dumps(report))
 
 
+@node_app.command("replan")
+def node_replan(
+    dataset: str = typer.Option(...),
+    revision: str = typer.Option(...),
+    bucket: str = typer.Option(OPS.bucket),
+    chunk_size: int = typer.Option(2000, min=1),
+) -> None:
+    """Plan every not-yet-generated text again, round-robin over H3 cells (ADR-0014)."""
+    from landuse_filter import config
+    from landuse_filter.adapters.hexmap import cell_of
+    from landuse_filter.adapters.readers import SOURCES
+    from landuse_filter.adapters.remote import BucketRemote
+    from landuse_filter.adapters.tokenizer import chat_encoder
+    from landuse_filter.application.locate import locator
+    from landuse_filter.application.plan import download, list_input_files
+    from landuse_filter.application.remote_plan import run_replan
+
+    source = SOURCES[dataset]
+    scratch = _store(Path(os.environ.get("LUF_SCRATCH", "/tmp/luf-scratch")))  # noqa: S108
+    report = run_replan(
+        BucketRemote(bucket),
+        scratch,
+        dataset,
+        config.GENERATION_FP,
+        files=list_input_files(source, revision),
+        fetch=lambda path: download(source, path, revision),
+        locate=locator(dataset, lambda path: download(source, path, revision), cell_of),
+        encode=chat_encoder(config.MODEL_ID, config.MODEL_REVISION),
+        template=_template(),
+        chunk_size=chunk_size,
+        forget=lambda p: p.resolve().unlink(missing_ok=True),
+    )
+    typer.echo(json.dumps(report))
+
+
 @node_app.command("calibrate")
 def node_calibrate(
     chunk: str = typer.Option(..., help="Chunk id whose prompts drive the sweep."),

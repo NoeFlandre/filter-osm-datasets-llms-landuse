@@ -68,3 +68,55 @@ def test_website_rows_are_placed_at_the_polygon_lat_lon():
     result = website_cells(labels, polygons, cell_of)
     assert result.cells == {"2/48": [1, 1], "20/10": [1, 0]}
     assert (result.labelled, result.located) == (4, 3)  # p4 has no coordinates
+
+
+def test_website_texts_get_the_cell_of_their_polygon():
+    from landuse_filter.application.geo import website_text_cells
+    from landuse_filter.domain.sentences import SentenceRef
+
+    def ref(polygon, text, unsplit=False):
+        return SentenceRef(
+            "w", "f", (("polygon_id", polygon), ("field", "website")), text, "en", unsplit=unsplit
+        )
+
+    refs = [ref("p1", "a"), ref("p2", "b"), ref("p4", "c"), ref("p1", "u", unsplit=True)]
+    polygons = pa.table(
+        {"polygon_id": ["p1", "p2", "p4"], "lat": [48.0, 10.0, None], "lon": [2.0, 20.0, 5.0]}
+    )
+    pairs = dict(website_text_cells(refs, polygons, cell_of))
+    assert pairs == {
+        refs[0].text_sha256: "2/48",
+        refs[1].text_sha256: "20/10",
+    }  # no cell: p4, unsplit
+
+
+def test_wiki_texts_get_the_cell_of_the_first_polygon_linked_to_their_document():
+    from landuse_filter.application.geo import wiki_text_cells
+    from landuse_filter.domain.sentences import SentenceRef
+
+    def ref(sentence_id, text, unsplit=False):
+        return SentenceRef(
+            "wiki", "f", (("sentence_id", sentence_id),), text, "en", unsplit=unsplit
+        )
+
+    refs = [ref("s1", "a"), ref("s2", "b"), ref("s3", "c"), ref("s4", "d"), ref("s5", "e", True)]
+    documents = pa.table(
+        {
+            "sentence_id": ["s1", "s2", "s3", "s4", "s5"],
+            "document_id": ["d1", "d1", "d2", "d3", "d1"],
+        }
+    )
+    links = (
+        pa.table(  # d1 is linked to two polygons: the first (by id) without coordinates is skipped
+            {"polygon_id": ["p2", "p1", "p3", "p9"], "document_id": ["d1", "d1", "d2", "d3"]}
+        )
+    )
+    polygons = pa.table(
+        {"polygon_id": ["p1", "p2", "p3"], "lat": [None, 10.0, 48.0], "lon": [None, 20.0, 2.0]}
+    )
+    pairs = dict(wiki_text_cells(refs, documents, links, polygons, cell_of))
+    assert pairs == {
+        refs[0].text_sha256: "20/10",
+        refs[1].text_sha256: "20/10",
+        refs[2].text_sha256: "2/48",
+    }  # d3's polygon has no row; the unsplit sentence is not sent to the model

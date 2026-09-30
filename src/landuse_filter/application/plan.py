@@ -9,8 +9,9 @@ counts. Re-running continues where it stopped; emitted chunks never change.
 """
 
 import fnmatch
+import hashlib
 import sqlite3
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,6 +32,16 @@ CREATE TABLE IF NOT EXISTS files (idx INTEGER PRIMARY KEY, path TEXT UNIQUE, don
 CREATE TABLE IF NOT EXISTS texts (sha TEXT PRIMARY KEY, text TEXT, file_idx INTEGER, chunk_id TEXT);
 CREATE INDEX IF NOT EXISTS texts_pending ON texts (chunk_id, file_idx, sha);
 """
+# Geographic re-planning (ADR-0014) adds these columns to indexes created before it.
+MIGRATIONS = {
+    "done": "ALTER TABLE texts ADD COLUMN done INTEGER DEFAULT 0",
+    "cell": "ALTER TABLE texts ADD COLUMN cell TEXT",
+}
+
+
+def _cell_key(cell: str | None) -> str:
+    """Deterministic tie-break between cells of one round (spreads them, not alphabetical)."""
+    return hashlib.sha256((cell or "").encode()).hexdigest()[:16]
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +76,11 @@ class Planner:
         db.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(db)
         self.db.executescript(SCHEMA)
+        have = {row[1] for row in self.db.execute("PRAGMA table_info(texts)")}
+        for column, statement in MIGRATIONS.items():
+            if column not in have:
+                self.db.execute(statement)
+        self.db.commit()
 
     def register(self, files: Sequence[str]) -> None:
         with self.db:
@@ -104,7 +120,7 @@ class Planner:
     def emit(self, encode: Encode, template: str, chunk_size: int, *, final: bool) -> int:
         """Turn pending texts of scanned files into chunks; partial tail only if ``final``."""
         boundary = self.db.execute("SELECT MIN(idx) FROM files WHERE done = 0").fetchone()[0]
-        query = "SELECT sha, text, file_idx FROM texts WHERE chunk_id IS NULL"
+        query = "SELECT sha, text, file_idx FROM texts WHERE chunk_id IS NULL AND done = 0"
         args: tuple = ()
         if boundary is not None:
             query += " AND file_idx < ?"
@@ -117,6 +133,86 @@ class Planner:
                 rows[start : start + chunk_size], encode, template, chunk_size
             )
         return emitted
+
+    # --- geographic re-planning -----------------------------------------------------
+
+    @property
+    def plan_path(self) -> str:
+        return f"plans/{self.source.dataset}/{self.fp}/chunks.jsonl"
+
+    def mark_done(self, shas: Iterable[str]) -> None:
+        """Record texts that already have a generation (they are never planned again)."""
+        with self.db:
+            self.db.executemany("UPDATE texts SET done = 1 WHERE sha = ?", ((s,) for s in shas))
+
+    def release_unfinished(self) -> set[str]:
+        """Take every chunk with an ungenerated text out of the plan and free its texts.
+
+        Finished chunks keep their plan line; the others are returned (their chunk files
+        stay in the bucket, unused) so the texts can be planned again in a new order.
+        """
+        released = {
+            cid
+            for (cid,) in self.db.execute(
+                "SELECT chunk_id FROM texts WHERE chunk_id IS NOT NULL "
+                "GROUP BY chunk_id HAVING MIN(done) = 0"
+            )
+        }
+        if not released:
+            return released
+        kept = [r for r in self.store.read_jsonl(self.plan_path) if r["chunk_id"] not in released]
+        self.store.path(self.plan_path).unlink(missing_ok=True)
+        self.store.append_jsonl(self.plan_path, kept)
+        with self.db:
+            self.db.executemany(
+                "UPDATE texts SET chunk_id = NULL WHERE chunk_id = ?", ((c,) for c in released)
+            )
+        return released
+
+    def set_cells(self, cells: Iterable[tuple[str, str]]) -> None:
+        """Give texts their map cell (first location wins; texts may repeat across places)."""
+        with self.db:
+            self.db.executemany(
+                "UPDATE texts SET cell = ? WHERE sha = ? AND cell IS NULL",
+                ((cell, sha) for sha, cell in cells),
+            )
+
+    def emit_uniform(self, encode: Encode, template: str, chunk_size: int) -> int:
+        """Plan every pending text in a geographically uniform order.
+
+        Round ``j`` holds the ``j``-th text (by hash) of every cell, so any prefix of the plan
+        takes an equal share from each cell still holding texts. Texts without a location get
+        a hash-derived round, which spreads them evenly through the whole order.
+        """
+        order = self._uniform_order()
+        emitted = 0
+        while rows := order.fetchmany(chunk_size):
+            emitted += self._emit_group(rows, encode, template, chunk_size)
+        return emitted
+
+    def _uniform_order(self) -> sqlite3.Cursor:
+        self.db.create_function("cell_key", 1, _cell_key, deterministic=True)
+        self.db.create_function("hash_round", 1, lambda sha: int(sha[:12], 16), deterministic=True)
+        self.db.executescript(
+            """
+            DROP TABLE IF EXISTS temp.ranked;
+            CREATE TEMP TABLE ranked AS
+              SELECT sha, cell_key(cell) AS ck,
+                     ROW_NUMBER() OVER (PARTITION BY cell ORDER BY sha) - 1 AS rnd
+              FROM texts WHERE chunk_id IS NULL AND done = 0 AND cell IS NOT NULL;
+            """
+        )
+        top = self.db.execute("SELECT COALESCE(MAX(rnd), 0) FROM temp.ranked").fetchone()[0]
+        self.db.execute(
+            "INSERT INTO temp.ranked SELECT sha, '', hash_round(sha) % ? FROM texts "
+            "WHERE chunk_id IS NULL AND done = 0 AND cell IS NULL",
+            (top + 1,),
+        )
+        self.db.execute("CREATE INDEX temp.ranked_order ON ranked (rnd, ck, sha)")
+        return self.db.execute(
+            "SELECT t.sha, t.text, t.file_idx FROM temp.ranked r JOIN texts t ON t.sha = r.sha "
+            "ORDER BY r.rnd, r.ck, r.sha"
+        )
 
     def _emit_group(self, rows: list, encode: Encode, template: str, chunk_size: int) -> int:
         batch = encode([render_prompt(template, text) for _, text, _ in rows])

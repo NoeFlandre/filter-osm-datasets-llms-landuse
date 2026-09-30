@@ -188,7 +188,7 @@ Usage: root g5k cpu-job [OPTIONS] {mode}
  Submit one resumable planning or publishing job (default queue, one CPU node).                     
                                                                                                     
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────╮
-│ *    mode      <str>  plan, publish or repair [required]                                         │
+│ *    mode      <str>  plan, replan, publish or repair [required]                                 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
 │ *  --site                    <str>  Site to run the CPU job on. [required]                       │
@@ -334,6 +334,7 @@ Usage: root node [OPTIONS] COMMAND [ARGS]...
 ╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────╮
 │ run        Run an assignment on this node's GPU (called by scripts/node_job.sh).                 │
 │ plan       Scan a dataset on this node's scratch and publish chunks to the bucket.               │
+│ replan     Plan every not-yet-generated text again, round-robin over H3 cells (ADR-0014).        │
 │ calibrate  Sweep concurrency on this GPU; write a candidate profile (speed only).                │
 │ publish    Build and upload the -landuse dataset on this node's scratch.                         │
 │ repair     Remove duplicate rows from the published generations/ tables, then reset the card     │
@@ -399,6 +400,22 @@ Usage: root node repair [OPTIONS]
 │ *  --dataset        <str>  [required]                                                            │
 │    --bucket         <str>  [default: NoeFlandre/landuse-filter-work]                             │
 │    --help                  Show this message and exit.                                           │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+```
+
+## `luf node replan`
+
+```text
+Usage: root node replan [OPTIONS]                                                                  
+                                                                                                    
+ Plan every not-yet-generated text again, round-robin over H3 cells (ADR-0014).                     
+                                                                                                    
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
+│ *  --dataset           <str>               [required]                                            │
+│ *  --revision          <str>               [required]                                            │
+│    --bucket            <str>               [default: NoeFlandre/landuse-filter-work]             │
+│    --chunk-size        <int range> [x>=1]  [default: 2000]                                       │
+│    --help                                  Show this message and exit.                           │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
