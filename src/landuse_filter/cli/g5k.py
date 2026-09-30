@@ -16,6 +16,7 @@ from landuse_filter.cli import (
 )
 
 if TYPE_CHECKING:
+    from landuse_filter.adapters.store import WorkStore
     from landuse_filter.application.controller import Controller, Settings
 
 
@@ -280,6 +281,31 @@ def g5k_storage(sites: str = typer.Option(SITES)) -> None:
             typer.echo(f"{site}: unreachable ({exc})", err=True)
 
 
+def _synced_parts(store: "WorkStore", listing: list[tuple[str, float]]) -> frozenset[str]:
+    """Parts on a site's disk whose result (parquet or manifest) this controller already has."""
+    prefix = "luf/work/"
+    return frozenset(
+        p.removeprefix("luf/work/parts/")
+        for p, _ in listing
+        if p.startswith("luf/work/parts/")
+        and (
+            store.exists(p.removeprefix(prefix))
+            or store.exists(p.removeprefix(prefix).replace(".parquet", ".json"))
+        )
+    )
+
+
+def _live_commits(store: "WorkStore") -> set[str]:
+    """Code commits that live assignments still run, plus the commit jobs would run now."""
+    from landuse_filter.application.controller import commit
+
+    assignments = [
+        store.read_json(f"assignments/{p.name}") for p in store.path("assignments").glob("*.json")
+    ]
+    live = [a for a in assignments if a.get("state") in ("submitting", "submitted")]
+    return {a["provenance"]["code_commit"] for a in live} | {commit()}
+
+
 @g5k_app.command("clean")
 def g5k_clean(
     sites: str = typer.Option(SITES),
@@ -288,15 +314,10 @@ def g5k_clean(
 ) -> None:
     """Delete stale project files under ~/luf on each site (old code, envs, logs, synced parts)."""
     from landuse_filter.adapters import g5k
-    from landuse_filter.application.controller import commit
     from landuse_filter.domain.cleanup import Entry, Keep, cleanup_plan
 
     store = _store(work)
-    assignments = [
-        store.read_json(f"assignments/{p.name}") for p in store.path("assignments").glob("*.json")
-    ]
-    live = [a for a in assignments if a.get("state") in ("submitting", "submitted")]
-    commits = {a["provenance"]["code_commit"] for a in live} | {commit()}
+    commits = frozenset(_live_commits(store))
     lock = hashlib.sha256(LOCKFILE.read_bytes()).hexdigest()[:12]
     for site in sites.split(","):
         try:
@@ -304,18 +325,8 @@ def g5k_clean(
         except g5k.RemoteError as exc:
             typer.echo(f"{site}: unreachable ({exc})", err=True)
             continue
-        synced = frozenset(
-            p.removeprefix("luf/work/parts/")
-            for p, _ in listing
-            if p.startswith("luf/work/parts/")
-            and (
-                store.exists(p.removeprefix("luf/work/"))
-                or store.exists(p.removeprefix("luf/work/").replace(".parquet", ".json"))
-            )
-        )
-        plan = cleanup_plan(
-            [Entry(p, a) for p, a in listing], Keep(frozenset(commits), lock, synced)
-        )
+        keep = Keep(commits, lock, _synced_parts(store, listing))
+        plan = cleanup_plan([Entry(p, a) for p, a in listing], keep)
         typer.echo(f"{site}: {len(plan)} path(s) {'deleted' if apply else 'would be deleted'}")
         for p in plan[:20]:
             typer.echo(f"  {p}")
