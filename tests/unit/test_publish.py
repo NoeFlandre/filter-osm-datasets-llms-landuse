@@ -258,7 +258,8 @@ def test_a_partly_generated_file_is_published_with_pending_rows(tmp_path, monkey
     report = pub.publish(store, WEBSITE, "rev")
     flat = [p for batch in uploads for p in batch]
     assert (report.labelled_files, report.partial_files) == (0, 1)
-    assert "labels/polygons/a.parquet" in flat and "viewer/polygons/a.parquet" in flat
+    assert "labels/polygons/a.parquet" in flat
+    assert "viewer/polygons/a.parquet" in flat
     assert not any(p.startswith("generations/") for p in flat)  # shipped with the complete file
     labels = pq.read_table(store.path(f"publish/{WEBSITE}/labels/polygons/a.parquet")).to_pylist()
     assert sum(r["decision"] == "pending" for r in labels) > 0
