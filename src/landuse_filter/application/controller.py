@@ -15,13 +15,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
 from zoneinfo import ZoneInfo
 
 from landuse_filter import config
 from landuse_filter.adapters import g5k
 from landuse_filter.adapters.remote import BucketRemote, Remote
 from landuse_filter.adapters.store import WorkStore
+from landuse_filter.application.assignment import Assignment, CycleReport
 from landuse_filter.application.inventory import admission, eligible, load_clusters, profile_for
 from landuse_filter.application.memory import ClusterMemory
 from landuse_filter.application.site_cache import SiteCache
@@ -127,13 +127,16 @@ class Controller:
             else f"complete-{self.settings.namespace}.jsonl"
         )
 
-    def ledger(self) -> list[dict]:
+    def ledger(self) -> list[Assignment]:
         return [
-            self.store.read_json(f"assignments/{p.name}")
+            Assignment.from_json(self.store.read_json(f"assignments/{p.name}"))
             for p in sorted(self.store.path("assignments").glob("*.json"))
         ]
 
-    def live(self) -> list[dict]:
+    def save(self, a: Assignment) -> None:
+        self.store.write_json(f"assignments/{a.id}.json", a.to_json())
+
+    def live(self) -> list[Assignment]:
         """This controller's live assignments: its namespace, on its sites.
 
         Several controllers (e.g. one GPU-admission run per GPU type) may share a work
@@ -143,27 +146,23 @@ class Controller:
         return [
             a
             for a in self.ledger()
-            if a.get("state") in ("submitting", "submitted")
-            and a.get("fp") == self.work_fp
-            and a.get("site") in self.settings.sites
+            if a.state in ("submitting", "submitted")
+            and a.fp == self.work_fp
+            and a.site in self.settings.sites
         ]
 
     # --- cycle ---------------------------------------------------------------------
 
-    def cycle(self, now: datetime | None = None) -> dict[str, Any]:
+    def cycle(self, now: datetime | None = None) -> CycleReport:
         now = now or datetime.now(PARIS)
         self.now = now
         jobs = self.reconcile()
         self.pull()
         pending = self.progress.pending()
-        report = {
-            "pending_chunks": len(pending),
-            "live_jobs": sum(len(v) for v in jobs.values()),
-            "submitted": [],
-        }
+        report = CycleReport(len(pending), sum(len(v) for v in jobs.values()))
         if self.settings.paused or not pending:
             return report
-        report["submitted"] = self.submit(now, jobs, pending)
+        report.submitted = self.submit(now, jobs, pending)
         return report
 
     def reconcile(self) -> dict[str, list[g5k.Job]]:
@@ -171,12 +170,12 @@ class Controller:
         self.drop_drifted(jobs)
         by_name = {j.name: j for js in jobs.values() for j in js}
         for a in self.live():
-            job = by_name.get(a["name"])
-            if job and not a.get("job_id"):
-                a.update(job_id=job.job_id, state="submitted")  # crash after oarsub: adopt
+            job = by_name.get(a.name)
+            if job and not a.job_id:
+                a.job_id, a.state = job.job_id, "submitted"  # crash after oarsub: adopt
             elif not job:
-                a["state"] = "ended"
-            self.store.write_json(f"assignments/{a['id']}.json", a)
+                a.state = "ended"
+            self.save(a)
         return jobs
 
     def _our_jobs(self, site: str) -> list[g5k.Job]:
@@ -186,20 +185,20 @@ class Controller:
         except g5k.RemoteError as exc:
             self.log(f"{site}: unreachable ({exc}); keeping its assignments")
             return [
-                g5k.Job(site, a["job_id"], a["name"], "Unknown", "")
+                g5k.Job(site, a.job_id, a.name, "Unknown", "")
                 for a in self.live()
-                if a["site"] == site and a.get("job_id")
+                if a.site == site and a.job_id
             ]
 
     def drop_drifted(self, jobs: dict[str, list[g5k.Job]]) -> None:
         """Cancel waiting jobs whose predicted start slipped past their tolerance."""
-        mine = {a["name"]: a for a in self.live()}
+        mine = {a.name: a for a in self.live()}
         for site, site_jobs in jobs.items():
             for job in list(site_jobs):
                 a = mine.get(job.name)
                 if a is None or job.state != "Waiting" or not job.scheduled_start:
                     continue
-                tolerance = a.get("late_after_s", LATE_START.total_seconds())
+                tolerance = a.late_tolerance(LATE_START.total_seconds())
                 if job.scheduled_start <= self.now.timestamp() + tolerance:
                     continue
                 try:
@@ -208,7 +207,7 @@ class Controller:
                     self.log(f"{site}: could not cancel drifted job {job.job_id}: {exc}")
                     continue
                 site_jobs.remove(job)
-                self.memory.back_off(site, a["cluster"], self.now + BACKOFF)
+                self.memory.back_off(site, a.cluster, self.now + BACKOFF)
                 self.log(f"{site}: job {job.job_id} start drifted; cancelled and backing off")
 
     def pull(self) -> None:
@@ -359,8 +358,8 @@ class Controller:
         return {
             c
             for a in self.live()
-            if a.get("kind", "work") == "work" and a["fp"] == self.work_fp
-            for c in a["chunks"]
+            if a.kind == "work" and a.fp == self.work_fp
+            for c in a.chunks
         }
 
     def assignment(
@@ -371,29 +370,28 @@ class Controller:
         *,
         fp: str | None = None,
         kind: str = "work",
-    ) -> dict:
+    ) -> Assignment:
         prof = profile_for(self.store, slot.gpu)
         speed = prof.engine_args()
         if self.settings.window:
             speed["max_running_requests"] = self.settings.window
         aid = uuid.uuid4().hex[:12]
-        return {
-            "id": aid,
-            "name": f"{g5k.JOB_PREFIX}{aid}",
-            "site": slot.site,
-            "cluster": slot.cluster,
-            "gpu": slot.gpu,
-            "chunks": chunks,
-            "kind": kind,
-            "fp": fp or self.work_fp,
-            "state": "submitting",
-            "job_id": None,
-            "window": self.settings.window or prof.max_running_requests,
-            "engine_kwargs": config.engine_kwargs(self.cfg, speed),
-            "sampling": self.cfg["sampling"],
-            "walltime_s": int(slot.walltime.total_seconds()),
-            "late_after_s": int((QUEUED_START if slot.queued else LATE_START).total_seconds()),
-            "provenance": {
+        return Assignment(
+            id=aid,
+            name=f"{g5k.JOB_PREFIX}{aid}",
+            site=slot.site,
+            cluster=slot.cluster,
+            gpu=slot.gpu,
+            chunks=chunks,
+            kind=kind,
+            state="submitting",
+            fp=fp or self.work_fp,
+            window=self.settings.window or prof.max_running_requests,
+            engine_kwargs=config.engine_kwargs(self.cfg, speed),
+            sampling=self.cfg["sampling"],
+            walltime_s=int(slot.walltime.total_seconds()),
+            late_after_s=int((QUEUED_START if slot.queued else LATE_START).total_seconds()),
+            provenance={
                 "config_fingerprint": self.fp,
                 "serving_fingerprint": serving_fingerprint(
                     {**self.cfg, "engine": {**self.cfg["engine"], **speed}}
@@ -403,7 +401,7 @@ class Controller:
                 "prompt_sha256": PROMPT_SHA256,
                 "code_commit": code_commit,
             },
-        }
+        )
 
     def launch(
         self,
@@ -421,45 +419,45 @@ class Controller:
             code = g5k.deploy_code(site, code_commit, git_archive(code_commit))
             self.transport.stage(site, a)
             g5k.policy_check(site)
-            self.store.write_json(f"assignments/{a['id']}.json", a)  # before oarsub: crash-safe
-            command = f"{code}/scripts/node_job.sh {code} {a['id']}"
+            self.save(a)  # before oarsub: crash-safe
+            command = f"{code}/scripts/node_job.sh {code} {a.id}"
             args = oarsub_arguments(
                 cluster,
                 slot.walltime,
                 slot.job_type,
-                a["name"],
+                a.name,
                 command=command,
                 besteffort=slot.besteffort,
             )
-            a["job_id"] = g5k.submit(site, args)
+            a.job_id = g5k.submit(site, args)
             if self.sites:
                 self.sites.invalidate(site)
-            a["state"] = "submitted"
-            self.store.write_json(f"assignments/{a['id']}.json", a)
-            if not self.starts_soon(site, a["job_id"], QUEUED_START if slot.queued else LATE_START):
-                g5k.cancel(site, a["job_id"])
-                a["state"] = "cancelled_late_start"
-                self.store.write_json(f"assignments/{a['id']}.json", a)
+            a.state = "submitted"
+            self.save(a)
+            if not self.starts_soon(site, a.job_id, QUEUED_START if slot.queued else LATE_START):
+                g5k.cancel(site, a.job_id)
+                a.state = "cancelled_late_start"
+                self.save(a)
                 self.memory.back_off(cluster.site, cluster.name, self.now + BACKOFF)
                 self.log(
-                    f"{site}/{cluster.name}: job {a['job_id']} would start late; "
+                    f"{site}/{cluster.name}: job {a.job_id} would start late; "
                     "cancelled, backing off"
                 )
                 return None
-            a["submitted_at"] = datetime.now(PARIS).isoformat(timespec="seconds")
-            self.store.write_json(f"assignments/{a['id']}.json", a)
+            a.submitted_at = datetime.now(PARIS).isoformat(timespec="seconds")
+            self.save(a)
             g5k.policy_check(site)
             self.log(
-                f"submitted {a['name']} on {site}/{cluster.name} "
-                f"({len(chunks)} chunks): job {a['job_id']}"
+                f"submitted {a.name} on {site}/{cluster.name} "
+                f"({len(chunks)} chunks): job {a.job_id}"
             )
-            return a["job_id"]
+            return a.job_id
         except g5k.RemoteError as exc:
             if BESTEFFORT_ONLY in str(exc):
                 self.memory.remember_besteffort_only(site, cluster.name)
-            a["state"] = "failed_submit"
-            a["error"] = str(exc)[-500:]
-            self.store.write_json(f"assignments/{a['id']}.json", a)
+            a.state = "failed_submit"
+            a.error = str(exc)[-500:]
+            self.save(a)
             self.log(f"{site}: submission failed: {exc}")
             return None
 
@@ -564,8 +562,8 @@ def run_loop(
                 return
             sleep(interval)
             continue
-        emit(json.dumps(report))
-        if once or (report["pending_chunks"] == 0 and report["live_jobs"] == 0):
+        emit(json.dumps(report.to_json()))
+        if once or (report.pending_chunks == 0 and report.live_jobs == 0):
             return
         sleep(interval)
 
@@ -589,10 +587,10 @@ def run_many(
             except Exception as exc:  # noqa: BLE001 - keep the others running; state is on disk
                 log_failure(ctl.log, f"{ctl.work_fp}: cycle failed", exc)
                 continue
-            emit(json.dumps({"namespace": ctl.settings.namespace, **report}))
+            emit(json.dumps({"namespace": ctl.settings.namespace, **report.to_json()}))
             # Done when this namespace has no pending chunks and no live jobs of its own
-            # (report["live_jobs"] counts every luf- job on its sites).
-            if report["pending_chunks"] == 0 and not ctl.live():
+            # (report.live_jobs counts every luf- job on its sites).
+            if report.pending_chunks == 0 and not ctl.live():
                 active.remove(ctl)
         if active:
             sleep(interval)

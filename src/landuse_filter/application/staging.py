@@ -10,6 +10,7 @@ from collections.abc import Callable
 from landuse_filter.adapters import g5k
 from landuse_filter.adapters.remote import Remote
 from landuse_filter.adapters.store import WorkStore
+from landuse_filter.application.assignment import Assignment
 from landuse_filter.application.sync import fetch_manifests
 from landuse_filter.application.work_progress import WorkProgress
 
@@ -23,14 +24,14 @@ class Transport:
         self.bucket_id = bucket_id
         self.log = log
 
-    def stage(self, site: str, a: dict) -> None:
+    def stage(self, site: str, a: Assignment) -> None:
         """Upload the assignment's chunk inputs once and ship the assignment file."""
-        a["bucket"] = self.bucket_id
-        self.upload_chunks(a["chunks"])
-        self.store.write_json(f"assignments/{a['id']}.json", a)
+        a.bucket = self.bucket_id
+        self.upload_chunks(a.chunks)
+        self.store.write_json(f"assignments/{a.id}.json", a.to_json())
         g5k.ssh(site, f"mkdir -p {g5k.REMOTE_ROOT}/work/assignments {g5k.REMOTE_ROOT}/logs")
         g5k.rsync(
-            str(self.store.path(f"assignments/{a['id']}.json")),
+            str(self.store.path(f"assignments/{a.id}.json")),
             f"{site}:{g5k.REMOTE_ROOT}/work/assignments/",
         )
 
