@@ -107,6 +107,11 @@ ban-relative-imports = "all"
 testpaths = ["tests"]
 pythonpath = ["src", "."]
 addopts = "-q --strict-markers -m 'not integration and not gpu'"
+# pytest-bdd 8.1 (latest) still passes the deprecated `baseid` to FixtureDef; it is upstream's to fix.
+filterwarnings = [
+    "ignore:Passing baseid to FixtureDef is deprecated:pytest.PytestRemovedIn10Warning",
+    "ignore:Passing nodeid to _register_fixture is deprecated:pytest.PytestRemovedIn10Warning",
+]
 markers = [
     "integration: talks to the Hugging Face Hub or Grid'5000 (deselected by default)",
     "gpu: needs a CUDA GPU with SGLang installed (deselected by default)",

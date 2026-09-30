@@ -54,4 +54,4 @@ smoke:  ## CLI smoke test
 docs-build:  ## Strict docs build
 	$(UV) run --only-group docs mkdocs build --strict
 
-gauntlet: baseline lint types test acceptance architecture crap mutation smoke docs-build  ## Full QA gauntlet
+gauntlet: lint types test acceptance architecture crap mutation smoke docs-build  ## Full QA gauntlet (baseline is run before a change, not inside it)

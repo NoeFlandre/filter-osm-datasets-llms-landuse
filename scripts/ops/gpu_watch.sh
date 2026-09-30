@@ -16,12 +16,13 @@ for f in glob.glob(os.environ['LUF_WORK'] + '/assignments/*.json'):
         continue
     if a.get('job_id'):
         A[(a['site'], str(a['job_id']))] = a
-run = collections.Counter(); wait = 0
+run = collections.Counter(); wait = 0; down = []
 for s in "grenoble lille lyon nancy rennes sophia toulouse luxembourg".split():
     try:
         out = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", s, "oarstat -u | grep ' luf-'"],
                              capture_output=True, text=True, timeout=60).stdout
     except Exception:
+        down.append(s)  # an unreachable site must not look like an empty one
         continue
     for l in out.splitlines():
         p = l.split()
@@ -33,7 +34,7 @@ for s in "grenoble lille lyon nancy rennes sophia toulouse luxembourg".split():
             run[kind + ':' + (a['gpu'] if a else '-')] += 1
         else:
             wait += 1
-print(f"running={sum(v for k, v in run.items() if not k.startswith('cpu'))} waiting={wait} " + ' '.join(f"{k}={v}" for k, v in sorted(run.items())))
+print(f"running={sum(v for k, v in run.items() if not k.startswith('cpu'))} waiting={wait} " + ' '.join(f"{k}={v}" for k, v in sorted(run.items())) + (f" UNREACHABLE={','.join(down)}" if down else ""))
 PY
 )
   ds=$(luf status --datasets osm-polygon-description-tag,osm-polygon-website-tag,osm-polygon-wikidata-and-wikipedia --work $W 2>&1 | python3 -c "
