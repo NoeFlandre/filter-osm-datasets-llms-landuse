@@ -53,3 +53,17 @@ dataset viewer needs: `sentence` (the text; the whole text for `skipped_unsplit`
 (`yes`, `no`, `failed`, `skipped_unsplit`), `language` and `region` (the input file's name). The
 card lists it as the first, default config (`sentences`), so the Hub viewer opens on it. Files
 labelled before this table existed get theirs on the next publish.
+
+
+## Partial publication
+
+Chunks are ordered globally (most frequent texts first), so a dataset at 20 % of its chunks has
+almost no input file with every sentence labelled. To publish early, a file with some but not all
+texts generated goes to the Hub as a *partial* file: `labels/` and `viewer/` hold every sentence,
+and a sentence whose text has no answer yet has `decision = pending` (no `generation_id`, no
+`failure_reason`). A partial file is refreshed when it gained 10 % of its sentences since its last
+upload, and replaced by the final tables once it is complete. Its `generations/` rows ship with
+the complete file (the first file where a text appears owns the text's generation), so a partial
+file's labels can reference generations that are not published yet. Partial files are recorded in
+`published/<dataset>.partial.jsonl`, never in the main ledger, so they stay open; the card counts
+them (`N more partially`) and shows a `pending` row in the decision table.
