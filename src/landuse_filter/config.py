@@ -1,5 +1,7 @@
 """The production serving configuration (one place, versioned with the code)."""
 
+import os
+from pathlib import Path
 from typing import Any
 
 from landuse_filter.domain.fingerprint import config_fingerprint
@@ -10,6 +12,16 @@ MODEL_REVISION = "654f9463ce32b05d0429d76fe1f580b27d4c1ac0"
 DRAFT_ID = "LiquidAI/LFM2.5-2.6B-DSpark"
 DRAFT_REVISION = "458cedab07d0f7b2b05700c77e1aa463d43d6f04"
 MAX_NEW_TOKENS = 4096  # kept: lower caps fail the gate or save < 1% (docs/tuning.md)
+
+
+def scratch_dir() -> Path:
+    """Node-local scratch: ``$LUF_SCRATCH`` (set per job by node_job.sh), else /tmp/luf-scratch."""
+    return Path(os.environ.get("LUF_SCRATCH", "/tmp/luf-scratch"))  # noqa: S108
+
+
+def work_dir() -> Path:
+    """Local work tree: ``$LUF_WORK``, else ``work``."""
+    return Path(os.environ.get("LUF_WORK", "work"))
 
 
 def reference_config() -> dict[str, Any]:
