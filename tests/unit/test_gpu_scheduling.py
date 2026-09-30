@@ -130,3 +130,10 @@ def test_no_walltime_means_no_slot():
     from landuse_filter.domain.scheduling import slot_for
 
     assert slot_for(**_slot_args(walltime=None)) is None
+
+
+def test_exactly_one_free_gpu_is_a_free_slot_not_a_queued_one():
+    from landuse_filter.domain.scheduling import slot_for
+
+    slot = slot_for(**_slot_args(free=1))
+    assert (slot.free_nodes, slot.queued, slot.wait.total_seconds()) == (1, False, 0)
