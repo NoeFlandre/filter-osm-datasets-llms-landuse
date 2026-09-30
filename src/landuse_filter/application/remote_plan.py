@@ -5,9 +5,10 @@ the bucket, so a killed planning job resumes from the last checkpoint; chunk fil
 plan lines are uploaded as they are emitted and deleted locally.
 """
 
+import json
 import shutil
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict
 from pathlib import Path
 
@@ -120,3 +121,67 @@ def run_plan(  # noqa: PLR0913 - one use case, explicit collaborators
         [(scratch.path(f"plans/{dataset}/{fp}/report.json"), f"plans/{dataset}/{fp}/report.json")]
     )
     return report
+
+
+Locate = Callable[
+    [str, str, Path], Iterable[tuple[str, str]]
+]  # dataset, path, local -> (sha, cell)
+
+
+def generated_shas(remote: Remote, scratch: WorkStore, fp: str) -> set[str]:
+    """Texts that already have a generation, from the manifests of the bucket's parts."""
+    paths = [p for p in remote.ls(f"parts/{fp}/") if p.endswith(".json")]
+    shas: set[str] = set()
+    for start in range(0, len(paths), 500):
+        batch = paths[start : start + 500]
+        remote.get([(p, scratch.path(p)) for p in batch])
+        for p in batch:
+            shas.update(json.loads(scratch.path(p).read_text(encoding="utf-8"))["text_sha256s"])
+            scratch.path(p).unlink()
+    return shas
+
+
+def run_replan(  # noqa: PLR0913 - one use case, explicit collaborators
+    remote: Remote,
+    scratch: WorkStore,
+    dataset: str,
+    fp: str,
+    *,
+    files: list[str],
+    fetch: Callable[[str], Path],
+    locate: Locate,
+    encode: Encode,
+    template: str,
+    chunk_size: int,
+    forget: Callable[[Path], None] = lambda _p: None,
+) -> dict:
+    """Plan every not-yet-generated text again in a geographically uniform order.
+
+    Finished chunks keep their plan line; the open ones leave the plan and their unfinished
+    texts are re-chunked (ADR-0014). Needs a completed planner index.
+    """
+    if not restore_index(remote, scratch, dataset):
+        raise FileNotFoundError(f"no planner index for {dataset} in the bucket")
+    restore_plan(remote, scratch, dataset, fp)
+    planner = Planner(scratch, dataset, fp)
+    progress = planner.report()
+    if progress.files_done != progress.files_total:
+        raise RuntimeError(f"{dataset}: planning is not complete ({progress.files_done} files)")
+    planner.mark_done(generated_shas(remote, scratch, fp))
+    released = planner.release_unfinished()
+    for path in files:
+        local = fetch(path)
+        planner.set_cells(locate(dataset, path, local))
+        forget(local)
+    pending = planner.db.execute(
+        "SELECT COUNT(*), COUNT(cell) FROM texts WHERE chunk_id IS NULL AND done = 0"
+    ).fetchone()
+    chunks = planner.emit_uniform(encode, template, chunk_size)
+    publish_new_chunks(remote, scratch, dataset, fp)
+    checkpoint(remote, planner, scratch, dataset)
+    return {
+        "released_chunks": len(released),
+        "replanned_texts": pending[0],
+        "located_texts": pending[1],
+        "new_chunks": chunks,
+    }

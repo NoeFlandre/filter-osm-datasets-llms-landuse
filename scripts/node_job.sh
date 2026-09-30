@@ -2,6 +2,7 @@
 # Runs on a reserved Grid'5000 node (never on a frontend). Usage:
 #   node_job.sh <code-dir> <assignment-id>                 GPU generation job
 #   node_job.sh <code-dir> plan <dataset> <revision>       CPU planning job
+#   node_job.sh <code-dir> replan <dataset> <revision>     CPU job: plan the rest in a geographic order
 #   node_job.sh <code-dir> calibrate <chunk-id>             GPU concurrency sweep
 # Each job builds a private Python environment on node-local /tmp (never on NFS). Bulk data lives on
 # node-local scratch and in the private HF Bucket; the NFS spool only carries small files.
@@ -9,7 +10,7 @@ set -euo pipefail
 CODE=$1
 shift
 CODE="$(cd -- "$CODE" && pwd)"
-if [[ "${1:-}" == "plan" || "${1:-}" == "publish" || "${1:-}" == "calibrate" || "${1:-}" == "repair" ]]; then
+if [[ "${1:-}" == "plan" || "${1:-}" == "publish" || "${1:-}" == "calibrate" || "${1:-}" == "repair" || "${1:-}" == "replan" ]]; then
   MODE=$1
   shift
 else
@@ -61,7 +62,7 @@ venv="/tmp/$USER-venv-${OAR_JOB_ID:-local}"
 # tokeniser stack (regression: Lyon planning jobs filled /tmp and died).
 case "$MODE" in
   run | calibrate) EXTRAS=(--extra gpu) ;;
-  publish | repair) EXTRAS=(--extra tokenize --extra map) ;;  # map: card world map (h3, matplotlib)
+  publish | repair | replan) EXTRAS=(--extra tokenize --extra map) ;;  # map: H3 cells (h3, matplotlib)
   *) EXTRAS=(--extra tokenize) ;;
 esac
 UV_PROJECT_ENVIRONMENT="$venv" UV_LINK_MODE=copy uv sync --frozen --no-dev --no-install-project "${EXTRAS[@]}" --python 3.12

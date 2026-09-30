@@ -4,8 +4,8 @@ Status: accepted (2026-09-30, owner decision)
 
 ## Context
 
-The planner orders chunks globally by text frequency, so generation spreads over every input
-file at once. A dataset 20 % through its chunks has almost no file with every sentence labelled,
+Chunks are cut in input-file order and texts repeat across files (each is generated once),
+so generation spreads thinly over many files. A dataset 20 % through its chunks has almost no file with every sentence labelled,
 and the publisher only uploaded complete files: nothing could be published for the website and
 Wikipedia datasets until late in each run.
 

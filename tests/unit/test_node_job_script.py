@@ -105,4 +105,10 @@ def test_numpy_stays_below_the_cpu_baseline_bump():
 def test_repair_mode_needs_no_gpu_stack():
     """`repair` only rewrites parquet tables: it must take the light CPU environment."""
     assert '"$MODE" == "repair"' in SCRIPT
-    assert "publish | repair) EXTRAS=(--extra tokenize --extra map)" in SCRIPT
+    assert "publish | repair | replan) EXTRAS=(--extra tokenize --extra map)" in SCRIPT
+
+
+def test_replan_mode_builds_the_tokeniser_and_h3_environment():
+    """`replan` tokenises texts and bins them into H3 cells, never loads SGLang."""
+    assert '"${1:-}" == "replan"' in SCRIPT
+    assert "publish | repair | replan) EXTRAS=(--extra tokenize --extra map)" in SCRIPT
