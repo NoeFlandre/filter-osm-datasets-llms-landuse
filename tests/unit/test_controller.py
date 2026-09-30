@@ -9,6 +9,7 @@ from landuse_filter.adapters.remote import DirRemote
 from landuse_filter.adapters.schema import CHUNK
 from landuse_filter.adapters.store import WorkStore
 from landuse_filter.application import controller as ctl_mod
+from landuse_filter.application.assignment import CycleReport
 from landuse_filter.application.controller import Controller, Settings
 
 NOW = datetime(2026, 9, 28, 22, 0, tzinfo=ZoneInfo("Europe/Paris"))
@@ -102,10 +103,10 @@ def world(tmp_path, monkeypatch):
 def test_submits_where_free_with_policy_checks(world):
     c, fake = world
     report = c.cycle(NOW)
-    assert len(report["submitted"]) == 2  # two free GPUs -> two one-GPU jobs
+    assert len(report.submitted) == 2  # two free GPUs -> two one-GPU jobs
     assert fake.policy_checks == 4  # before and after each submission
     assert fake.submitted[0][:2] == ["-q", "abaca"]
-    chunks = [set(a["chunks"]) for a in c.live()]
+    chunks = [set(a.chunks) for a in c.live()]
     assert not chunks[0] & chunks[1]  # disjoint assignments
 
 
@@ -113,8 +114,8 @@ def test_second_cycle_does_not_duplicate(world):
     c, fake = world
     c.cycle(NOW)
     c.cycle(NOW)
-    assert all(len(a["chunks"]) for a in c.live())
-    taken = [ch for a in c.live() for ch in a["chunks"]]
+    assert all(len(a.chunks) for a in c.live())
+    taken = [ch for a in c.live() for ch in a.chunks]
     assert len(taken) == len(set(taken))
 
 
@@ -124,17 +125,17 @@ def test_ended_jobs_release_their_chunks(world):
     fake.jobs["nancy"] = []  # jobs finished without results
     c.reconcile()
     assert c.live() == []
-    assert {a["state"] for a in c.ledger()} == {"ended"}
+    assert {a.state for a in c.ledger()} == {"ended"}
 
 
 def test_crash_after_oarsub_is_adopted(world):
     c, fake = world
     c.cycle(NOW)
     a = c.live()[0]
-    a.update(state="submitting", job_id=None)  # as if we died before recording the id
-    c.store.write_json(f"assignments/{a['id']}.json", a)
+    a.state, a.job_id = "submitting", None  # as if we died before recording the id
+    c.save(a)
     c.reconcile()
-    adopted = c.store.read_json(f"assignments/{a['id']}.json")
+    adopted = c.store.read_json(f"assignments/{a.id}.json")
     assert adopted["state"] == "submitted"
     assert adopted["job_id"]
 
@@ -143,26 +144,26 @@ def test_besteffort_only_cluster_is_remembered(world, monkeypatch):
     c, fake = world
     fake.refuse = "# You can only access the required resources in besteffort."
     report = c.cycle(NOW)
-    assert report["submitted"] == []
+    assert report.submitted == []
     assert c.store.exists("access/nancy_gres.json")
     fake.refuse = None
-    assert c.cycle(NOW)["submitted"] == []  # not retried
+    assert c.cycle(NOW).submitted == []  # not retried
 
 
 def test_paused_submits_nothing(world):
     c, fake = world
     c.settings.paused = True
-    assert c.cycle(NOW)["submitted"] == []
+    assert c.cycle(NOW).submitted == []
 
 
 def test_late_start_is_cancelled_and_cluster_backed_off(world):
     c, fake = world
     fake.late = True
-    assert c.cycle(NOW)["submitted"] == []
+    assert c.cycle(NOW).submitted == []
     assert fake.cancelled
     assert c.live() == []
     fake.late = False
-    assert c.cycle(NOW)["submitted"] == []  # still backed off
+    assert c.cycle(NOW).submitted == []  # still backed off
 
 
 def test_waiting_reservation_blocks_node():
@@ -192,7 +193,7 @@ def test_waiting_job_whose_start_drifts_is_cancelled(world):
     c.reconcile()
     assert job.job_id in fake.cancelled
     assert c.store.exists("backoff/nancy_gres.json")
-    assert job.name not in {a["name"] for a in c.live()}
+    assert job.name not in {a.name for a in c.live()}
 
 
 def test_candidate_namespace_and_window(world):
@@ -200,10 +201,10 @@ def test_candidate_namespace_and_window(world):
     c.settings.namespace, c.settings.window = "w128", 128
     c.cycle(NOW)
     a = c.live()[0]
-    assert a["fp"] == f"{c.fp}-w128"
-    assert a["window"] == 128
-    assert a["engine_kwargs"]["max_running_requests"] == 128
-    assert a["provenance"]["config_fingerprint"] == c.fp  # same generation identity
+    assert a.fp == f"{c.fp}-w128"
+    assert a.window == 128
+    assert a.engine_kwargs["max_running_requests"] == 128
+    assert a.provenance["config_fingerprint"] == c.fp  # same generation identity
 
 
 def test_regular_access_counts_besteffort_held_gpus(world, monkeypatch):
@@ -217,7 +218,7 @@ def test_regular_access_counts_besteffort_held_gpus(world, monkeypatch):
         }
     }
     monkeypatch.setattr(g5k, "site_status", lambda site: {"nodes": held})
-    assert len(c.cycle(NOW)["submitted"]) == 2  # regular jobs preempt besteffort ones
+    assert len(c.cycle(NOW).submitted) == 2  # regular jobs preempt besteffort ones
     assert "besteffort" not in fake.submitted[0]
 
 
@@ -240,7 +241,7 @@ def test_parallel_controllers_do_not_release_each_others_work(world):
         remote=DirRemote(c.store.root / "bucket"),
     )
     other.reconcile()  # sees none of nancy's jobs
-    assert [a["id"] for a in c.live()] == [a["id"] for a in theirs]  # untouched
+    assert [a.id for a in c.live()] == [a.id for a in theirs]  # untouched
     assert other.live() == []
 
 
@@ -256,7 +257,7 @@ def test_loop_survives_a_failing_cycle(world):
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("git rev-parse failed")
-        return {"pending_chunks": 0, "live_jobs": 0, "submitted": []}
+        return CycleReport(0, 0)
 
     c.cycle = flaky
     logs, sleeps, out = [], [], []
@@ -319,8 +320,8 @@ def test_shared_site_cache_queries_each_site_once_per_cycle(world, monkeypatch):
     b.cycle(NOW)
     assert calls["status"] == 1  # one status call per site per cycle
     assert calls["jobs"] <= 3  # initial + one refresh per submission, not one per controller
-    assert {x["fp"] for x in a.live()} == {f"{a.fp}-gpu-a"}
-    assert {x["fp"] for x in b.live()} == {f"{b.fp}-gpu-b"}
+    assert {x.fp for x in a.live()} == {f"{a.fp}-gpu-a"}
+    assert {x.fp for x in b.live()} == {f"{b.fp}-gpu-b"}
 
 
 def test_run_many_drops_finished_namespaces(world):
@@ -353,7 +354,7 @@ BUSY = {
 def test_no_queueing_by_default_when_nothing_is_free(world, monkeypatch):
     c, fake = world
     monkeypatch.setattr(g5k, "site_status", lambda site: {"nodes": BUSY})
-    assert c.cycle(NOW)["submitted"] == []
+    assert c.cycle(NOW).submitted == []
 
 
 def test_bounded_queue_submits_one_waiting_job_with_a_longer_tolerance(world, monkeypatch):
@@ -361,10 +362,10 @@ def test_bounded_queue_submits_one_waiting_job_with_a_longer_tolerance(world, mo
     monkeypatch.setattr(g5k, "site_status", lambda site: {"nodes": BUSY})
     c.settings.max_queued_per_site = 1
     fake.late = False
-    submitted = c.cycle(NOW)["submitted"]
+    submitted = c.cycle(NOW).submitted
     assert len(submitted) == 1
     a = c.live()[0]
-    assert a["late_after_s"] == 7200
+    assert a.late_after_s == 7200
     # the job waits, predicted to start in 1 h: within its tolerance, so it is kept
     job = fake.jobs["nancy"][0]
     fake.jobs["nancy"][0] = g5k.Job(
@@ -374,7 +375,7 @@ def test_bounded_queue_submits_one_waiting_job_with_a_longer_tolerance(world, mo
     c.reconcile()
     assert job.job_id not in fake.cancelled
     # the site's queue is full: no second waiting job
-    assert c.cycle(NOW)["submitted"] == []
+    assert c.cycle(NOW).submitted == []
 
 
 def test_free_slots_outrank_queued_ones():
