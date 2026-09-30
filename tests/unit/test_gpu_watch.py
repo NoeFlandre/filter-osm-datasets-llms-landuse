@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -46,8 +47,12 @@ def run_watch(tmp_path: Path, *, extra_assignments=(), log=""):
         "GPU_WATCH_ONCE": "1",
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
     }
+    # Run a copy so that the script's project .venv (with the real luf) is not on its PATH.
+    script = tmp_path / "scripts" / "ops" / "gpu_watch.sh"
+    script.parent.mkdir(parents=True)
+    shutil.copy(SCRIPT, script)
     return subprocess.run(
-        ["bash", str(SCRIPT)], env=env, capture_output=True, text=True, timeout=120, check=False
+        ["bash", str(script)], env=env, capture_output=True, text=True, timeout=120, check=False
     )
 
 
