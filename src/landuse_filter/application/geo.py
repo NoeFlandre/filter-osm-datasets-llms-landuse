@@ -104,18 +104,13 @@ def website_text_cells(
             yield ref.text_sha256, cell
 
 
-def wiki_text_cells(
-    refs: Iterable[SentenceRef],
-    documents: pa.Table,
-    links: pa.Table,
-    polygons: pa.Table,
-    cell_of: CellOf,
-) -> Iterator[tuple[str, str]]:
-    """``(text sha, cell)`` of wiki sentences, placed at the first polygon linked to their document.
+def _wiki_cell_of_sentence(
+    documents: pa.Table, links: pa.Table, polygons: pa.Table, cell_of: CellOf
+) -> dict[str, str]:
+    """``sentence_id -> cell``: a sentence sits at the first polygon linked to its document.
 
-    ``documents`` maps ``sentence_id`` to ``document_id``, ``links`` ``polygon_id`` to
-    ``document_id`` and ``polygons`` carries ``lat``/``lon``; "first" is the smallest
-    ``polygon_id`` that has coordinates, so the choice never depends on row order.
+    "First" is the smallest ``polygon_id`` that has coordinates, so the choice never depends
+    on row order.
     """
     cell_of_polygon = {
         i: cell_of(lon, lat)
@@ -129,10 +124,49 @@ def wiki_text_cells(
     for polygon, document in sorted(pairs):
         if polygon in cell_of_polygon:
             cell_of_document.setdefault(document, cell_of_polygon[polygon])
-    document_of = dict(
-        zip(*[documents.column(c).to_pylist() for c in ("sentence_id", "document_id")], strict=True)
-    )
+    return {
+        sentence: cell_of_document[document]
+        for sentence, document in zip(
+            *[documents.column(c).to_pylist() for c in ("sentence_id", "document_id")],
+            strict=True,
+        )
+        if document in cell_of_document
+    }
+
+
+def wiki_text_cells(
+    refs: Iterable[SentenceRef],
+    documents: pa.Table,
+    links: pa.Table,
+    polygons: pa.Table,
+    cell_of: CellOf,
+) -> Iterator[tuple[str, str]]:
+    """``(text sha, cell)`` of wiki sentences, placed at the first polygon linked to their document.
+
+    ``documents`` maps ``sentence_id`` to ``document_id``, ``links`` ``polygon_id`` to
+    ``document_id`` and ``polygons`` carries ``lat``/``lon``.
+    """
+    cell_of_sentence = _wiki_cell_of_sentence(documents, links, polygons, cell_of)
     for ref in refs:
-        cell = cell_of_document.get(document_of.get(dict(ref.locator)["sentence_id"], ""))
+        cell = cell_of_sentence.get(dict(ref.locator)["sentence_id"])
         if cell and not ref.unsplit:
             yield ref.text_sha256, cell
+
+
+def wiki_cells(
+    labels: pa.Table, documents: pa.Table, links: pa.Table, polygons: pa.Table, cell_of: CellOf
+) -> Located:
+    """Bin the ``yes``/``no`` rows of a wiki labels file (``sentence_id``, ``decision``).
+
+    Placement is the planner's (:func:`wiki_text_cells`): the first polygon linked to the
+    sentence's document.
+    """
+    cell_of_sentence = _wiki_cell_of_sentence(documents, links, polygons, cell_of)
+    return _bin(
+        (d, cell_of_sentence.get(i))
+        for i, d in zip(
+            labels.column("sentence_id").to_pylist(),
+            labels.column("decision").to_pylist(),
+            strict=True,
+        )
+    )

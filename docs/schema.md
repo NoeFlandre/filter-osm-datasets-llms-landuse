@@ -37,10 +37,12 @@ duckdb.sql("""
 
 The card of each `-landuse` repo is rendered from counts made over the **published** tables
 (never from a single run): per-file stats are cached in `published/<dataset>.stats.jsonl` and
-backfilled from the Hub. Where the input has coordinates (`osm-polygon-description-tag`), the
-card also embeds `assets/yes_share_map.png`: every `yes`/`no` sentence is placed at the centre of
-its polygon's bounding box, binned into an H3 cell (resolution 3) and coloured by the share of
-`yes` in the cell, centred on the dataset-wide share. Cells with fewer than 10 sentences are
+backfilled from the Hub. Every dataset's card embeds `assets/yes_share_map.png` (ADR-0015):
+every `yes`/`no` sentence is placed (description: the centre of its polygon's bounding box;
+website: the polygon's `lat`/`lon`; wiki: the first polygon, by smallest `polygon_id` with
+coordinates, linked to the sentence's document, as in the geographic plan), binned into an H3
+cell (resolution 3) and coloured by the share of `yes` in the cell, centred on the dataset-wide
+share. Cells with fewer than 10 sentences are
 grey. The land outline is Natural Earth 110m (public domain), vendored in
 `src/landuse_filter/adapters/data/land_110m.json`. H3 and matplotlib come from the `map` extra,
 installed by publish jobs only.
