@@ -7,6 +7,7 @@ from landuse_filter.adapters.readers import WEBSITE, read_website
 from landuse_filter.application.assemble import (
     MissingGenerationError,
     Resolved,
+    Stamp,
     build_labels,
     label_rows,
 )
@@ -26,8 +27,7 @@ def test_every_position_gets_exactly_one_decision(tmp_path):
         "polygons/x.parquet",
         INPUTS / "website.parquet",
         resolved=resolved,
-        fp="fp",
-        revision="rev",
+        stamp=Stamp("fp", "rev"),
         out=tmp_path,
     )
     table = pq.read_table(tmp_path / "labels" / "polygons" / "x.parquet").to_pylist()
@@ -78,8 +78,7 @@ def test_build_labels_writes_the_viewer_table_too(tmp_path):
         "polygons/x.parquet",
         INPUTS / "website.parquet",
         resolved=resolved,
-        fp="fp",
-        revision="rev",
+        stamp=Stamp("fp", "rev"),
         out=tmp_path,
     )
     viewer = pq.read_table(tmp_path / "viewer" / "polygons" / "x.parquet")
@@ -109,8 +108,7 @@ def test_partial_build_shows_pending_in_the_labels_and_the_viewer(tmp_path):
         "polygons/x.parquet",
         INPUTS / "website.parquet",
         resolved=resolved,
-        fp="fp",
-        revision="rev",
+        stamp=Stamp("fp", "rev"),
         out=tmp_path,
         allow_pending=True,
     )

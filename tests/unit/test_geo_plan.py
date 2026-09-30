@@ -145,13 +145,14 @@ def test_replan_job_keeps_finished_chunks_and_reorders_the_rest(tmp_path):
         WorkStore(tmp_path / "replan-node"),
         WEBSITE,
         "fp",
-        files=["polygons/a.parquet"],
-        fetch=lambda _: inputs / "website.parquet",
+        remote_plan.PlanInputs(
+            files=["polygons/a.parquet"],
+            fetch=lambda _: inputs / "website.parquet",
+            encode=encode,
+            template="S: {}",
+            chunk_size=10,
+        ),
         locate=locate,
-        encode=encode,
-        template="S: {}",
-        chunk_size=10,
-        forget=lambda _p: None,
     )
     new_lines = WorkStore(tmp_path / "check")
     remote.get(

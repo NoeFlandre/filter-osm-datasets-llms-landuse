@@ -9,7 +9,7 @@ import json
 import shutil
 import time
 from collections.abc import Callable, Iterable
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from landuse_filter.adapters.remote import Remote
@@ -73,21 +73,30 @@ def checkpoint(remote: Remote, planner: Planner, scratch: WorkStore, dataset: st
     remote.put([(scratch.path(_index(dataset)), _index(dataset))])
 
 
-def run_plan(  # noqa: PLR0913 - one use case, explicit collaborators
+@dataclass(frozen=True)
+class PlanInputs:
+    """What planning (and re-planning) reads and how it cuts chunks."""
+
+    files: list[str]  # input files of the dataset, in planner order
+    fetch: Callable[[str], Path]  # download one input file
+    encode: Encode  # batch tokeniser of rendered prompts
+    template: str
+    chunk_size: int
+    forget: Callable[[Path], None] = lambda _p: None  # drop a downloaded file once read
+
+
+def run_plan(
     remote: Remote,
     scratch: WorkStore,
     dataset: str,
     fp: str,
+    inputs: PlanInputs,
     *,
-    files: list[str],
-    fetch: Callable[[str], Path],
-    encode: Encode,
-    template: str,
-    chunk_size: int,
     should_stop: Callable[[], bool],
-    forget: Callable[[Path], None] = lambda _p: None,
 ) -> dict:
     """Scan every file (resumably), emitting and publishing chunks as it goes."""
+    files, fetch, forget = inputs.files, inputs.fetch, inputs.forget
+    encode, template, chunk_size = inputs.encode, inputs.template, inputs.chunk_size
     restore_index(remote, scratch, dataset)
     restore_plan(remote, scratch, dataset, fp)
     planner = Planner(scratch, dataset, fp)
@@ -141,19 +150,14 @@ def generated_shas(remote: Remote, scratch: WorkStore, fp: str) -> set[str]:
     return shas
 
 
-def run_replan(  # noqa: PLR0913 - one use case, explicit collaborators
+def run_replan(
     remote: Remote,
     scratch: WorkStore,
     dataset: str,
     fp: str,
+    inputs: PlanInputs,
     *,
-    files: list[str],
-    fetch: Callable[[str], Path],
     locate: Locate,
-    encode: Encode,
-    template: str,
-    chunk_size: int,
-    forget: Callable[[Path], None] = lambda _p: None,
 ) -> dict:
     """Plan every not-yet-generated text again in a geographically uniform order.
 
@@ -169,14 +173,14 @@ def run_replan(  # noqa: PLR0913 - one use case, explicit collaborators
         raise RuntimeError(f"{dataset}: planning is not complete ({progress.files_done} files)")
     planner.mark_done(generated_shas(remote, scratch, fp))
     released = planner.release_unfinished()
-    for path in files:
-        local = fetch(path)
+    for path in inputs.files:
+        local = inputs.fetch(path)
         planner.set_cells(locate(dataset, path, local))
-        forget(local)
+        inputs.forget(local)
     pending = planner.db.execute(
         "SELECT COUNT(*), COUNT(cell) FROM texts WHERE chunk_id IS NULL AND done = 0"
     ).fetchone()
-    chunks = planner.emit_uniform(encode, template, chunk_size)
+    chunks = planner.emit_uniform(inputs.encode, inputs.template, inputs.chunk_size)
     publish_new_chunks(remote, scratch, dataset, fp)
     checkpoint(remote, planner, scratch, dataset)
     return {
