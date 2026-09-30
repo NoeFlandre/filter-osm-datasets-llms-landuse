@@ -17,6 +17,7 @@ import hashlib
 import math
 import sqlite3
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -84,8 +85,17 @@ class _PartialSink:
     """Uploads partial files as they are built and records each commit in the ledger, so a
     job stopped at its walltime keeps what it already published."""
 
-    def __init__(self, store: WorkStore, dataset: str, repo: str, *, dry_run: bool) -> None:
+    def __init__(
+        self,
+        store: WorkStore,
+        dataset: str,
+        repo: str,
+        *,
+        dry_run: bool,
+        on_progress: Callable[[], None] | None,
+    ) -> None:
         self.store, self.dataset, self.repo, self.dry_run = store, dataset, repo, dry_run
+        self.on_progress = on_progress
         self.pending: list[tuple[Path, str]] = []
         self.resolved: dict[str, int] = {}  # labels path -> resolved sentences, this run
         self.uploaded: dict[str, Path] = {}
@@ -110,11 +120,18 @@ class _PartialSink:
                 ],
             )
             self.uploaded.update({d: src for src, d in self.pending})
+            if self.on_progress:
+                self.on_progress()  # e.g. save the ledger off the node that may be stopped
         self.pending = []
 
 
 def publish(
-    store: WorkStore, dataset: str, revision: str, *, dry_run: bool = False
+    store: WorkStore,
+    dataset: str,
+    revision: str,
+    *,
+    dry_run: bool = False,
+    on_progress: Callable[[], None] | None = None,
 ) -> PublishReport:
     source = SOURCES[dataset]
     repo = output_repo(dataset)
@@ -134,7 +151,7 @@ def publish(
     first_file = dict(zip(files, [i for i, _ in indexed], strict=True))
     new: list[tuple[Path, str]] = []
     new_shas: set[str] = set()
-    sink = _PartialSink(store, dataset, repo, dry_run=dry_run)
+    sink = _PartialSink(store, dataset, repo, dry_run=dry_run, on_progress=on_progress)
     for path in files:
         target = f"labels/{path}"
         if target in done:
