@@ -27,16 +27,16 @@ def test_label_stats_count_decisions_and_failure_reasons_of_failed_rows_only(tmp
          ("skipped_unsplit", "unsplit_upstream")],
     )  # fmt: skip
     stats = ps.file_stats("labels/a.parquet", path)
-    assert stats["decisions"] == {"yes": 1, "no": 1, "failed": 2, "skipped_unsplit": 1}
-    assert stats["failures"] == {"truncated": 1, "empty": 1}
+    assert stats.decisions == {"yes": 1, "no": 1, "failed": 2, "skipped_unsplit": 1}
+    assert stats.failures == {"truncated": 1, "empty": 1}
 
 
 def test_generation_stats_count_rows_per_gpu_key(tmp_path):
     path = tmp_path / "g.parquet"
     pq.write_table(pa.table({"gpu": ["NVIDIA L40S", "NVIDIA L40S", "A100-SXM4-40GB"]}), path)
     stats = ps.file_stats("generations/fp/b.parquet", path)
-    assert stats["rows"] == 3
-    assert stats["gpus"] == {"l40s": 2, "a100_sxm4_40gb": 1}
+    assert stats.rows == 3
+    assert stats.gpus == {"l40s": 2, "a100_sxm4_40gb": 1}
 
 
 def test_missing_records_are_counted_once_and_cached(tmp_path):
@@ -57,20 +57,30 @@ def test_missing_records_are_counted_once_and_cached(tmp_path):
 
 def test_totals_sum_every_record():
     records = [
-        {"path": "labels/a", "decisions": {"yes": 2, "no": 1}, "failures": {}},
-        {"path": "labels/b", "decisions": {"yes": 1, "failed": 1}, "failures": {"empty": 1}},
-        {"path": "generations/x", "rows": 5, "gpus": {"l40s": 5}},
-        {"path": "generations/y", "rows": 2, "gpus": {"l40s": 1, "a40": 1}},
+        ps.FileStats("labels/a", decisions={"yes": 2, "no": 1}),
+        ps.FileStats("labels/b", decisions={"yes": 1, "failed": 1}, failures={"empty": 1}),
+        ps.FileStats("generations/x", rows=5, gpus={"l40s": 5}),
+        ps.FileStats("generations/y", rows=2, gpus={"l40s": 1, "a40": 1}),
     ]
-    assert ps.totals(records) == {
-        "decisions": {"yes": 3, "no": 1, "failed": 1},
-        "failures": {"empty": 1},
-        "gpus": {"l40s": 6, "a40": 1},
-        "unique_texts": 7,
-        "cells": {},
-        "labelled": 0,
-        "located": 0,
-    }
+    assert ps.totals(records) == ps.PublishedStats(
+        decisions={"yes": 3, "no": 1, "failed": 1},
+        failures={"empty": 1},
+        gpus={"l40s": 6, "a40": 1},
+        unique_texts=7,
+        cells={},
+        labelled=0,
+        located=0,
+    )
+
+
+def test_ledger_lines_written_by_older_code_still_load_and_round_trip():
+    labels = {"path": "labels/a", "decisions": {"yes": 1}, "failures": {}}
+    located = {**labels, "cells": {"c": [1, 0]}, "labelled": 1, "located": 1}
+    generations = {"path": "generations/fp/b", "rows": 3, "gpus": {"l40s": 3}}
+    for line in (labels, located, generations):
+        assert ps.FileStats.from_json(line).to_json() == line
+    assert ps.FileStats.from_json(labels).cells is None  # counted again once a locator is given
+    assert ps.FileStats.from_json({"path": "labels/x"}) == ps.FileStats("labels/x")
 
 
 def where():
@@ -82,8 +92,8 @@ def where():
 def test_label_stats_carry_the_map_cells_when_a_locator_is_given(tmp_path):
     path = labels_file(tmp_path, "a.parquet", [("yes", None), ("no", None)])
     stats = ps.file_stats("labels/a.parquet", path, lambda p, s: where())
-    assert stats["cells"] == {"c1": [2, 1]}
-    assert (stats["labelled"], stats["located"]) == (4, 3)
+    assert stats.cells == {"c1": [2, 1]}
+    assert (stats.labelled, stats.located) == (4, 3)
 
 
 def test_records_without_cells_are_counted_again_when_a_locator_is_given(tmp_path):
@@ -99,19 +109,14 @@ def test_records_without_cells_are_counted_again_when_a_locator_is_given(tmp_pat
     records = ps.complete(store, "d", {"labels/a.parquet"}, lambda p: path, locate)
     ps.complete(store, "d", {"labels/a.parquet"}, lambda p: path, locate)  # now cached
     assert calls == ["labels/a.parquet"]
-    assert records[0]["cells"] == {"c1": [2, 1]}
+    assert records[0].cells == {"c1": [2, 1]}
 
 
 def test_totals_merge_cells_and_sum_located_rows():
     records = [
-        {"path": "labels/a", "cells": {"c1": [1, 1]}, "labelled": 3, "located": 2},
-        {
-            "path": "labels/b",
-            "cells": {"c1": [2, 0], "c2": [0, 1]},
-            "labelled": 4,
-            "located": 3,
-        },
+        ps.FileStats("labels/a", cells={"c1": [1, 1]}, labelled=3, located=2),
+        ps.FileStats("labels/b", cells={"c1": [2, 0], "c2": [0, 1]}, labelled=4, located=3),
     ]
     totals = ps.totals(records)
-    assert totals["cells"] == {"c1": (3, 1), "c2": (0, 1)}
-    assert (totals["labelled"], totals["located"]) == (7, 5)
+    assert totals.cells == {"c1": (3, 1), "c2": (0, 1)}
+    assert (totals.labelled, totals.located) == (7, 5)

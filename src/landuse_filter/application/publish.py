@@ -412,7 +412,7 @@ def _refresh_card(
             refresh=set(local),  # uploaded now: a partial record of the same path is stale
         )
     )
-    if stats["decisions"]:
+    if stats.decisions:
         _card(
             store,
             hub,
@@ -422,7 +422,7 @@ def _refresh_card(
             coverage=coverage,
             stats=stats,
         )
-    return stats["decisions"]
+    return stats.decisions
 
 
 def _map_locator(dataset: str, revision: str, hub: Hub) -> published_stats.Locator | None:
@@ -433,20 +433,20 @@ def _map_locator(dataset: str, revision: str, hub: Hub) -> published_stats.Locat
     return spec.map_locator(spec.source.repo_id, hub, revision)
 
 
-def _world_map(stats: dict, png: Path, dataset: str) -> MapFacts | None:
+def _world_map(stats: published_stats.PublishedStats, png: Path, dataset: str) -> MapFacts | None:
     """Render the yes-share map and return its figures; ``None`` without coordinates."""
-    if not stats["cells"]:
+    if not stats.cells:
         return None
     from landuse_filter.adapters import hexmap
     from landuse_filter.domain import geomap
 
     png.parent.mkdir(parents=True, exist_ok=True)
-    hexmap.render(stats["cells"], png, title=f"{dataset}-landuse: share of yes per H3 cell")
+    hexmap.render(stats.cells, png, title=f"{dataset}-landuse: share of yes per H3 cell")
     return MapFacts(
-        cells=len(stats["cells"]),
-        located=stats["located"],
-        labelled=stats["labelled"],
-        share=geomap.global_share(stats["cells"]),
+        cells=len(stats.cells),
+        located=stats.located,
+        labelled=stats.labelled,
+        share=geomap.global_share(stats.cells),
     )
 
 
@@ -458,7 +458,7 @@ def _card(
     repo: str,
     revision: str,
     coverage: Coverage,
-    stats: dict,
+    stats: published_stats.PublishedStats,
 ) -> None:
     cfg = config.reference_config()
     png = store.path(f"publish/{dataset}/{MAP_ASSET}")
@@ -474,10 +474,10 @@ def _card(
             fingerprint=config.GENERATION_FP,
             labelled_files=coverage.labelled,
             total_files=coverage.total,
-            decisions=stats["decisions"],
-            failures=stats["failures"],
-            unique_texts=stats["unique_texts"],
-            gpu_rows=stats["gpus"],
+            decisions=stats.decisions,
+            failures=stats.failures,
+            unique_texts=stats.unique_texts,
+            gpu_rows=stats.gpus,
             admitted=admitted,
             world_map=world_map,
             partial_files=len(coverage.partial),
