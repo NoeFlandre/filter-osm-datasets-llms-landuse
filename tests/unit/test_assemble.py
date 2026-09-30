@@ -86,3 +86,34 @@ def test_build_labels_writes_the_viewer_table_too(tmp_path):
     labels = pq.read_table(tmp_path / "labels" / "polygons" / "x.parquet")
     assert viewer.num_rows == labels.num_rows
     assert viewer.column("label").to_pylist() == labels.column("decision").to_pylist()
+
+
+def test_unresolved_texts_are_pending_when_the_file_is_published_partially():
+    rs = refs()
+    some = {r.text_sha256 for r in rs if not r.unsplit}
+    resolved = {sha: Resolved("yes", "exact", None) for sha in list(some)[:10]}
+    rows = label_rows(rs, resolved, "fp", "rev", allow_pending=True)
+    pending = [r for r in rows if r["decision"] == "pending"]
+    assert len(rows) == len(rs)
+    assert pending
+    assert all(r["generation_id"] is None and r["failure_reason"] is None for r in pending)
+    assert {r["decision"] for r in rows} == {"yes", "pending", "skipped_unsplit"}
+
+
+def test_partial_build_shows_pending_in_the_labels_and_the_viewer(tmp_path):
+    rs = refs()
+    shas = [r.text_sha256 for r in rs if not r.unsplit]
+    resolved = {sha: Resolved("no", "exact", None) for sha in shas[:5]}
+    build_labels(
+        WEBSITE,
+        "polygons/x.parquet",
+        INPUTS / "website.parquet",
+        resolved=resolved,
+        fp="fp",
+        revision="rev",
+        out=tmp_path,
+        allow_pending=True,
+    )
+    viewer = pq.read_table(tmp_path / "viewer" / "polygons" / "x.parquet").to_pylist()
+    assert "pending" in {r["label"] for r in viewer}
+    assert "no" in {r["label"] for r in viewer}

@@ -121,3 +121,22 @@ def test_the_sentence_viewer_is_the_default_and_first_config():
     assert configs.index("config_name: sentences") < configs.index("config_name: labels")
     assert "default: true" in configs.split("config_name: labels")[0]
     assert 'data_files: "viewer/**/*.parquet"' in configs
+
+
+def test_partial_publication_is_stated_and_pending_rows_are_counted():
+    import dataclasses
+
+    partial = dataclasses.replace(
+        facts(),
+        decisions={"yes": 10, "no": 5, "failed": 3, "skipped_unsplit": 2, "pending": 7},
+        partial_files=4,
+    )
+    card = render_card(partial)
+    assert "| `pending` | 7 |" in card
+    assert "3 of 386 input files fully labelled" in card
+    assert "4 more partially" in card
+    assert "published once the file is complete" in card
+
+
+def test_no_pending_row_when_nothing_is_pending():
+    assert "`pending`" not in render_card(facts())

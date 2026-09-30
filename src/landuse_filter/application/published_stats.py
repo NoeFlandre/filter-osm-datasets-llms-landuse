@@ -60,17 +60,22 @@ def complete(
     published: set[str],
     opener: Opener,
     locate: Locator | None = None,
+    *,
+    refresh: set[str] | frozenset[str] = frozenset(),
 ) -> list[dict]:
     """Records for every published labels/generations file, counting any that is missing.
 
-    With ``locate``, a labels record without its map cells is counted again.
+    With ``locate``, a labels record without its map cells is counted again; paths in
+    ``refresh`` (just re-uploaded) are counted again whatever the ledger holds.
     """
     have = {r["path"]: r for r in store.read_jsonl(ledger(dataset))}
     wanted = sorted(p for p in published if p.startswith(("labels/", "generations/")))
     missing = [
         p
         for p in wanted
-        if p not in have or (locate and p.startswith("labels/") and "cells" not in have[p])
+        if p not in have
+        or p in refresh
+        or (locate and p.startswith("labels/") and "cells" not in have[p])
     ]
     if missing:
         fresh = [file_stats(p, opener(p), locate) for p in missing]

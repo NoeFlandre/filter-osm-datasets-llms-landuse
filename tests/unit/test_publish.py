@@ -130,7 +130,7 @@ def test_a_text_shared_by_two_files_is_uploaded_to_generations_once(tmp_path, mo
     real = assemble.build_labels
 
     def only_a(dataset, path, *args, **kwargs):
-        if path == "polygons/b.parquet":
+        if path == "polygons/b.parquet" and not kwargs.get("allow_pending"):
             raise assemble.MissingGenerationError(path)
         return real(dataset, path, *args, **kwargs)
 
@@ -229,3 +229,67 @@ def test_files_labelled_before_the_viewer_existed_get_their_viewer_table(tmp_pat
     before = len(uploads)
     pub.publish(store, WEBSITE, "rev")
     assert ["viewer/polygons/a.parquet"] in uploads[before:]
+
+
+def generate_some(store, part, start, stop):
+    refs = [
+        r for r in read_website(INPUTS / "website.parquet", "polygons/a.parquet") if not r.unsplit
+    ]
+    shas = sorted({r.text_sha256 for r in refs})[start:stop]
+    rows = [
+        Generation(s, "x</think>yes", 5, 3, "stop", False, None, None, None, None) for s in shas
+    ]
+    prov = {name: "p" for name, _ in PROVENANCE}
+    store.write_part(config.GENERATION_FP, part, generation_table(rows, prov))
+
+
+def planned(tmp_path):
+    store = WorkStore(tmp_path / "work")
+    planner = Planner(store, WEBSITE, config.GENERATION_FP)
+    planner.register(["polygons/a.parquet"])
+    planner.scan(lambda _: INPUTS / "website.parquet")
+    return store
+
+
+def test_a_partly_generated_file_is_published_with_pending_rows(tmp_path, monkeypatch):
+    uploads = fake_hub(monkeypatch, tmp_path)
+    store = planned(tmp_path)
+    generate_some(store, "p1", 0, 20)
+    report = pub.publish(store, WEBSITE, "rev")
+    flat = [p for batch in uploads for p in batch]
+    assert (report.labelled_files, report.partial_files) == (0, 1)
+    assert "labels/polygons/a.parquet" in flat and "viewer/polygons/a.parquet" in flat
+    assert not any(p.startswith("generations/") for p in flat)  # shipped with the complete file
+    labels = pq.read_table(store.path(f"publish/{WEBSITE}/labels/polygons/a.parquet")).to_pylist()
+    assert sum(r["decision"] == "pending" for r in labels) > 0
+    assert report.decisions["pending"] > 0
+    done = {r["path"] for r in store.read_jsonl(f"published/{WEBSITE}.jsonl")}
+    assert "labels/polygons/a.parquet" not in done  # a partial file stays open for later runs
+
+
+def test_partial_files_are_refreshed_only_after_enough_progress(tmp_path, monkeypatch):
+    uploads = fake_hub(monkeypatch, tmp_path)
+    store = planned(tmp_path)
+    generate_some(store, "p1", 0, 20)
+    pub.publish(store, WEBSITE, "rev")
+    generate_some(store, "p2", 20, 22)  # +2 of 46: under the 10 % step
+    pub.publish(store, WEBSITE, "rev")
+    assert sum("labels/polygons/a.parquet" in batch for batch in uploads) == 1
+    generate_some(store, "p3", 22, 30)  # +10 in total
+    pub.publish(store, WEBSITE, "rev")
+    assert sum("labels/polygons/a.parquet" in batch for batch in uploads) == 2
+
+
+def test_a_file_becoming_complete_replaces_its_partial_version(tmp_path, monkeypatch):
+    uploads = fake_hub(monkeypatch, tmp_path)
+    store = planned(tmp_path)
+    generate_some(store, "p1", 0, 20)
+    pub.publish(store, WEBSITE, "rev")
+    generate_some(store, "p2", 20, 46)
+    report = pub.publish(store, WEBSITE, "rev")
+    flat = [p for batch in uploads for p in batch]
+    assert (report.labelled_files, report.partial_files) == (1, 0)
+    assert any(p.startswith("generations/") for p in flat)
+    assert "pending" not in report.decisions  # the card counts the final file, not the partial
+    done = {r["path"] for r in store.read_jsonl(f"published/{WEBSITE}.jsonl")}
+    assert "labels/polygons/a.parquet" in done

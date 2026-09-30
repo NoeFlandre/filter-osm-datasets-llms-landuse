@@ -34,12 +34,13 @@ FAILURES = {
     "non_english_token": "answered with a non-English word that is not mapped",
     "no_label": "no yes/no in the answer",
 }
-DECISION_ORDER = ("yes", "no", "failed", "skipped_unsplit")
+DECISION_ORDER = ("yes", "no", "failed", "skipped_unsplit", "pending")
 DECISION_MEANING = {
     "yes": "relevant to land use / land cover",
     "no": "not relevant",
     "failed": "the model output could not be parsed into yes/no",
     "skipped_unsplit": "text not segmented upstream; not sent to the model",
+    "pending": "in a partly labelled file; no model answer yet",
 }
 
 
@@ -72,6 +73,7 @@ class CardFacts:
     gpu_rows: Mapping[str, int]  # generations per GPU key
     admitted: Mapping[str, Mapping[str, float]]  # gpu key -> gate numbers
     world_map: MapFacts | None = None  # None: the input has no coordinates
+    partial_files: int = 0  # files published before all their sentences were labelled
 
 
 def _from(paths: tuple[str, ...], prefix: str = "") -> str:
@@ -102,7 +104,7 @@ def _decision_table(decisions: Mapping[str, int]) -> str:
         f"| `{k}` | {decisions.get(k, 0):,} | {decisions.get(k, 0) / total:.1%} | "
         f"{DECISION_MEANING[k]} |"
         for k in DECISION_ORDER
-        if total
+        if total and (k != "pending" or decisions.get(k))
     ]
     rows.append(f"| **total** | **{total:,}** | | |")
     return "\n".join(rows)
@@ -152,6 +154,18 @@ usable answer. Reasons:
         else ""
     )
     extra_license = f"\n{TEXT_LICENSE[f.dataset]}" if f.dataset in TEXT_LICENSE else ""
+    files_line = (
+        f"{f.labelled_files:,} of {f.total_files:,} input files fully labelled, "
+        f"{f.partial_files:,} more partially"
+        if f.partial_files
+        else f"{f.labelled_files:,} of {f.total_files:,} input files labelled"
+    )
+    partial_note = (
+        "\n* `pending` rows belong to partly labelled files; their labels are refreshed as the "
+        "model works, and the `generations/` rows of a file are published once the file is complete."
+        if f.partial_files
+        else ""
+    )
     return f"""---
 license: odbl
 pretty_name: {f.dataset} (land-use labels)
@@ -172,7 +186,7 @@ configs:
 
 A land-use / land-cover relevance label for every sentence of [`NoeFlandre/{f.dataset}`](https://huggingface.co/datasets/NoeFlandre/{f.dataset}) (revision `{f.revision[:7]}`). The input is mirrored here unchanged; labels and model outputs are separate tables that join back to it.
 
-**{status.replace("_", " ").capitalize()}: {f.labelled_files:,} of {f.total_files:,} input files labelled, {total:,} rows, {f.unique_texts:,} unique texts sent to the model.**
+**{status.replace("_", " ").capitalize()}: {files_line}, {total:,} rows, {f.unique_texts:,} unique texts sent to the model.**
 
 | `decision` | Rows | Share | Meaning |
 |---|---:|---:|---|
@@ -182,7 +196,7 @@ A land-use / land-cover relevance label for every sentence of [`NoeFlandre/{f.da
 
 * `viewer/<input path>.parquet` (the default view): `sentence`, `label`, `language` and `region` (the input file), nothing else.
 * `labels/<input path>.parquet`: one row per sentence. Join keys ({keys}), `text_sha256`, `decision`, `parse_mode`, `failure_reason`, `generation_id`.
-* `generations/<fingerprint>/*.parquet`: one row per **unique** text: raw output including the reasoning, token counts, finish reason, speculative-decoding statistics, GPU, site, job and code commit. Identical texts are generated once and share a `generation_id`.
+* `generations/<fingerprint>/*.parquet`: one row per **unique** text: raw output including the reasoning, token counts, finish reason, speculative-decoding statistics, GPU, site, job and code commit. Identical texts are generated once and share a `generation_id`.{partial_note}
 
 ```sql
 SELECT i.*, l.decision, g.raw_output

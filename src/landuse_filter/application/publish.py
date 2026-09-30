@@ -5,10 +5,16 @@
    ``labels/<path>``; upload the new canonical generations under ``generations/``.
 3. Rewrite the dataset card with coverage; ``status`` stays ``in_progress`` until
    every in-scope file is labelled.
+A file with some but not all texts generated is published as a *partial* file
+(sentences without an answer are ``pending``) once it gained :data:`PARTIAL_STEP` of its
+sentences since its last partial upload; it is replaced when it completes. Partial files
+are recorded in ``published/<dataset>.partial.jsonl``, never in the main ledger, so they
+stay open; their ``generations/`` rows ship with the complete file.
 Published files are recorded in ``published/<dataset>.jsonl``, so re-running resumes.
 """
 
 import hashlib
+import math
 import sqlite3
 from collections import Counter
 from dataclasses import dataclass
@@ -23,6 +29,7 @@ from landuse_filter.adapters.readers import DESCRIPTION, SOURCES, WEBSITE
 from landuse_filter.adapters.store import WorkStore
 from landuse_filter.application import published_stats
 from landuse_filter.application.assemble import (
+    PENDING,
     MissingGenerationError,
     build_generations,
     build_labels,
@@ -32,6 +39,8 @@ from landuse_filter.application.card import MAP_ASSET, CardFacts, MapFacts, rend
 from landuse_filter.application.geo import BBOX, Located, description_cells, website_cells
 from landuse_filter.application.results import canonical_generations
 
+PARTIAL_STEP = 0.10  # share of a file's sentences that must be newly labelled to refresh it
+
 
 @dataclass
 class PublishReport:
@@ -39,12 +48,35 @@ class PublishReport:
     total_files: int
     new_files: int
     decisions: dict[str, int]
+    partial_files: int = 0
+
+
+def partial_ledger(dataset: str) -> str:
+    return f"published/{dataset}.partial.jsonl"
 
 
 def output_repo(dataset: str) -> str:
     from landuse_filter.adapters.settings_file import load
 
     return load().output_repo(dataset)
+
+
+@dataclass(frozen=True)
+class _Ctx:
+    """What building one file's tables needs, shared by every file of a run."""
+
+    dataset: str
+    revision: str
+    fp: str
+    out: Path
+    resolved: ResolutionIndex
+
+
+@dataclass(frozen=True)
+class Coverage:
+    labelled: int  # files whose labels are complete
+    total: int
+    partial: list[str]  # labels paths of partly labelled files on the Hub
 
 
 def publish(
@@ -55,17 +87,21 @@ def publish(
     fp = config.GENERATION_FP
     out = store.path(f"publish/{dataset}")
     done = {r["path"] for r in store.read_jsonl(f"published/{dataset}.jsonl")}
+    resolved_before = {r["path"]: r["resolved"] for r in store.read_jsonl(partial_ledger(dataset))}
     if not dry_run:
         hub.ensure_dataset(repo)
         _mirror(store, dataset, input_repo=source.repo_id, revision=revision, repo=repo, done=done)
     resolved = ResolutionIndex(store.path(f"index/resolve-{fp}.sqlite"))
     resolved.build(canonical_generations(store, fp))
+    ctx = _Ctx(dataset, revision, fp, out, resolved)
     db = sqlite3.connect(store.path(f"index/{dataset}.sqlite"))
     indexed = db.execute("SELECT idx, path FROM files WHERE done = 1 ORDER BY idx").fetchall()
     files = [p for _, p in indexed]
     first_file = dict(zip(files, [i for i, _ in indexed], strict=True))
     new: list[tuple[Path, str]] = []
     new_shas: set[str] = set()
+    partial_new: list[tuple[Path, str]] = []
+    partial_resolved: dict[str, int] = {}
     for path in files:
         target = f"labels/{path}"
         if target in done:
@@ -74,26 +110,13 @@ def publish(
         try:
             build_labels(dataset, path, local, resolved=resolved, fp=fp, revision=revision, out=out)
         except MissingGenerationError:
+            known = _build_partial(ctx, path, local, last=resolved_before.get(target, 0))
+            if known is not None:
+                partial_new += [(out / target, target), (out / f"viewer/{path}", f"viewer/{path}")]
+                partial_resolved[target] = known
             continue
-        table = pq.read_table(out / target, columns=["text_sha256", "generation_id"])
-        # A generation ships with the file where its text first appears (the planner index
-        # records that file), so repeated texts are never uploaded twice.
-        owned = {
-            sha
-            for (sha,) in db.execute(
-                "SELECT sha FROM texts WHERE file_idx = ?", (first_file[path],)
-            )
-        }
-        new_shas.update(
-            s
-            for s, g in zip(
-                *[table.column(c).to_pylist() for c in ("text_sha256", "generation_id")],
-                strict=True,
-            )
-            if g and s in owned
-        )
-        new.append((out / target, target))
-        new.append((out / f"viewer/{path}", f"viewer/{path}"))
+        new_shas |= _owned_generations(db, first_file[path], out / target)
+        new += [(out / target, target), (out / f"viewer/{path}", f"viewer/{path}")]
     new += _missing_viewers(dataset, files, done, revision, resolved=resolved, out=out)
     if new_shas:
         batch = len(list(store.read_jsonl(f"published/{dataset}.jsonl")))
@@ -103,24 +126,88 @@ def publish(
             (p, f"generations/{fp}/batch-{batch:05d}-{p.name}")
             for p in sorted((gen_dir / "generations" / fp).glob("*.parquet"))
         ]
-    labelled = len([p for p in files if f"labels/{p}" in done]) + sum(
-        1 for _, d in new if d.startswith("labels/")
-    )
+    completed = {d for _, d in new if d.startswith("labels/")}
+    labelled = len([p for p in files if f"labels/{p}" in done]) + len(completed)
+    partial_paths = (set(resolved_before) | set(partial_resolved)) - done - completed
     decisions = _decision_counts(out)
     if not dry_run:
-        if new:
-            hub.upload(repo, new, f"Add land-use labels ({fp})")
-            store.append_jsonl(f"published/{dataset}.jsonl", [{"path": d} for _, d in new])
-        decisions = _refresh_card(
+        decisions = _upload(
             store,
-            dataset,
-            repo=repo,
-            revision=revision,
-            local={d: src for src, d in new},
-            labelled=labelled,
-            total=len(files),
+            (dataset, repo, revision),
+            new,
+            partial_new,
+            partial_resolved=partial_resolved,
+            coverage=Coverage(labelled, len(files), sorted(partial_paths)),
         )
-    return PublishReport(labelled, len(files), len(new), decisions)
+    return PublishReport(labelled, len(files), len(new), decisions, len(partial_paths))
+
+
+def _upload(
+    store: WorkStore,
+    target: tuple[str, str, str],
+    new: list[tuple[Path, str]],
+    partial_new: list[tuple[Path, str]],
+    *,
+    partial_resolved: dict[str, int],
+    coverage: Coverage,
+) -> dict[str, int]:
+    """Upload the new tables, record them in the ledgers and refresh the card."""
+    dataset, repo, revision = target
+    if new or partial_new:
+        hub.upload(repo, [*new, *partial_new], f"Add land-use labels ({config.GENERATION_FP})")
+        store.append_jsonl(f"published/{dataset}.jsonl", [{"path": d} for _, d in new])
+        store.append_jsonl(
+            partial_ledger(dataset),
+            [{"path": p, "resolved": n} for p, n in partial_resolved.items()],
+        )
+    return _refresh_card(
+        store,
+        dataset,
+        repo=repo,
+        revision=revision,
+        local={d: src for src, d in [*new, *partial_new]},
+        coverage=coverage,
+    )
+
+
+def _owned_generations(db: sqlite3.Connection, file_idx: int, labels: Path) -> set[str]:
+    """Generated texts whose generation ships with this file: those that first appear in it
+    (the planner index records that file), so repeated texts are never uploaded twice."""
+    table = pq.read_table(labels, columns=["text_sha256", "generation_id"])
+    owned = {sha for (sha,) in db.execute("SELECT sha FROM texts WHERE file_idx = ?", (file_idx,))}
+    return {
+        s
+        for s, g in zip(
+            table.column("text_sha256").to_pylist(),
+            table.column("generation_id").to_pylist(),
+            strict=True,
+        )
+        if g and s in owned
+    }
+
+
+def _build_partial(ctx: _Ctx, path: str, local: Path, *, last: int) -> int | None:
+    """Build the partial tables of a file; ``None`` (and nothing left in ``out``) if it has
+    not gained :data:`PARTIAL_STEP` of its sentences since the last partial upload."""
+    build_labels(
+        ctx.dataset,
+        path,
+        local,
+        resolved=ctx.resolved,
+        fp=ctx.fp,
+        revision=ctx.revision,
+        out=ctx.out,
+        allow_pending=True,
+    )
+    decisions = pq.read_table(ctx.out / "labels" / path, columns=["decision"]).column("decision")
+    decisions = decisions.to_pylist()
+    known = sum(d not in (PENDING, "skipped_unsplit") for d in decisions)
+    sendable = sum(d != "skipped_unsplit" for d in decisions)
+    if known - last >= max(1, math.ceil(PARTIAL_STEP * sendable)):
+        return known
+    (ctx.out / "labels" / path).unlink()
+    (ctx.out / "viewer" / path).unlink()
+    return None
 
 
 def _missing_viewers(
@@ -177,8 +264,7 @@ def _refresh_card(
     repo: str,
     revision: str,
     local: dict[str, Path],
-    labelled: int,
-    total: int,
+    coverage: Coverage,
 ) -> dict[str, int]:
     """Recount the card's numbers from every published file, then update the card."""
     on_hub = {r["path"] for r in store.read_jsonl(f"published/{dataset}.jsonl")}
@@ -186,9 +272,10 @@ def _refresh_card(
         published_stats.complete(
             store,
             dataset,
-            on_hub | set(local),
+            on_hub | set(coverage.partial) | set(local),
             lambda p: local[p] if p in local else hub.open_file(repo, p),
             _locator(dataset, revision),
+            refresh=set(local),  # uploaded now: a partial record of the same path is stale
         )
     )
     if stats["decisions"]:
@@ -197,8 +284,7 @@ def _refresh_card(
             dataset,
             repo=repo,
             revision=revision,
-            labelled=labelled,
-            total=total,
+            coverage=coverage,
             stats=stats,
         )
     return stats["decisions"]
@@ -257,8 +343,7 @@ def _card(
     *,
     repo: str,
     revision: str,
-    labelled: int,
-    total: int,
+    coverage: Coverage,
     stats: dict,
 ) -> None:
     cfg = config.reference_config()
@@ -277,14 +362,15 @@ def _card(
             draft=cfg["draft"],
             max_new_tokens=cfg["sampling"]["max_new_tokens"],
             fingerprint=config.GENERATION_FP,
-            labelled_files=labelled,
-            total_files=total,
+            labelled_files=coverage.labelled,
+            total_files=coverage.total,
             decisions=stats["decisions"],
             failures=stats["failures"],
             unique_texts=stats["unique_texts"],
             gpu_rows=stats["gpus"],
             admitted=admitted,
             world_map=world_map,
+            partial_files=len(coverage.partial),
         )
     )
     files = [("README.md", text.encode())]

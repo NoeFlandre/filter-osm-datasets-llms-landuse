@@ -32,6 +32,7 @@ LABEL_FIELDS = [
 ]
 
 VIEWER_COLUMNS = ["sentence", "label", "language", "region"]  # what a dataset-viewer reader needs
+PENDING = "pending"  # a sentence of a partly labelled file whose text has no generation yet
 
 JOIN_KEYS = {
     "osm-polygon-description-tag": [
@@ -68,7 +69,15 @@ class MissingGenerationError(LookupError):
     """A non-skipped sentence has no generation yet: the file is not publishable."""
 
 
-def label_rows(refs: Iterable[SentenceRef], resolved: Lookup, fp: str, revision: str) -> list[dict]:
+def label_rows(
+    refs: Iterable[SentenceRef],
+    resolved: Lookup,
+    fp: str,
+    revision: str,
+    *,
+    allow_pending: bool = False,
+) -> list[dict]:
+    """One row per sentence; with ``allow_pending`` an unresolved text becomes ``pending``."""
     rows = []
     for ref in refs:
         keys = dict(ref.locator)
@@ -92,6 +101,17 @@ def label_rows(refs: Iterable[SentenceRef], resolved: Lookup, fp: str, revision:
             )
             continue
         r = resolved.get(ref.text_sha256)
+        if r is None and allow_pending:
+            rows.append(
+                {
+                    **base,
+                    "decision": PENDING,
+                    "parse_mode": None,
+                    "failure_reason": None,
+                    "generation_id": None,
+                }
+            )
+            continue
         if r is None:
             raise MissingGenerationError(ref.text_sha256)
         r = Resolved(*r)
@@ -129,7 +149,7 @@ def _write_viewer(out: Path, input_path: str, refs: list[SentenceRef], rows: lis
     write_atomic(out / "viewer" / input_path, table_bytes(table))
 
 
-def build_labels(
+def build_labels(  # noqa: PLR0913 - one call builds both tables of a file
     dataset: str,
     input_path: str,
     local: Path,
@@ -138,13 +158,15 @@ def build_labels(
     fp: str,
     revision: str,
     out: Path,
+    allow_pending: bool = False,
 ) -> int:
     """Write ``out/labels/<input_path>`` and its ``out/viewer/<input_path>`` companion.
 
-    Raises ``MissingGenerationError`` if any text is unresolved.
+    Raises ``MissingGenerationError`` if any text is unresolved, unless ``allow_pending``
+    (partial publication: those sentences are labelled ``pending``).
     """
     refs = list(SOURCES[dataset].read(local, input_path))
-    rows = label_rows(refs, resolved, fp, revision)
+    rows = label_rows(refs, resolved, fp, revision, allow_pending=allow_pending)
     table = labels_table(dataset, rows)
     write_atomic(out / "labels" / input_path, table_bytes(table))
     _write_viewer(out, input_path, refs, rows)
