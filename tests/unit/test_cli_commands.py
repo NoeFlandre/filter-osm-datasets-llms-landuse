@@ -321,20 +321,18 @@ def test_node_plan_and_replan_use_the_default_bucket_and_chunk_size(monkeypatch,
     monkeypatch.setattr(
         node_cli,
         "_plan_inputs",
-        lambda dataset, revision, chunk_size: {
-            "chunk_size": chunk_size,
-            "rev": revision,
-            "fetch": "F",
-        },
+        lambda dataset, revision, chunk_size: SimpleNamespace(
+            chunk_size=chunk_size, rev=revision, fetch="F"
+        ),
     )
     seen = {}
 
-    def fake_plan(rem, scratch, dataset, fp, **kw):
-        seen["plan"] = (rem, dataset, kw["chunk_size"], kw["rev"], kw["should_stop"]())
+    def fake_plan(rem, scratch, dataset, fp, inputs, **kw):
+        seen["plan"] = (rem, dataset, inputs.chunk_size, inputs.rev, kw["should_stop"]())
         return {"ok": "plan"}
 
-    def fake_replan(rem, scratch, dataset, fp, **kw):
-        seen["replan"] = (rem, dataset, kw["chunk_size"], kw["locate"])
+    def fake_replan(rem, scratch, dataset, fp, inputs, **kw):
+        seen["replan"] = (rem, dataset, inputs.chunk_size, kw["locate"])
         return {"ok": "replan"}
 
     monkeypatch.setattr(remote_plan, "run_plan", fake_plan)
