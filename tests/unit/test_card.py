@@ -152,3 +152,13 @@ def test_wiki_map_section_says_how_sentences_are_placed():
         )
     )
     assert "first linked polygon" in card
+
+
+def test_generations_config_and_count_only_when_generations_are_published():
+    import dataclasses
+
+    none = render_card(dataclasses.replace(facts(), unique_texts=0, gpu_rows={}, admitted={}))
+    assert "config_name: generations" not in none  # an empty glob breaks the Hub viewer config
+    assert "0 unique texts" not in none
+    assert "generations are published with each completed input file" in none
+    assert "config_name: generations" in render_card(facts())
