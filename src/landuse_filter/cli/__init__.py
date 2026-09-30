@@ -6,14 +6,13 @@ Exit codes: 0 ok, 1 failure, 2 usage error, 3 gate failed, 4 nothing to do,
 
 import hashlib
 import json
-import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import typer
 
-from landuse_filter import __version__
+from landuse_filter import __version__, config
 from landuse_filter.adapters.settings_file import load as load_settings
 
 OPS = load_settings()  # luf.toml (or $LUF_CONFIG): sites, bucket, walltimes, caps
@@ -47,7 +46,7 @@ app.add_typer(node_app, name="node")
 PROMPT = Path(__file__).resolve().parents[3] / "data" / "prompt.txt"
 
 
-WORK = typer.Option(Path(os.environ.get("LUF_WORK", "work")), "--work", help="Local work tree.")
+WORK = typer.Option(config.work_dir(), "--work", help="Local work tree.")
 
 
 JSON_OUT = typer.Option(False, "--json", help="Machine-readable output.")
@@ -86,8 +85,6 @@ def version() -> None:
 @app.command()
 def fingerprint(as_json: bool = JSON_OUT) -> None:
     """Show the production generation fingerprint and serving config."""
-    from landuse_filter import config
-
     _emit(
         {"config_fingerprint": config.GENERATION_FP, "config": config.reference_config()}, as_json
     )

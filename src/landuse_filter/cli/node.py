@@ -1,12 +1,11 @@
 """`luf node` commands."""
 
 import json
-import os
-from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any
 
 import typer
 
+from landuse_filter import config
 from landuse_filter.cli import (
     OPS,
     _store,
@@ -14,8 +13,22 @@ from landuse_filter.cli import (
     node_app,
 )
 
-if TYPE_CHECKING:
-    pass
+
+def _plan_inputs(dataset: str, revision: str, chunk_size: int) -> dict[str, Any]:
+    """Keyword arguments shared by ``run_plan`` and ``run_replan``."""
+    from landuse_filter.adapters.readers import SOURCES
+    from landuse_filter.adapters.tokenizer import chat_encoder
+    from landuse_filter.application.plan import download, list_input_files
+
+    source = SOURCES[dataset]
+    return {
+        "files": list_input_files(source, revision),
+        "fetch": lambda path: download(source, path, revision),
+        "encode": chat_encoder(config.MODEL_ID, config.MODEL_REVISION),
+        "template": _template(),
+        "chunk_size": chunk_size,
+        "forget": lambda p: p.resolve().unlink(missing_ok=True),
+    }
 
 
 @node_app.command("run")
@@ -38,30 +51,20 @@ def node_plan(
     """Scan a dataset on this node's scratch and publish chunks to the bucket."""
     import signal
 
-    from landuse_filter import config
-    from landuse_filter.adapters.readers import SOURCES
     from landuse_filter.adapters.remote import BucketRemote
-    from landuse_filter.adapters.tokenizer import chat_encoder
-    from landuse_filter.application.plan import download, list_input_files
     from landuse_filter.application.remote_plan import run_plan
 
     stop = {"requested": False}
     for sig in (signal.SIGTERM, signal.SIGUSR2):
         signal.signal(sig, lambda *_: stop.update(requested=True))
-    source = SOURCES[dataset]
-    scratch = _store(Path(os.environ.get("LUF_SCRATCH", "/tmp/luf-scratch")))  # noqa: S108
+    scratch = _store(config.scratch_dir())
     report = run_plan(
         BucketRemote(bucket),
         scratch,
         dataset,
         config.GENERATION_FP,
-        files=list_input_files(source, revision),
-        fetch=lambda path: download(source, path, revision),
-        encode=chat_encoder(config.MODEL_ID, config.MODEL_REVISION),
-        template=_template(),
-        chunk_size=chunk_size,
+        **_plan_inputs(dataset, revision, chunk_size),
         should_stop=lambda: stop["requested"],
-        forget=lambda p: p.resolve().unlink(missing_ok=True),
     )
     typer.echo(json.dumps(report))
 
@@ -74,29 +77,20 @@ def node_replan(
     chunk_size: int = typer.Option(2000, min=1),
 ) -> None:
     """Plan every not-yet-generated text again, round-robin over H3 cells (ADR-0014)."""
-    from landuse_filter import config
     from landuse_filter.adapters.hexmap import cell_of
-    from landuse_filter.adapters.readers import SOURCES
     from landuse_filter.adapters.remote import BucketRemote
-    from landuse_filter.adapters.tokenizer import chat_encoder
     from landuse_filter.application.locate import locator
-    from landuse_filter.application.plan import download, list_input_files
     from landuse_filter.application.remote_plan import run_replan
 
-    source = SOURCES[dataset]
-    scratch = _store(Path(os.environ.get("LUF_SCRATCH", "/tmp/luf-scratch")))  # noqa: S108
+    inputs = _plan_inputs(dataset, revision, chunk_size)
+    scratch = _store(config.scratch_dir())
     report = run_replan(
         BucketRemote(bucket),
         scratch,
         dataset,
         config.GENERATION_FP,
-        files=list_input_files(source, revision),
-        fetch=lambda path: download(source, path, revision),
-        locate=locator(dataset, lambda path: download(source, path, revision), cell_of),
-        encode=chat_encoder(config.MODEL_ID, config.MODEL_REVISION),
-        template=_template(),
-        chunk_size=chunk_size,
-        forget=lambda p: p.resolve().unlink(missing_ok=True),
+        **inputs,
+        locate=locator(dataset, inputs["fetch"], cell_of),
     )
     typer.echo(json.dumps(report))
 
@@ -111,7 +105,6 @@ def node_calibrate(
     """Sweep concurrency on this GPU; write a candidate profile (speed only)."""
     from dataclasses import asdict
 
-    from landuse_filter import config
     from landuse_filter.adapters.engine import SGLangEngine
     from landuse_filter.adapters.remote import BucketRemote
     from landuse_filter.application.calibrate import best, sweep
@@ -120,7 +113,7 @@ def node_calibrate(
     from landuse_filter.domain.gpu import gpu_key
 
     levels = [int(w) for w in windows.split(",")]
-    scratch = _store(Path(os.environ.get("LUF_SCRATCH", "/tmp/luf-scratch")))  # noqa: S108
+    scratch = _store(config.scratch_dir())
     remote = BucketRemote(bucket)
     fetch(remote, scratch, [f"chunks/{chunk}.parquet"])
     prompts = scratch.read_chunk(chunk).column("input_ids").to_pylist()[:max_prompts]
@@ -172,11 +165,10 @@ def node_publish(
     """Build and upload the -landuse dataset on this node's scratch."""
     from dataclasses import asdict
 
-    from landuse_filter import config
     from landuse_filter.adapters.remote import BucketRemote
     from landuse_filter.application.remote_publish import run_publish
 
-    scratch = _store(Path(os.environ.get("LUF_SCRATCH", "/tmp/luf-scratch")))  # noqa: S108
+    scratch = _store(config.scratch_dir())
     report = run_publish(BucketRemote(bucket), scratch, dataset, revision, config.GENERATION_FP)
     typer.echo(json.dumps(asdict(report)))
 
@@ -199,7 +191,7 @@ def node_repair(
     paths = sorted(p for p in hub.remote_files(repo) if p.startswith("generations/"))
     local = {p: hub.download_all(repo, "main", [p])[0][0] for p in paths}
     by_local = {path: repo_path for repo_path, path in local.items()}
-    scratch = _store(Path(os.environ.get("LUF_SCRATCH", "/tmp/luf-scratch")))  # noqa: S108
+    scratch = _store(config.scratch_dir())
     changed = dedupe_generations(list(local.values()))
     rewrites, deletions = [], []
     for path, table in changed.items():

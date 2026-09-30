@@ -5,9 +5,9 @@ import os
 import signal
 import socket
 import time
-from pathlib import Path
 from typing import TYPE_CHECKING
 
+from landuse_filter import config
 from landuse_filter.adapters.store import WorkStore
 
 if TYPE_CHECKING:
@@ -50,8 +50,7 @@ def workspace(assignment: dict) -> tuple[WorkStore, "BucketRemote"]:
     from landuse_filter.adapters.remote import BucketRemote
     from landuse_filter.application.sync import fetch, fetch_manifests
 
-    default = "/tmp/luf-scratch"  # noqa: S108 - node-local scratch, set per job by node_job.sh
-    scratch = WorkStore(Path(os.environ.get("LUF_SCRATCH", default)))
+    scratch = WorkStore(config.scratch_dir())
     remote = BucketRemote(bucket)
     fetch(remote, scratch, [f"chunks/{c}.parquet" for c in assignment["chunks"]])
     for chunk in assignment["chunks"]:
@@ -62,7 +61,7 @@ def workspace(assignment: dict) -> tuple[WorkStore, "BucketRemote"]:
 def run(assignment_id: str) -> int:
     from landuse_filter.adapters.engine import SGLangEngine
 
-    spool = WorkStore(Path(os.environ.get("LUF_WORK", "work")))
+    spool = WorkStore(config.work_dir())
     assignment = spool.read_json(f"assignments/{assignment_id}.json")
     store, remote = workspace(assignment)
     spec = detect_gpu()
