@@ -109,6 +109,14 @@ def _failure_table(failures: Mapping[str, int]) -> str:
     )
 
 
+def _generations_config(f: CardFacts) -> str:
+    """The `generations` config only once a generations file exists: an empty glob makes the
+    Hub's dataset viewer fail that config (seen on the first partial website publish)."""
+    if not f.unique_texts:
+        return ""
+    return '- config_name: generations\n  data_files: "generations/**/*.parquet"\n'
+
+
 def _front_matter(f: CardFacts, status: str) -> str:
     return f"""---
 license: odbl
@@ -123,10 +131,14 @@ configs:
   data_files: "viewer/**/*.parquet"
 - config_name: labels
   data_files: "labels/**/*.parquet"
-- config_name: generations
-  data_files: "generations/**/*.parquet"
----
+{_generations_config(f)}---
 """
+
+
+def _texts_clause(f: CardFacts) -> str:
+    if f.unique_texts:
+        return f"{f.unique_texts:,} unique texts sent to the model"
+    return "generations are published with each completed input file"
 
 
 def _files_line(f: CardFacts) -> str:
@@ -143,7 +155,7 @@ def _intro(f: CardFacts, status: str, total: int) -> str:
 
 A land-use / land-cover relevance label for every sentence of [`NoeFlandre/{f.dataset}`](https://huggingface.co/datasets/NoeFlandre/{f.dataset}) (revision `{f.revision[:7]}`). The input is mirrored here unchanged; labels and model outputs are separate tables that join back to it.
 
-**{status.replace("_", " ").capitalize()}: {_files_line(f)}, {total:,} rows, {f.unique_texts:,} unique texts sent to the model.**
+**{status.replace("_", " ").capitalize()}: {_files_line(f)}, {total:,} rows, {_texts_clause(f)}.**
 
 | `decision` | Rows | Share | Meaning |
 |---|---:|---:|---|
