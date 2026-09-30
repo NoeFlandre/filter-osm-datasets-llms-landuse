@@ -24,17 +24,25 @@ def _rate(store: WorkStore, gpu: str) -> float:
     )
 
 
+def _totals(rows: dict[str, dict], complete: set[str]) -> tuple[int, int]:
+    """Texts planned and texts whose chunk is complete."""
+    done = sum(r["size"] for cid, r in rows.items() if cid in complete)
+    return sum(r["size"] for r in rows.values()), done
+
+
+def _rounded_hours(hours: float | None) -> float | None:
+    return None if hours is None else round(hours, 1)
+
+
 def _dataset_status(
     store: WorkStore, dataset: str, complete: set[str], live: list[Assignment]
 ) -> dict:
     rows = {
         r["chunk_id"]: r for r in store.read_jsonl(f"plans/{dataset}/{GENERATION_FP}/chunks.jsonl")
     }
-    done = sum(r["size"] for cid, r in rows.items() if cid in complete)
-    texts = sum(r["size"] for r in rows.values())
+    texts, done = _totals(rows, complete)
     mine = [a for a in live if set(a.chunks) & rows.keys()]
     estimate = eta(texts - done, [_rate(store, a.gpu) for a in mine])
-    hours = estimate.hours
     return {
         "chunks": len(rows),
         "chunks_complete": sum(c in complete for c in rows),
@@ -42,7 +50,7 @@ def _dataset_status(
         "texts_complete": done,
         "live_jobs": len(mine),
         "sentences_per_second": round(estimate.sentences_per_second, 2),
-        "eta_hours": None if hours is None else round(hours, 1),
+        "eta_hours": _rounded_hours(estimate.hours),
     }
 
 
@@ -53,19 +61,26 @@ def _throughput_by_gpu(jobs: list[dict]) -> dict[str, float]:
     return {g: round(sum(v) / len(v), 3) for g, v in by_gpu.items()}
 
 
+def _live(assignments: list[Assignment]) -> list[Assignment]:
+    """Jobs of the current configuration that are queued or running."""
+    return [
+        a for a in assignments if a.state in ("submitting", "submitted") and a.fp == GENERATION_FP
+    ]
+
+
+def _alerts(jobs: list[dict]) -> list[str]:
+    return alerts(sum(j.get("completed", 0) for j in jobs), sum(j.get("failed", 0) for j in jobs))
+
+
 def summarize(store: WorkStore, datasets: list[str]) -> dict:
     complete = {r["chunk_id"] for r in store.read_jsonl("complete.jsonl")}
     assignments = [Assignment.from_json(d) for d in _json_files(store, "assignments/*.json")]
-    live = [
-        a for a in assignments if a.state in ("submitting", "submitted") and a.fp == GENERATION_FP
-    ]
+    live = _live(assignments)
     jobs = _json_files(store, "jobs/*/*.json")
     return {
         "config_fingerprint": GENERATION_FP,
         **{d: _dataset_status(store, d, complete, live) for d in datasets},
         "assignments": dict(Counter(a.state for a in assignments)),
         "throughput_by_gpu": _throughput_by_gpu(jobs),
-        "alerts": alerts(
-            sum(j.get("completed", 0) for j in jobs), sum(j.get("failed", 0) for j in jobs)
-        ),
+        "alerts": _alerts(jobs),
     }

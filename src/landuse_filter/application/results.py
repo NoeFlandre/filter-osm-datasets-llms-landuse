@@ -37,13 +37,26 @@ def decisions_by_sha(store: WorkStore, fp: str) -> dict[str, str | None]:
     return out
 
 
+def _link_local_parts(local: WorkStore, merged: WorkStore, fp: str) -> None:
+    """Hard-link the local parts into the merged tree (no copy of the generations)."""
+    import os
+
+    for path in local.part_paths(fp):
+        target = merged.path(str(path.relative_to(local.root)))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.link(path, target)
+
+
+def _missing_remote_parts(remote: "Remote", merged: WorkStore, fp: str) -> list[str]:
+    return [p for p in remote.ls(f"parts/{fp}/") if p.endswith(".parquet") and not merged.exists(p)]
+
+
 def gathered_decisions(local: WorkStore, remote: "Remote | None", fp: str) -> dict[str, str | None]:
     """Decisions for namespace ``fp`` from local parts plus the bucket's, in a temp tree.
 
     Bucket parts are downloaded to a temporary directory (deleted afterwards), so the
     controller machine never keeps generations (scarce SSD).
     """
-    import os
     import shutil
     import tempfile
     from pathlib import Path
@@ -51,16 +64,9 @@ def gathered_decisions(local: WorkStore, remote: "Remote | None", fp: str) -> di
     tmp = Path(tempfile.mkdtemp(prefix="luf-gate-"))
     try:
         merged = WorkStore(tmp)
-        for path in local.part_paths(fp):
-            target = merged.path(str(path.relative_to(local.root)))
-            target.parent.mkdir(parents=True, exist_ok=True)
-            os.link(path, target)
+        _link_local_parts(local, merged, fp)
         if remote is not None:
-            wanted = [
-                p
-                for p in remote.ls(f"parts/{fp}/")
-                if p.endswith(".parquet") and not merged.exists(p)
-            ]
+            wanted = _missing_remote_parts(remote, merged, fp)
             remote.get([(p, merged.path(p)) for p in wanted])
         return decisions_by_sha(merged, fp)
     finally:

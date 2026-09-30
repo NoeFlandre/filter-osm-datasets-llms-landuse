@@ -3,6 +3,8 @@ SHELL := bash
 .SHELLFLAGS := -eo pipefail -c
 RUN := $(UV) run --no-sync
 HYPOTHESIS_PROFILE ?= ci
+# Application modules under mutation testing and CRAP (keep in step with [tool.mutmut] source_paths).
+PURE_APPLICATION := assignment plan repair results status
 
 .PHONY: help install baseline lint format types test property acceptance architecture crap mutation smoke docs-build gauntlet
 
@@ -40,8 +42,8 @@ architecture:  ## Dependency boundaries (AST test + import-linter)
 	$(RUN) pytest tests/architecture
 	$(RUN) lint-imports
 
-crap: test  ## CRAP < 6 on the domain
-	$(RUN) python scripts/crap.py --limit src/landuse_filter/domain=6 --allowlist scripts/crap-allowlist.json
+crap: test  ## CRAP < 6 on the domain and the pure application modules
+	$(RUN) python scripts/crap.py --limit src/landuse_filter/domain=6 $(foreach m,$(PURE_APPLICATION),--limit src/landuse_filter/application/$(m).py=6) --allowlist scripts/crap-allowlist.json
 
 mutation:  ## Mutation testing gated on reviewed survivors
 	$(RUN) mutmut run --max-children 4 || true

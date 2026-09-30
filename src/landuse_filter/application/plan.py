@@ -20,7 +20,7 @@ import pyarrow as pa
 from landuse_filter.adapters.readers import DATASET_RANK, SOURCES, Source
 from landuse_filter.adapters.schema import CHUNK
 from landuse_filter.adapters.store import WorkStore
-from landuse_filter.domain.planning import UniqueText, plan_chunks
+from landuse_filter.domain.planning import Chunk, UniqueText, plan_chunks
 from landuse_filter.domain.prompting import render_prompt
 
 # Batch tokeniser: prompts -> token ids, same order (fast path, see adapters.tokenizer).
@@ -65,6 +65,27 @@ def download(source: Source, path: str, revision: str) -> Path:
     from huggingface_hub import hf_hub_download
 
     return Path(hf_hub_download(source.repo_id, path, repo_type="dataset", revision=revision))
+
+
+def _chunk_table(chunk: Chunk, ids: dict[str, list[int]], text_of: dict[str, str]) -> pa.Table:
+    shas = list(chunk.text_sha256s)
+    return pa.table(
+        {
+            "text_sha256": shas,
+            "text": [text_of[s] for s in shas],
+            "input_ids": [ids[s] for s in shas],
+        },
+        schema=CHUNK,
+    )
+
+
+def _plan_line(chunk: Chunk, texts: list[UniqueText]) -> dict:
+    return {
+        "chunk_id": chunk.chunk_id,
+        "order": list(chunk.order),
+        "size": len(texts),
+        "prompt_tokens": sum(t.prompt_tokens for t in texts),
+    }
 
 
 class Planner:
@@ -220,26 +241,11 @@ class Planner:
         rank = DATASET_RANK[self.source.dataset]
         texts = [UniqueText(sha, len(ids[sha]), (rank, idx)) for sha, _, idx in rows]
         (chunk,) = plan_chunks(texts, self.fp, chunk_size)
-        text_of = {sha: text for sha, text, _ in rows}
-        table = pa.table(
-            {
-                "text_sha256": list(chunk.text_sha256s),
-                "text": [text_of[s] for s in chunk.text_sha256s],
-                "input_ids": [ids[s] for s in chunk.text_sha256s],
-            },
-            schema=CHUNK,
-        )
+        table = _chunk_table(chunk, ids, {sha: text for sha, text, _ in rows})
         self.store.write_chunk(chunk.chunk_id, table)
         self.store.append_jsonl(
             f"plans/{self.source.dataset}/{self.fp}/chunks.jsonl",
-            [
-                {
-                    "chunk_id": chunk.chunk_id,
-                    "order": list(chunk.order),
-                    "size": len(rows),
-                    "prompt_tokens": sum(t.prompt_tokens for t in texts),
-                }
-            ],
+            [_plan_line(chunk, texts)],
         )
         with self.db:
             self.db.executemany(
