@@ -68,3 +68,72 @@ def test_rank_keeps_slots_with_less_than_one_useful_sentence():
 def test_assign_budget_is_capacity_times_overflow():
     pending = [("a", 10), ("b", 10), ("c", 10)]
     assert assign_chunks(pending, set(), capacity=10, overflow=2.0) == ["a", "b"]
+
+
+def _slot_args(**over):
+    from datetime import timedelta
+
+    base = {
+        "site": "lyon",
+        "cluster": "sirius",
+        "gpu": "A100",
+        "free": 3,
+        "walltime": timedelta(minutes=30),
+        "job_type": None,
+        "sentences_per_second": 8.0,
+        "besteffort": False,
+        "queue_room": True,
+        "queued_wait": timedelta(hours=1),
+    }
+    return {**base, **over}
+
+
+def test_a_free_gpu_makes_an_immediate_slot_with_all_free_nodes():
+    from datetime import timedelta
+
+    from landuse_filter.domain.scheduling import Slot, slot_for
+
+    assert slot_for(**_slot_args(free=3, job_type="night")) == Slot(
+        "lyon", "sirius", "A100", 1, 3, timedelta(0), timedelta(minutes=30), "night", 8.0
+    )
+
+
+def test_no_free_gpu_makes_a_queued_slot_only_if_the_site_has_queue_room():
+    from datetime import timedelta
+
+    from landuse_filter.domain.scheduling import Slot, slot_for
+
+    assert slot_for(**_slot_args(free=0)) == Slot(
+        "lyon",
+        "sirius",
+        "A100",
+        1,
+        1,
+        timedelta(hours=1),
+        timedelta(minutes=30),
+        None,
+        8.0,
+        queued=True,
+    )
+    assert slot_for(**_slot_args(free=0, queue_room=False)) is None
+
+
+def test_besteffort_only_clusters_never_queue():
+    from landuse_filter.domain.scheduling import slot_for
+
+    assert slot_for(**_slot_args(free=0, besteffort=True)) is None
+    slot = slot_for(**_slot_args(free=2, besteffort=True))
+    assert (slot.free_nodes, slot.besteffort, slot.queued) == (2, True, False)
+
+
+def test_no_walltime_means_no_slot():
+    from landuse_filter.domain.scheduling import slot_for
+
+    assert slot_for(**_slot_args(walltime=None)) is None
+
+
+def test_exactly_one_free_gpu_is_a_free_slot_not_a_queued_one():
+    from landuse_filter.domain.scheduling import slot_for
+
+    slot = slot_for(**_slot_args(free=1))
+    assert (slot.free_nodes, slot.queued, slot.wait.total_seconds()) == (1, False, 0)
