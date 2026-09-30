@@ -130,42 +130,7 @@ def _failure_table(failures: Mapping[str, int]) -> str:
     )
 
 
-def render_card(f: CardFacts) -> str:
-    status = "complete" if f.labelled_files == f.total_files else "in_progress"
-    source, using, keys = JOINS[f.dataset]
-    total = sum(f.decisions.values())
-    generated = sum(f.gpu_rows.values())
-    used = sorted(g for g in f.gpu_rows if g in f.admitted)
-    gates = "\n".join(
-        _gate_row(g, f.gpu_rows[g], f.gpu_rows[g] / generated, f.admitted[g]) for g in used
-    )
-    failed_section = (
-        f"""
-### Failed rows
-
-{sum(f.failures.values()):,} rows ({f.decisions.get("failed", 0) / total:.1%} of all rows) have no
-usable answer. Reasons:
-
-| `failure_reason` | Rows | Share | Meaning |
-|---|---:|---:|---|
-{_failure_table(f.failures)}
-"""
-        if f.failures
-        else ""
-    )
-    extra_license = f"\n{TEXT_LICENSE[f.dataset]}" if f.dataset in TEXT_LICENSE else ""
-    files_line = (
-        f"{f.labelled_files:,} of {f.total_files:,} input files fully labelled, "
-        f"{f.partial_files:,} more partially"
-        if f.partial_files
-        else f"{f.labelled_files:,} of {f.total_files:,} input files labelled"
-    )
-    partial_note = (
-        "\n* `pending` rows belong to partly labelled files; their labels are refreshed as the "
-        "model works, and the `generations/` rows of a file are published once the file is complete."
-        if f.partial_files
-        else ""
-    )
+def _front_matter(f: CardFacts, status: str) -> str:
     return f"""---
 license: odbl
 pretty_name: {f.dataset} (land-use labels)
@@ -182,16 +147,55 @@ configs:
 - config_name: generations
   data_files: "generations/**/*.parquet"
 ---
-# {f.dataset}-landuse
+"""
+
+
+def _files_line(f: CardFacts) -> str:
+    if f.partial_files:
+        return (
+            f"{f.labelled_files:,} of {f.total_files:,} input files fully labelled, "
+            f"{f.partial_files:,} more partially"
+        )
+    return f"{f.labelled_files:,} of {f.total_files:,} input files labelled"
+
+
+def _intro(f: CardFacts, status: str, total: int) -> str:
+    return f"""# {f.dataset}-landuse
 
 A land-use / land-cover relevance label for every sentence of [`NoeFlandre/{f.dataset}`](https://huggingface.co/datasets/NoeFlandre/{f.dataset}) (revision `{f.revision[:7]}`). The input is mirrored here unchanged; labels and model outputs are separate tables that join back to it.
 
-**{status.replace("_", " ").capitalize()}: {files_line}, {total:,} rows, {f.unique_texts:,} unique texts sent to the model.**
+**{status.replace("_", " ").capitalize()}: {_files_line(f)}, {total:,} rows, {f.unique_texts:,} unique texts sent to the model.**
 
 | `decision` | Rows | Share | Meaning |
 |---|---:|---:|---|
 {_decision_table(f.decisions)}
-{failed_section}{_map_section(f.world_map)}
+"""
+
+
+def _failed_section(f: CardFacts, total: int) -> str:
+    if not f.failures:
+        return ""
+    return f"""
+### Failed rows
+
+{sum(f.failures.values()):,} rows ({f.decisions.get("failed", 0) / total:.1%} of all rows) have no
+usable answer. Reasons:
+
+| `failure_reason` | Rows | Share | Meaning |
+|---|---:|---:|---|
+{_failure_table(f.failures)}
+"""
+
+
+def _tables_section(f: CardFacts) -> str:
+    source, using, keys = JOINS[f.dataset]
+    partial_note = (
+        "\n* `pending` rows belong to partly labelled files; their labels are refreshed as the "
+        "model works, and the `generations/` rows of a file are published once the file is complete."
+        if f.partial_files
+        else ""
+    )
+    return f"""
 ## Tables
 
 * `viewer/<input path>.parquet` (the default view): `sentence`, `label`, `language` and `region` (the input file), nothing else.
@@ -204,11 +208,24 @@ FROM {_from(source)} i
 JOIN {_from(source, "labels/")} l {using}
 LEFT JOIN 'generations/*/*.parquet' g USING (generation_id);
 ```
+"""
 
+
+def _method_section(f: CardFacts) -> str:
+    return f"""
 ## Method
 
 {_ref(f.model)} with the speculative-decoding draft {_ref(f.draft)}, served with SGLang (BF16), greedy decoding, thinking mode, at most {f.max_new_tokens:,} new tokens. The prompt is the one of [`NoeFlandre/benchmark-llms-landuse-relevance`](https://huggingface.co/datasets/NoeFlandre/benchmark-llms-landuse-relevance).
+"""
 
+
+def _quality_section(f: CardFacts) -> str:
+    generated = sum(f.gpu_rows.values())
+    used = sorted(g for g in f.gpu_rows if g in f.admitted)
+    gates = "\n".join(
+        _gate_row(g, f.gpu_rows[g], f.gpu_rows[g] / generated, f.admitted[g]) for g in used
+    )
+    return f"""
 ## Quality
 
 Only GPU types that passed a pre-registered non-inferiority gate on the full 25,500-item benchmark generated labels. Differences are against the published reference run (one-sided 95 % lower bounds must stay above -0.02; failed-rate increase under +0.5 pp).
@@ -218,10 +235,30 @@ Only GPU types that passed a pre-registered non-inferiority gate on the full 25,
 {gates}
 
 Greedy decoding is not batch- or GPU-invariant: about 12 % of individual decisions would flip between two runs of the reference setup. The gate guarantees aggregate quality, not per-row reproducibility.
+"""
 
+
+def _license_section(f: CardFacts) -> str:
+    extra = f"\n{TEXT_LICENSE[f.dataset]}" if f.dataset in TEXT_LICENSE else ""
+    return f"""
 ## License and citation
 
-Labels: ODbL, like the OpenStreetMap-derived input.{extra_license}
+Labels: ODbL, like the OpenStreetMap-derived input.{extra}
 
 Code and configuration (fingerprint `{f.fingerprint}`): https://github.com/NoeFlandre/filter-osm-datasets-llms-landuse
 """
+
+
+def render_card(f: CardFacts) -> str:
+    status = "complete" if f.labelled_files == f.total_files else "in_progress"
+    total = sum(f.decisions.values())
+    return (
+        _front_matter(f, status)
+        + _intro(f, status, total)
+        + _failed_section(f, total)
+        + _map_section(f.world_map)
+        + _tables_section(f)
+        + _method_section(f)
+        + _quality_section(f)
+        + _license_section(f)
+    )
