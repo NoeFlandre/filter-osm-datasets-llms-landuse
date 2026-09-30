@@ -53,6 +53,13 @@ def generation_id(text_sha256: str, fp: str) -> str:
     return sha256_parts(text_sha256, fp)[:32]
 
 
+class Stamp(NamedTuple):
+    """Provenance written on every label row: the generation config and the input revision."""
+
+    fp: str
+    revision: str
+
+
 class Resolved(NamedTuple):
     decision: str
     mode: str | None
@@ -149,14 +156,13 @@ def _write_viewer(out: Path, input_path: str, refs: list[SentenceRef], rows: lis
     write_atomic(out / "viewer" / input_path, table_bytes(table))
 
 
-def build_labels(  # noqa: PLR0913 - one call builds both tables of a file
+def build_labels(
     dataset: str,
     input_path: str,
     local: Path,
     *,
     resolved: Lookup,
-    fp: str,
-    revision: str,
+    stamp: Stamp,
     out: Path,
     allow_pending: bool = False,
 ) -> int:
@@ -166,7 +172,7 @@ def build_labels(  # noqa: PLR0913 - one call builds both tables of a file
     (partial publication: those sentences are labelled ``pending``).
     """
     refs = list(SOURCES[dataset].read(local, input_path))
-    rows = label_rows(refs, resolved, fp, revision, allow_pending=allow_pending)
+    rows = label_rows(refs, resolved, stamp.fp, stamp.revision, allow_pending=allow_pending)
     table = labels_table(dataset, rows)
     write_atomic(out / "labels" / input_path, table_bytes(table))
     _write_viewer(out, input_path, refs, rows)

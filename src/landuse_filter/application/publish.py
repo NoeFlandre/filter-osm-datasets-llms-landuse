@@ -32,6 +32,7 @@ from landuse_filter.application import published_stats
 from landuse_filter.application.assemble import (
     PENDING,
     MissingGenerationError,
+    Stamp,
     build_generations,
     build_labels,
     build_viewer,
@@ -221,8 +222,7 @@ def _build_files(run: _Run) -> tuple[list[tuple[Path, str]], set[str]]:
                 path,
                 local,
                 resolved=ctx.resolved,
-                fp=ctx.fp,
-                revision=run.revision,
+                stamp=Stamp(ctx.fp, run.revision),
                 out=out,
             )
         except MissingGenerationError:
@@ -315,8 +315,7 @@ def _build_partial(ctx: _Ctx, path: str, local: Path, *, last: int) -> int | Non
         path,
         local,
         resolved=ctx.resolved,
-        fp=ctx.fp,
-        revision=ctx.revision,
+        stamp=Stamp(ctx.fp, ctx.revision),
         out=ctx.out,
         allow_pending=True,
     )

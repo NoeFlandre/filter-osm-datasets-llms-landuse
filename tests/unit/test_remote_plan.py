@@ -3,10 +3,19 @@ from pathlib import Path
 from landuse_filter.adapters.readers import WEBSITE
 from landuse_filter.adapters.remote import DirRemote
 from landuse_filter.adapters.store import WorkStore
-from landuse_filter.application.remote_plan import run_plan
+from landuse_filter.application.remote_plan import PlanInputs, run_plan
 
 INPUTS = Path(__file__).parents[1] / "fixtures" / "inputs"
 FILES = ["polygons/a.parquet", "polygons/b.parquet", "polygons/c.parquet"]
+
+
+INPUTS_PLAN = PlanInputs(
+    files=FILES,
+    fetch=lambda _: INPUTS / "website.parquet",
+    encode=lambda ps: [[len(p)] for p in ps],
+    template="S: {}",
+    chunk_size=7,
+)
 
 
 def plan(tmp_path, scratch_name, stop_after=None):
@@ -23,11 +32,7 @@ def plan(tmp_path, scratch_name, stop_after=None):
         scratch,
         WEBSITE,
         "fp",
-        files=FILES,
-        fetch=lambda _: INPUTS / "website.parquet",
-        encode=lambda ps: [[len(p)] for p in ps],
-        template="S: {}",
-        chunk_size=7,
+        INPUTS_PLAN,
         should_stop=stop,
     )
     return remote, scratch, report
@@ -72,11 +77,7 @@ def test_resume_works_when_the_downloaded_index_is_read_only(tmp_path, monkeypat
         scratch,
         WEBSITE,
         "fp",
-        files=FILES,
-        fetch=lambda _: INPUTS / "website.parquet",
-        encode=lambda ps: [[len(p)] for p in ps],
-        template="S: {}",
-        chunk_size=7,
+        INPUTS_PLAN,
         should_stop=lambda: False,
     )
     assert report["files_done"] == 3

@@ -1,7 +1,7 @@
 """`luf node` commands."""
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING
 
 import typer
 
@@ -14,21 +14,26 @@ from landuse_filter.cli import (
 )
 
 
-def _plan_inputs(dataset: str, revision: str, chunk_size: int) -> dict[str, Any]:
-    """Keyword arguments shared by ``run_plan`` and ``run_replan``."""
+if TYPE_CHECKING:
+    from landuse_filter.application.remote_plan import PlanInputs
+
+
+def _plan_inputs(dataset: str, revision: str, chunk_size: int) -> "PlanInputs":
+    """The inputs shared by ``run_plan`` and ``run_replan``."""
     from landuse_filter.adapters.readers import SOURCES
     from landuse_filter.adapters.tokenizer import chat_encoder
     from landuse_filter.application.plan import download, list_input_files
+    from landuse_filter.application.remote_plan import PlanInputs
 
     source = SOURCES[dataset]
-    return {
-        "files": list_input_files(source, revision),
-        "fetch": lambda path: download(source, path, revision),
-        "encode": chat_encoder(config.MODEL_ID, config.MODEL_REVISION),
-        "template": _template(),
-        "chunk_size": chunk_size,
-        "forget": lambda p: p.resolve().unlink(missing_ok=True),
-    }
+    return PlanInputs(
+        files=list_input_files(source, revision),
+        fetch=lambda path: download(source, path, revision),
+        encode=chat_encoder(config.MODEL_ID, config.MODEL_REVISION),
+        template=_template(),
+        chunk_size=chunk_size,
+        forget=lambda p: p.resolve().unlink(missing_ok=True),
+    )
 
 
 @node_app.command("run")
@@ -63,7 +68,7 @@ def node_plan(
         scratch,
         dataset,
         config.GENERATION_FP,
-        **_plan_inputs(dataset, revision, chunk_size),
+        _plan_inputs(dataset, revision, chunk_size),
         should_stop=lambda: stop["requested"],
     )
     typer.echo(json.dumps(report))
@@ -89,8 +94,8 @@ def node_replan(
         scratch,
         dataset,
         config.GENERATION_FP,
-        **inputs,
-        locate=locator(dataset, inputs["fetch"], cell_of),
+        inputs,
+        locate=locator(dataset, inputs.fetch, cell_of),
     )
     typer.echo(json.dumps(report))
 
