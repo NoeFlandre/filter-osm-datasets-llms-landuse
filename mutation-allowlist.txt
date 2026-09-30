@@ -8,3 +8,69 @@ landuse_filter.domain.noninferiority.x__metrics__mutmut_33: recall only feeds f1
 landuse_filter.domain.noninferiority.x__deltas__mutmut_10: sentinel name is always replaced: every language delta is finite (< inf)
 landuse_filter.domain.hashing.x_sha256_text__mutmut_4: "UTF-8" and "utf-8" name the same codec
 landuse_filter.domain.hashing.x_sha256_parts__mutmut_4: "\x1F" and "\x1f" are the same character
+landuse_filter.application.repair.x_dedupe_generations__mutmut_24: pa.array infers bool from a list of bools, same as pa.bool_()
+landuse_filter.application.repair.x_dedupe_generations__mutmut_26: pa.array infers bool from a list of bools, same as pa.bool_()
+landuse_filter.application.status.x__rate__mutmut_7: the placeholder gpu name of the default Profile is never read, only its default rate
+landuse_filter.application.status.x__rate__mutmut_8: the placeholder gpu name of the default Profile is never read, only its default rate
+landuse_filter.application.status.x__rate__mutmut_9: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁ__init____mutmut_19: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁ__init____mutmut_20: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁregister__mutmut_6: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁregister__mutmut_7: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁscan__mutmut_4: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁscan__mutmut_5: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁscan__mutmut_8: pending[:None] equals pending, so an always-true guard changes nothing
+landuse_filter.application.plan.xǁPlannerǁ_scan_file__mutmut_20: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁ_scan_file__mutmut_21: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁ_scan_file__mutmut_29: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁ_scan_file__mutmut_30: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁ_scan_file__mutmut_32: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁ_scan_file__mutmut_33: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁemit__mutmut_4: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁemit__mutmut_5: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁemit__mutmut_9: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁemit__mutmut_10: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁemit__mutmut_16: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁemit__mutmut_17: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁemit__mutmut_26: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁemit__mutmut_27: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁmark_done__mutmut_6: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁmark_done__mutmut_7: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁrelease_unfinished__mutmut_4: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁrelease_unfinished__mutmut_5: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁrelease_unfinished__mutmut_7: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁrelease_unfinished__mutmut_8: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁrelease_unfinished__mutmut_27: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁrelease_unfinished__mutmut_28: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁset_cells__mutmut_6: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁset_cells__mutmut_7: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁ_uniform_order__mutmut_4: sqlite3 deterministic is only an optimisation hint for the query planner
+landuse_filter.application.plan.xǁPlannerǁ_uniform_order__mutmut_8: sqlite3 deterministic is only an optimisation hint for the query planner
+landuse_filter.application.plan.xǁPlannerǁ_uniform_order__mutmut_10: sqlite3 deterministic is only an optimisation hint for the query planner
+landuse_filter.application.plan.xǁPlannerǁ_uniform_order__mutmut_12: sqlite3 deterministic is only an optimisation hint for the query planner
+landuse_filter.application.plan.xǁPlannerǁ_uniform_order__mutmut_16: sqlite3 deterministic is only an optimisation hint for the query planner
+landuse_filter.application.plan.xǁPlannerǁ_uniform_order__mutmut_20: sqlite3 deterministic is only an optimisation hint for the query planner
+landuse_filter.application.plan.xǁPlannerǁ_uniform_order__mutmut_22: sqlite3 deterministic is only an optimisation hint for the query planner
+landuse_filter.application.plan.xǁPlannerǁ_uniform_order__mutmut_31: sqlite3 deterministic is only an optimisation hint for the query planner
+landuse_filter.application.plan.xǁPlannerǁ_uniform_order__mutmut_36: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁ_uniform_order__mutmut_37: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁ_uniform_order__mutmut_44: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁ_uniform_order__mutmut_45: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁ_uniform_order__mutmut_47: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁ_uniform_order__mutmut_48: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁ_uniform_order__mutmut_53: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁ_uniform_order__mutmut_54: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁ_uniform_order__mutmut_57: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁ_uniform_order__mutmut_58: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁ_uniform_order__mutmut_60: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁ_uniform_order__mutmut_61: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁ_emit_group__mutmut_48: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁ_emit_group__mutmut_49: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁrecover_plan_lines__mutmut_10: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁrecover_plan_lines__mutmut_11: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁrecover_plan_lines__mutmut_13: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁrecover_plan_lines__mutmut_14: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁreport__mutmut_4: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁreport__mutmut_5: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁreport__mutmut_9: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.xǁPlannerǁreport__mutmut_10: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
