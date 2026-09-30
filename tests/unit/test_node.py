@@ -91,9 +91,17 @@ def test_identical_part_repairs_a_corrupt_copy(tmp_path):
     assert store.read_part(path).column("text_sha256").to_pylist() == ["a"]
 
 
-def test_gathered_decisions_merge_local_and_bucket_parts_without_keeping_them(tmp_path):
+def test_gathered_decisions_merge_local_and_bucket_parts_without_keeping_them(
+    tmp_path, monkeypatch
+):
+    """The temp tree is checked in a private tmp dir: other processes (parallel test runs,
+    `luf bench admit`) create luf-gate-* dirs in the shared one, which made this flaky."""
     import tempfile
     from pathlib import Path
+
+    private = tmp_path / "tmp"
+    private.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(private))
 
     from landuse_filter.adapters.remote import DirRemote
     from landuse_filter.application.results import gathered_decisions
