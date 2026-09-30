@@ -40,6 +40,7 @@ from landuse_filter.application.geo import BBOX, Located, description_cells, web
 from landuse_filter.application.results import canonical_generations
 
 PARTIAL_STEP = 0.10  # share of a file's sentences that must be newly labelled to refresh it
+PARTIAL_FLUSH = 100  # partial files uploaded (and recorded) per commit while building
 
 
 @dataclass
@@ -79,6 +80,39 @@ class Coverage:
     partial: list[str]  # labels paths of partly labelled files on the Hub
 
 
+class _PartialSink:
+    """Uploads partial files as they are built and records each commit in the ledger, so a
+    job stopped at its walltime keeps what it already published."""
+
+    def __init__(self, store: WorkStore, dataset: str, repo: str, *, dry_run: bool) -> None:
+        self.store, self.dataset, self.repo, self.dry_run = store, dataset, repo, dry_run
+        self.pending: list[tuple[Path, str]] = []
+        self.resolved: dict[str, int] = {}  # labels path -> resolved sentences, this run
+        self.uploaded: dict[str, Path] = {}
+
+    def add(self, labels: tuple[Path, str], viewer: tuple[Path, str], known: int) -> None:
+        self.pending += [labels, viewer]
+        self.resolved[labels[1]] = known
+        if len(self.pending) >= PARTIAL_FLUSH:
+            self.flush()
+
+    def flush(self) -> None:
+        if self.pending and not self.dry_run:
+            hub.upload(
+                self.repo, self.pending, f"Add partial land-use labels ({config.GENERATION_FP})"
+            )
+            self.store.append_jsonl(
+                partial_ledger(self.dataset),
+                [
+                    {"path": d, "resolved": self.resolved[d]}
+                    for _, d in self.pending
+                    if d in self.resolved
+                ],
+            )
+            self.uploaded.update({d: src for src, d in self.pending})
+        self.pending = []
+
+
 def publish(
     store: WorkStore, dataset: str, revision: str, *, dry_run: bool = False
 ) -> PublishReport:
@@ -100,8 +134,7 @@ def publish(
     first_file = dict(zip(files, [i for i, _ in indexed], strict=True))
     new: list[tuple[Path, str]] = []
     new_shas: set[str] = set()
-    partial_new: list[tuple[Path, str]] = []
-    partial_resolved: dict[str, int] = {}
+    sink = _PartialSink(store, dataset, repo, dry_run=dry_run)
     for path in files:
         target = f"labels/{path}"
         if target in done:
@@ -112,8 +145,7 @@ def publish(
         except MissingGenerationError:
             known = _build_partial(ctx, path, local, last=resolved_before.get(target, 0))
             if known is not None:
-                partial_new += [(out / target, target), (out / f"viewer/{path}", f"viewer/{path}")]
-                partial_resolved[target] = known
+                sink.add((out / target, target), (out / f"viewer/{path}", f"viewer/{path}"), known)
             continue
         new_shas |= _owned_generations(db, first_file[path], out / target)
         new += [(out / target, target), (out / f"viewer/{path}", f"viewer/{path}")]
@@ -128,16 +160,16 @@ def publish(
         ]
     completed = {d for _, d in new if d.startswith("labels/")}
     labelled = len([p for p in files if f"labels/{p}" in done]) + len(completed)
-    partial_paths = (set(resolved_before) | set(partial_resolved)) - done - completed
+    sink.flush()
+    partial_paths = (set(resolved_before) | set(sink.resolved)) - done - completed
     decisions = _decision_counts(out)
     if not dry_run:
         decisions = _upload(
             store,
             (dataset, repo, revision),
             new,
-            partial_new,
-            partial_resolved=partial_resolved,
-            coverage=Coverage(labelled, len(files), sorted(partial_paths)),
+            sink.uploaded,
+            Coverage(labelled, len(files), sorted(partial_paths)),
         )
     return PublishReport(labelled, len(files), len(new), decisions, len(partial_paths))
 
@@ -146,26 +178,21 @@ def _upload(
     store: WorkStore,
     target: tuple[str, str, str],
     new: list[tuple[Path, str]],
-    partial_new: list[tuple[Path, str]],
-    *,
-    partial_resolved: dict[str, int],
+    partial: dict[str, Path],
     coverage: Coverage,
 ) -> dict[str, int]:
-    """Upload the new tables, record them in the ledgers and refresh the card."""
+    """Upload the complete files, record them and refresh the card (partial files are
+    already up and recorded)."""
     dataset, repo, revision = target
-    if new or partial_new:
-        hub.upload(repo, [*new, *partial_new], f"Add land-use labels ({config.GENERATION_FP})")
+    if new:
+        hub.upload(repo, new, f"Add land-use labels ({config.GENERATION_FP})")
         store.append_jsonl(f"published/{dataset}.jsonl", [{"path": d} for _, d in new])
-        store.append_jsonl(
-            partial_ledger(dataset),
-            [{"path": p, "resolved": n} for p, n in partial_resolved.items()],
-        )
     return _refresh_card(
         store,
         dataset,
         repo=repo,
         revision=revision,
-        local={d: src for src, d in [*new, *partial_new]},
+        local={**partial, **{d: src for src, d in new}},
         coverage=coverage,
     )
 
