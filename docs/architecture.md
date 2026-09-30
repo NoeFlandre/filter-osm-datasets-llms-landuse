@@ -11,6 +11,9 @@
 
 The layering is enforced by import-linter contracts and an AST test (`tests/architecture`).
 
+`adapters/frontend/` is not imported by the package: its stdlib-only scripts (the GPU inventory) are
+copied to a Grid'5000 frontend and run there, where the project is not installed.
+
 ## Data flow
 
 ```mermaid
