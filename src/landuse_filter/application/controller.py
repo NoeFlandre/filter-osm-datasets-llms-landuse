@@ -385,7 +385,7 @@ class Controller:
             fp=fp or self.work_fp,
             window=self.settings.window or prof.max_running_requests,
             engine_kwargs=config.engine_kwargs(self.cfg, speed),
-            sampling=self.cfg["sampling"],
+            sampling=dict(self.cfg["sampling"]),
             walltime_s=int(slot.walltime.total_seconds()),
             late_after_s=int((QUEUED_START if slot.queued else LATE_START).total_seconds()),
             provenance={
