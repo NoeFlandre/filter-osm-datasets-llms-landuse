@@ -575,3 +575,35 @@ def test_archive_raises_after_the_last_attempt_and_does_not_cache_failure():
     assert len(calls) == 3
     assert len(sleeps) == 2  # no sleep after the final failure
     assert archive.cache == {}
+
+
+def test_commit_retries_a_ref_read_that_races_with_another_fetch(monkeypatch):
+    """Regression: `git rev-parse origin/main` failed (exit 128) while another process was
+    updating the ref, and the whole admission cycle was lost."""
+    import subprocess
+
+    calls = []
+
+    def flaky(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[3] == "rev-parse" and calls.count(cmd) < 2:
+            raise subprocess.CalledProcessError(128, cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="abc123\n")
+
+    monkeypatch.setattr(ctl_mod.subprocess, "run", flaky)
+    monkeypatch.setattr(ctl_mod.time, "sleep", lambda s: None)
+    assert ctl_mod.commit("origin/main") == "abc123"
+
+
+def test_commit_gives_up_when_the_ref_stays_unreadable(monkeypatch):
+    import subprocess
+
+    def broken(cmd, **kwargs):
+        if cmd[3] == "fetch":
+            return subprocess.CompletedProcess(cmd, 1)
+        raise subprocess.CalledProcessError(128, cmd)
+
+    monkeypatch.setattr(ctl_mod.subprocess, "run", broken)
+    monkeypatch.setattr(ctl_mod.time, "sleep", lambda s: None)
+    with pytest.raises(subprocess.CalledProcessError):
+        ctl_mod.commit("origin/main")

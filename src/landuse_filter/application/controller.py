@@ -78,9 +78,18 @@ def commit(ref: str = DEPLOY_REF) -> str:
     """
     git = ["git", "-C", str(REPO)]
     subprocess.run([*git, "fetch", "-q", "origin", "main"], capture_output=True, check=False)
-    return subprocess.run(
-        [*git, "rev-parse", ref], capture_output=True, text=True, check=True
-    ).stdout.strip()
+
+    def rev_parse() -> str:
+        return subprocess.run(
+            [*git, "rev-parse", ref], capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    for _ in range(ARCHIVE_ATTEMPTS - 1):
+        try:  # another fetch updating the ref at the same moment makes rev-parse fail (128)
+            return rev_parse()
+        except subprocess.CalledProcessError:
+            time.sleep(ARCHIVE_RETRY_DELAY)
+    return rev_parse()
 
 
 class Controller:
