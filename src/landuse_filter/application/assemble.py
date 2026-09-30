@@ -13,8 +13,8 @@ from typing import NamedTuple, Protocol
 
 import pyarrow as pa
 
-from landuse_filter.adapters.readers import SOURCES
 from landuse_filter.adapters.store import WorkStore, table_bytes, write_atomic
+from landuse_filter.application.datasets import SPECS
 from landuse_filter.application.results import canonical_generations
 from landuse_filter.domain.hashing import sha256_parts
 from landuse_filter.domain.sentences import Decision, SentenceRef
@@ -33,20 +33,6 @@ LABEL_FIELDS = [
 
 VIEWER_COLUMNS = ["sentence", "label", "language", "region"]  # what a dataset-viewer reader needs
 PENDING = "pending"  # a sentence of a partly labelled file whose text has no generation yet
-
-JOIN_KEYS = {
-    "osm-polygon-description-tag": [
-        ("description_identity", pa.string()),
-        ("tag_key", pa.string()),
-        ("sentence_index", pa.int32()),
-    ],
-    "osm-polygon-wikidata-and-wikipedia": [("sentence_id", pa.string())],
-    "osm-polygon-website-tag": [
-        ("polygon_id", pa.string()),
-        ("field", pa.string()),
-        ("sentence_index", pa.int32()),
-    ],
-}
 
 
 def generation_id(text_sha256: str, fp: str) -> str:
@@ -135,7 +121,7 @@ def label_rows(
 
 
 def labels_table(dataset: str, rows: list[dict]) -> pa.Table:
-    schema = pa.schema([LABEL_FIELDS[0], *JOIN_KEYS[dataset], *LABEL_FIELDS[1:]])
+    schema = pa.schema([LABEL_FIELDS[0], *SPECS[dataset].join_keys, *LABEL_FIELDS[1:]])
     return pa.Table.from_pylist(rows, schema=schema)
 
 
@@ -171,7 +157,7 @@ def build_labels(
     Raises ``MissingGenerationError`` if any text is unresolved, unless ``allow_pending``
     (partial publication: those sentences are labelled ``pending``).
     """
-    refs = list(SOURCES[dataset].read(local, input_path))
+    refs = list(SPECS[dataset].source.read(local, input_path))
     rows = label_rows(refs, resolved, stamp.fp, stamp.revision, allow_pending=allow_pending)
     table = labels_table(dataset, rows)
     write_atomic(out / "labels" / input_path, table_bytes(table))
@@ -181,7 +167,7 @@ def build_labels(
 
 def build_viewer(dataset: str, input_path: str, local: Path, *, resolved: Lookup, out: Path) -> int:
     """Write only ``out/viewer/<input_path>`` (files whose labels are already published)."""
-    refs = list(SOURCES[dataset].read(local, input_path))
+    refs = list(SPECS[dataset].source.read(local, input_path))
     rows = label_rows(refs, resolved, "", "")
     _write_viewer(out, input_path, refs, rows)
     return len(rows)

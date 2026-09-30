@@ -2,7 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from landuse_filter.application.card import JOINS, CardFacts, MapFacts, render_card
+from landuse_filter.application.card import CardFacts, MapFacts, render_card
+from landuse_filter.application.datasets import SPECS
 
 GOLDEN = Path(__file__).parents[1] / "fixtures" / "card_description.md"
 
@@ -56,10 +57,10 @@ def test_status_follows_coverage():
     assert "dataset_status: complete" in render_card(facts(labelled=386))
 
 
-@pytest.mark.parametrize("dataset", sorted(JOINS))
+@pytest.mark.parametrize("dataset", sorted(SPECS))
 def test_every_dataset_has_a_join_recipe(dataset):
     card = render_card(facts(dataset=dataset))
-    assert JOINS[dataset][1] in card
+    assert SPECS[dataset].card_using in card
 
 
 def test_wiki_card_states_cc_by_sa():
@@ -90,7 +91,7 @@ def test_card_without_failures_has_no_failed_section():
     assert "### Failed rows" not in render_card(f)
 
 
-@pytest.mark.parametrize("dataset", sorted(JOINS))
+@pytest.mark.parametrize("dataset", sorted(SPECS))
 def test_join_recipe_reads_every_input_table_of_the_dataset(dataset):
     """Wiki labels cover wikipedia/ and wikivoyage/ sentences: the recipe must read both."""
     from landuse_filter.adapters.readers import SOURCES
@@ -140,3 +141,14 @@ def test_partial_publication_is_stated_and_pending_rows_are_counted():
 
 def test_no_pending_row_when_nothing_is_pending():
     assert "`pending`" not in render_card(facts())
+
+
+def test_wiki_map_section_says_how_sentences_are_placed():
+    f = facts(dataset="osm-polygon-wikidata-and-wikipedia")
+    card = render_card(
+        CardFacts(
+            **{k: getattr(f, k) for k in f.__slots__ if k != "world_map"},
+            world_map=MapFacts(cells=2, located=3, labelled=4, share=0.5),
+        )
+    )
+    assert "first linked polygon" in card

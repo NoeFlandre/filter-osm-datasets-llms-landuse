@@ -334,3 +334,37 @@ def test_admitted_gates_keep_only_admitted_gpu_types(tmp_path):
     store.write_json("gates/admission/t4.json", {"status": "rejected", "gate": {"x": 2}})
     assert store.admitted_gates() == {"a100": {"x": 1}}
     assert WorkStore(tmp_path / "empty").admitted_gates() == {}
+
+
+def test_wiki_map_locator_reads_sentences_links_and_polygons_through_the_hub(tmp_path):
+    import pyarrow as pa
+
+    from landuse_filter.adapters.readers import WIKI
+    from landuse_filter.application.datasets import SPECS
+
+    served = {}
+    for name, table in {
+        "wikipedia/sentences/fr.parquet": {"sentence_id": ["s1", "s2"], "document_id": ["d", "e"]},
+        "polygon_document_links/fr.parquet": {"polygon_id": ["p"], "document_id": ["d"]},
+        "polygons/fr.parquet": {"polygon_id": ["p"], "lat": [48.0], "lon": [2.0]},
+    }.items():
+        served[name] = tmp_path / name.replace("/", "_")
+        pq.write_table(pa.table(table), served[name])
+    hub = FakeHub(tmp_path)
+    hub.opened = lambda repo, path, revision: served[path]
+    labels = tmp_path / "labels.parquet"
+    pq.write_table(pa.table({"sentence_id": ["s1", "s2"], "decision": ["yes", "yes"]}), labels)
+    spec = SPECS[WIKI]
+    assert spec.map_locator is not None
+    locate = spec.map_locator(spec.source.repo_id, hub, "rev")
+    where = locate("labels/wikipedia/sentences/fr.parquet", labels)
+    assert (where.labelled, where.located) == (2, 1)  # s2's document has no linked polygon
+
+
+def test_every_dataset_declares_its_location_capabilities():
+    from landuse_filter.adapters.readers import DESCRIPTION, SOURCES, WEBSITE, WIKI
+    from landuse_filter.application.datasets import SPECS
+
+    assert set(SPECS) == set(SOURCES)
+    assert {d for d, s in SPECS.items() if s.planning_locator} == {WIKI, WEBSITE}
+    assert {d for d, s in SPECS.items() if s.map_locator} == {DESCRIPTION, WIKI, WEBSITE}

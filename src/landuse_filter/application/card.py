@@ -3,29 +3,8 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-JOINS = {
-    "osm-polygon-description-tag": (
-        ("language-v1/data/*.parquet",),
-        "USING (description_identity, tag_key)",
-        "description_identity, tag_key, sentence_index",
-    ),
-    "osm-polygon-wikidata-and-wikipedia": (
-        ("wikipedia/sentences/*.parquet", "wikivoyage/sentences/*.parquet"),
-        "USING (sentence_id)",
-        "sentence_id",
-    ),
-    "osm-polygon-website-tag": (
-        ("polygons/*.parquet",),
-        "USING (polygon_id)",
-        "polygon_id, field (website | contact_website), sentence_index",
-    ),
-}
-TEXT_LICENSE = {
-    "osm-polygon-wikidata-and-wikipedia": (
-        "Wikipedia and Wikivoyage text is CC BY-SA 4.0; attribution columns are kept "
-        "in the mirrored input."
-    ),
-}
+from landuse_filter.application.datasets import SPECS
+
 FAILURES = {
     "truncated": "hit the token limit before answering",
     "unclosed_think": "never closed its reasoning block",
@@ -110,7 +89,7 @@ def _decision_table(decisions: Mapping[str, int]) -> str:
     return "\n".join(rows)
 
 
-def _map_section(m: MapFacts | None) -> str:
+def _map_section(m: MapFacts | None, dataset: str) -> str:
     if m is None:
         return ""
     return f"""
@@ -118,7 +97,7 @@ def _map_section(m: MapFacts | None) -> str:
 
 ![Share of yes among yes/no sentences per H3 cell]({MAP_ASSET})
 
-Each hexagon is an [H3](https://h3geo.org) cell (resolution 3) holding the `yes`/`no` sentences of the polygons whose bounding-box centre falls in it. Colour is the share of `yes` in the cell, centred on the dataset-wide share ({m.share:.1%}); grey cells hold fewer than 10 sentences. {m.located:,} of {m.labelled:,} `yes`/`no` sentences ({m.located / m.labelled:.1%}) are placed, in {m.cells:,} cells; `failed` and `skipped_unsplit` rows are not.
+Each hexagon is an [H3](https://h3geo.org) cell (resolution 3) holding the `yes`/`no` sentences {SPECS[dataset].placement}. Colour is the share of `yes` in the cell, centred on the dataset-wide share ({m.share:.1%}); grey cells hold fewer than 10 sentences. {m.located:,} of {m.labelled:,} `yes`/`no` sentences ({m.located / m.labelled:.1%}) are placed, in {m.cells:,} cells; `failed` and `skipped_unsplit` rows are not.
 """
 
 
@@ -188,7 +167,8 @@ usable answer. Reasons:
 
 
 def _tables_section(f: CardFacts) -> str:
-    source, using, keys = JOINS[f.dataset]
+    spec = SPECS[f.dataset]
+    source, using, keys = spec.source.patterns, spec.card_using, spec.card_keys
     partial_note = (
         "\n* `pending` rows belong to partly labelled files; their labels are refreshed as the "
         "model works, and the `generations/` rows of a file are published once the file is complete."
@@ -239,7 +219,8 @@ Greedy decoding is not batch- or GPU-invariant: about 12 % of individual decisio
 
 
 def _license_section(f: CardFacts) -> str:
-    extra = f"\n{TEXT_LICENSE[f.dataset]}" if f.dataset in TEXT_LICENSE else ""
+    license_text = SPECS[f.dataset].text_license
+    extra = f"\n{license_text}" if license_text else ""
     return f"""
 ## License and citation
 
@@ -256,7 +237,7 @@ def render_card(f: CardFacts) -> str:
         _front_matter(f, status)
         + _intro(f, status, total)
         + _failed_section(f, total)
-        + _map_section(f.world_map)
+        + _map_section(f.world_map, f.dataset)
         + _tables_section(f)
         + _method_section(f)
         + _quality_section(f)

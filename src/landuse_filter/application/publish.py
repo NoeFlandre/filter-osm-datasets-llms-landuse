@@ -26,7 +26,6 @@ import pyarrow.parquet as pq
 from landuse_filter import config
 from landuse_filter.adapters.hub import BATCH, HfHub, Hub
 from landuse_filter.adapters.indexes import ResolutionIndex
-from landuse_filter.adapters.readers import SOURCES
 from landuse_filter.adapters.store import WorkStore
 from landuse_filter.application import published_stats
 from landuse_filter.application.assemble import (
@@ -38,7 +37,7 @@ from landuse_filter.application.assemble import (
     build_viewer,
 )
 from landuse_filter.application.card import MAP_ASSET, CardFacts, MapFacts, render_card
-from landuse_filter.application.map_locator import map_locator
+from landuse_filter.application.datasets import SPECS
 from landuse_filter.application.results import canonical_generations
 
 PARTIAL_STEP = 0.10  # share of a file's sentences that must be newly labelled to refresh it
@@ -183,7 +182,7 @@ def _prepare(
             hub,
             store,
             dataset,
-            input_repo=SOURCES[dataset].repo_id,
+            input_repo=SPECS[dataset].source.repo_id,
             revision=revision,
             repo=repo,
             done=done,
@@ -222,7 +221,9 @@ def _build_files(run: _Run) -> tuple[list[tuple[Path, str]], set[str]]:
         target = f"labels/{path}"
         if target in run.done:
             continue
-        local = Path(run.hub.download_all(SOURCES[run.dataset].repo_id, run.revision, [path])[0][0])
+        local = Path(
+            run.hub.download_all(SPECS[run.dataset].source.repo_id, run.revision, [path])[0][0]
+        )
         try:
             build_labels(
                 run.dataset,
@@ -348,7 +349,9 @@ def _missing_viewers(run: _Run, *, resolved: ResolutionIndex, out: Path) -> list
         target = f"viewer/{path}"
         if f"labels/{path}" not in run.done or target in run.done:
             continue
-        local = Path(run.hub.download_all(SOURCES[run.dataset].repo_id, run.revision, [path])[0][0])
+        local = Path(
+            run.hub.download_all(SPECS[run.dataset].source.repo_id, run.revision, [path])[0][0]
+        )
         build_viewer(run.dataset, path, local, resolved=resolved, out=out)
         made.append((out / target, target))
     return made
@@ -405,7 +408,7 @@ def _refresh_card(
             dataset,
             on_hub | set(coverage.partial) | set(local),
             lambda p: local[p] if p in local else hub.open_file(repo, p),
-            map_locator(dataset, revision, hub),
+            _map_locator(dataset, revision, hub),
             refresh=set(local),  # uploaded now: a partial record of the same path is stale
         )
     )
@@ -420,6 +423,14 @@ def _refresh_card(
             stats=stats,
         )
     return stats["decisions"]
+
+
+def _map_locator(dataset: str, revision: str, hub: Hub) -> published_stats.Locator | None:
+    """Where the rows of a labels file are, for datasets whose input has coordinates."""
+    spec = SPECS[dataset]
+    if spec.map_locator is None:
+        return None
+    return spec.map_locator(spec.source.repo_id, hub, revision)
 
 
 def _world_map(stats: dict, png: Path, dataset: str) -> MapFacts | None:
