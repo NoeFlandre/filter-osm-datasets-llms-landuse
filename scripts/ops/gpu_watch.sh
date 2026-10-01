@@ -61,7 +61,7 @@ print(' '.join(f'{k}={v}' for k, v in sorted(last.items()) if v))")
   err=$(tail -n 60 $W/controller-production.log $W/controller-admission.log 2>/dev/null | grep -hE "cycle failed|submission failed" | grep -v "besteffort. Reserve" | tail -1 | cut -c1-140)
   # A controller that submits but no longer ingests results (seen 2026-10-01: wedged for an hour)
   # shows up as a growing age of the progress index.
-  last=$(stat -f %m "$W/index/progress-"*.sqlite 2>/dev/null | sort -n | tail -n 1)
+  last=$(python3 -c "import glob, os, sys; f = glob.glob(sys.argv[1] + '/index/progress-*.sqlite'); print(int(max(map(os.path.getmtime, f))) if f else 0)" "$W")
   age=$(( ( $(date +%s) - ${last:-0} ) / 60 ))
   echo "$(date +%H:%M) GPUS $gpus | chunks $ds | ingest ${age}m ago | admission pending: ${adm:-none} ${err:+| error: $err}"
   [ -n "${GPU_WATCH_ONCE:-}" ] && exit 0
