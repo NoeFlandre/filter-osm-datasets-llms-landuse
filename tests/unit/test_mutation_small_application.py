@@ -246,4 +246,13 @@ def test_status_exact_report(tmp_path):
         "assignments": {"submitted": 3, "submitting": 1, "done": 1},
         "throughput_by_gpu": {"L40S": 1.001, "H100": 7.0},
         "alerts": ["failed rate 10.0% > 5% (benchmark 2.4%)"],
+        "useful_fraction": {
+            "overall": {
+                "jobs": 0,
+                "useful_fraction": None,
+                "stopped_early": None,
+                "ran_to_checkpoint": None,
+            },
+            "by_gpu": {},
+        },
     }

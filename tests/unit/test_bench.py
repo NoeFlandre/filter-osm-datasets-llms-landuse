@@ -73,3 +73,25 @@ def test_status_reports_eta_and_alerts(tmp_path):
     assert report["d"]["texts_complete"] == 10
     assert report["d"]["eta_hours"] == 0.5
     assert report["alerts"]
+
+
+def test_status_reports_useful_fraction_from_timeline_records(tmp_path):
+    store = WorkStore(tmp_path)
+    store.write_json(
+        "jobs/s/1.json",
+        {
+            "gpu": "L40S",
+            "gpu_key": "l40s",
+            "sentences_per_second": 2.0,
+            "stopped": True,
+            "walltime_s": 600,
+            "started_at": "2026-10-01T10:00:00+00:00",
+            "engine_ready_at": "2026-10-01T10:01:00+00:00",
+            "last_result_at": "2026-10-01T10:06:00+00:00",
+            "ended_at": "2026-10-01T10:06:10+00:00",
+        },
+    )
+    store.write_json("jobs/s/2.json", {"gpu": "L40S", "sentences_per_second": 2.0})  # old record
+    report = summarize(store, [])
+    assert report["useful_fraction"]["by_gpu"]["l40s"]["useful_fraction"] == 0.5
+    assert report["useful_fraction"]["overall"]["jobs"] == 1

@@ -35,6 +35,14 @@ class RunStats:
     failed: int = 0  # generations whose verdict failed to parse (drift signal)
     chunks_done: list[str] = field(default_factory=list)
     started: float = field(default_factory=time.monotonic)
+    first_result: float | None = None  # monotonic instants of the first/last finished text
+    last_result: float | None = None
+
+    def note_results(self) -> None:
+        now = time.monotonic()
+        self.last_result = now
+        if self.first_result is None:
+            self.first_result = now
 
     @property
     def sentences_per_second(self) -> float:
@@ -102,6 +110,8 @@ class Runner:
             )
             pending -= finished
             buffer.extend(task.result() for task in finished)
+            if finished:
+                self.stats.note_results()
             if self.should_stop():
                 for task in pending:
                     task.cancel()
