@@ -7,8 +7,10 @@ each ``labels/`` file contributes its decision and failure-reason counts, each
 from the Hub, so the card is always a function of the published data.
 """
 
+import logging
 from collections import Counter
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Any
@@ -26,6 +28,9 @@ Locator = Callable[[str, Source], Located]  # labels path, its source -> where t
 
 
 RECORD_FLUSH = 25  # files counted per ledger append
+COUNT_WORKERS = 6  # files counted in parallel (each reads its labels file and map inputs)
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -152,13 +157,32 @@ def complete(
         or p in refresh
         or (locate and p.startswith("labels/") and have[p].cells is None)
     ]
-    for start in range(0, len(missing), RECORD_FLUSH):
-        fresh = [file_stats(p, opener(p), locate) for p in missing[start : start + RECORD_FLUSH]]
-        store.append_jsonl(ledger(dataset), [r.to_json() for r in fresh])
-        have.update({r.path: r for r in fresh})
-        if on_progress:
-            on_progress()
-    return [have[p] for p in wanted]
+    with ThreadPoolExecutor(COUNT_WORKERS) as pool:
+        for start in range(0, len(missing), RECORD_FLUSH):
+            batch = missing[start : start + RECORD_FLUSH]
+            fresh = [r for r in pool.map(lambda p: _count(opener, p, locate), batch) if r]
+            if fresh:
+                store.append_jsonl(ledger(dataset), [r.to_json() for r in fresh])
+                have.update({r.path: r for r in fresh})
+            if on_progress:
+                on_progress()  # ledger appends stay in this thread
+    return [have[p] for p in wanted if p in have]
+
+
+def _count(opener: Opener, path: str, locate: Locator | None) -> FileStats | None:
+    """Count one file; a failure is logged and skipped (the next run counts it again)."""
+    try:
+        source = opener(path)
+        try:
+            return file_stats(path, source, locate)
+        finally:
+            if not isinstance(source, Path):
+                close = getattr(source, "close", None)
+                if close:
+                    close()
+    except Exception:
+        log.exception("counting %s failed; skipped until the next run", path)
+        return None
 
 
 def totals(records: list[FileStats]) -> PublishedStats:

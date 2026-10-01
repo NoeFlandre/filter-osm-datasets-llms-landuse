@@ -3,6 +3,7 @@
 #   node_job.sh <code-dir> <assignment-id>                 GPU generation job
 #   node_job.sh <code-dir> plan <dataset> <revision>       CPU planning job
 #   node_job.sh <code-dir> replan <dataset> <revision>     CPU job: plan the rest in a geographic order
+#   node_job.sh <code-dir> card <dataset> <revision>       CPU job: refresh the card from the ledgers only
 #   node_job.sh <code-dir> calibrate <chunk-id>             GPU concurrency sweep
 # Each job builds a private Python environment on node-local /tmp (never on NFS). Bulk data lives on
 # node-local scratch and in the private HF Bucket; the NFS spool only carries small files.
@@ -10,7 +11,7 @@ set -euo pipefail
 CODE=$1
 shift
 CODE="$(cd -- "$CODE" && pwd)"
-if [[ "${1:-}" == "plan" || "${1:-}" == "publish" || "${1:-}" == "calibrate" || "${1:-}" == "repair" || "${1:-}" == "replan" ]]; then
+if [[ "${1:-}" == "plan" || "${1:-}" == "publish" || "${1:-}" == "card" || "${1:-}" == "calibrate" || "${1:-}" == "repair" || "${1:-}" == "replan" ]]; then
   MODE=$1
   shift
 else
@@ -62,6 +63,7 @@ venv="/tmp/$USER-venv-${OAR_JOB_ID:-local}"
 # tokeniser stack (regression: Lyon planning jobs filled /tmp and died).
 case "$MODE" in
   run | calibrate) EXTRAS=(--extra gpu) ;;
+  card) EXTRAS=(--extra tokenize --extra map) ;;  # card only: H3 cells for the map
   publish | repair | replan) EXTRAS=(--extra tokenize --extra map) ;;  # map: H3 cells (h3, matplotlib)
   *) EXTRAS=(--extra tokenize) ;;
 esac
@@ -90,7 +92,11 @@ fi
 if [[ "$MODE" != "run" ]]; then
   # Input shards and parts are large: keep them on node-local scratch, never on NFS.
   export HF_HOME="$LUF_SCRATCH/hf"
-  luf node "$MODE" --dataset "$1" --revision "$2"
+  if [[ "$MODE" == "card" ]]; then
+    luf node publish --card-only --dataset "$1" --revision "$2"
+  else
+    luf node "$MODE" --dataset "$1" --revision "$2"
+  fi
   exit $?
 fi
 luf node run --assignment "$ASSIGNMENT"

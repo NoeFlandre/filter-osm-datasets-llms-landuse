@@ -237,15 +237,15 @@ CPU_JOB_PROPERTY = "gpu_count = 0 AND cluster != 'sagittaire'"
 
 @g5k_app.command("cpu-job")
 def g5k_cpu_job(
-    mode: str = typer.Argument(..., help="plan, replan, publish or repair"),
+    mode: str = typer.Argument(..., help="plan, replan, publish, card or repair"),
     site: str = typer.Option(..., help="Site to run the CPU job on."),
     dataset: str = typer.Option(...),
     revision: str = typer.Option(...),
     walltime_minutes: int = typer.Option(60),
 ) -> None:
     """Submit one resumable planning or publishing job (default queue, one CPU node)."""
-    if mode not in ("plan", "replan", "publish", "repair"):
-        raise typer.BadParameter("mode must be plan, replan, publish or repair")
+    if mode not in ("plan", "replan", "publish", "card", "repair"):
+        raise typer.BadParameter("mode must be plan, replan, publish, card or repair")
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
