@@ -85,3 +85,27 @@ def test_useful_fraction_falls_back_to_gpu_name_and_handles_nothing():
         },
         "by_gpu": {},
     }
+
+
+def test_is_measured_boundaries():
+    no_wall = job()
+    del no_wall["walltime_s"]
+    assert not is_measured(no_wall)
+    assert is_measured(job(walltime_s=1))
+
+
+def test_group_values_are_rounded_to_three_places_and_zero_generation_counts_zero():
+    jobs = [
+        job(),  # 480 s of 1000, early
+        job(stopped=True, last_result_at="2026-10-01T10:02:00+00:00"),  # 0 s of 1000
+        job(stopped=True, last_result_at="2026-10-01T10:02:00+00:00"),
+    ]
+    overall = useful_fraction(jobs)["overall"]
+    assert overall["jobs"] == 3
+    assert overall["useful_fraction"] == 0.16  # 480 / 3000, no extra second for idle jobs
+    assert overall["stopped_early"] == 0.333
+    assert overall["ran_to_checkpoint"] == 0.667
+    third = useful_fraction([job(last_result_at="2026-10-01T10:02:00+00:00") for _ in range(3)])
+    assert third["overall"]["useful_fraction"] == 0.0
+    odd = useful_fraction([job(walltime_s=700), job(walltime_s=700, stopped=True)])
+    assert odd["overall"]["useful_fraction"] == 0.686  # 960 / 1400

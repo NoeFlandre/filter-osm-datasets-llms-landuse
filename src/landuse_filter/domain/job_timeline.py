@@ -46,23 +46,29 @@ def stopped_early(job: Job) -> bool:
     return not job.get("stopped") and left is not None and left > EARLY_MARGIN * job["walltime_s"]
 
 
+def _generated(job: Job) -> float:
+    return generation_seconds(job) or 0.0
+
+
 def _group(jobs: list[Job]) -> dict[str, Any]:
-    if not jobs:
-        return {
-            "jobs": 0,
-            "useful_fraction": None,
-            "stopped_early": None,
-            "ran_to_checkpoint": None,
-        }
     walltime = sum(j["walltime_s"] for j in jobs)
-    generated = sum(generation_seconds(j) or 0.0 for j in jobs)
-    early = sum(stopped_early(j) for j in jobs)
+    early = sum(map(stopped_early, jobs))
     return {
         "jobs": len(jobs),
-        "useful_fraction": round(generated / walltime, 3),
+        "useful_fraction": round(sum(map(_generated, jobs)) / walltime, 3),
         "stopped_early": round(early / len(jobs), 3),
         "ran_to_checkpoint": round(1 - early / len(jobs), 3),
     }
+
+
+def _gpu(job: Job) -> str:
+    return job.get("gpu_key") or job.get("gpu") or "unknown"
+
+
+def _overall(measured: list[Job]) -> dict[str, Any]:
+    if measured:
+        return _group(measured)
+    return {"jobs": 0, "useful_fraction": None, "stopped_early": None, "ran_to_checkpoint": None}
 
 
 def useful_fraction(jobs: Iterable[Job]) -> dict[str, Any]:
@@ -70,8 +76,8 @@ def useful_fraction(jobs: Iterable[Job]) -> dict[str, Any]:
     measured = [j for j in jobs if is_measured(j)]
     by_gpu: dict[str, list[Job]] = {}
     for j in measured:
-        by_gpu.setdefault(j.get("gpu_key") or j.get("gpu") or "unknown", []).append(j)
+        by_gpu.setdefault(_gpu(j), []).append(j)
     return {
-        "overall": _group(measured),
+        "overall": _overall(measured),
         "by_gpu": {g: _group(v) for g, v in sorted(by_gpu.items())},
     }
