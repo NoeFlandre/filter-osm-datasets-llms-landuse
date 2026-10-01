@@ -6,6 +6,7 @@ from landuse_filter.domain.settings import SettingsError
 TOML = (
     'schema_version = 1\n[hub]\nnamespace = "n"\nbucket = "n/b"\n'
     '[grid5000]\nsites = ["a"]\nwalltime_minutes = 60\nnight_walltime_minutes = 120\n'
+    "night_fallback_walltime_minutes = 30\n"
     'max_jobs = 1\nmax_jobs_per_site = 1\ninterval_seconds = 5\ncuda_module = "c"\n'
 )
 

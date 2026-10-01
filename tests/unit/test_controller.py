@@ -628,3 +628,137 @@ def test_no_extra_ingest_when_submissions_are_quick(world, monkeypatch):
     monkeypatch.setattr(ctl_mod, "PULL_INTERVAL", 3600.0)
     c.cycle(NOW)
     assert len(pulls) == 1
+
+
+# --- long night jobs with a shorter fallback (ADR-0016) -------------------------------
+
+
+def _night_world(world, long=120):
+    """The world with a non-production cluster: night jobs may exceed the day walltime."""
+    c, fake = world
+    c.store.write_json("inventory.json", [{**GRES, "queues": ["default"]}])
+    c.settings.night_walltime = timedelta(minutes=long)
+    c.settings.night_fallback_walltime = timedelta(minutes=30)
+    return c, fake
+
+
+def _minutes(fake):
+    import re
+
+    found = (re.search(r"walltime=(\d+):(\d+)", " ".join(args)).groups() for args in fake.submitted)
+    return [int(h) * 60 + int(m) for h, m in found]
+
+
+def _late_when_long(fake, monkeypatch):
+    def start(site, job_id):
+        long = "walltime=2:00" in " ".join(fake.submitted[int(job_id) - 101])
+        return ("Waiting", 4_000_000_000) if long else ("Running", None)
+
+    monkeypatch.setattr(g5k, "scheduled_start", start)
+
+
+def _backed_off(c):
+    (cluster,) = ctl_mod.load_clusters(c.store)
+    return c.memory.backed_off(cluster, NOW)
+
+
+def test_long_night_job_that_starts_in_time_stays_long(world):
+    c, fake = _night_world(world)
+    assert len(c.cycle(NOW).submitted) == 1  # one long job takes every chunk
+    assert _minutes(fake) == [120]
+    assert fake.cancelled == []
+
+
+def test_long_night_job_starting_late_falls_back_to_the_short_walltime(world, monkeypatch):
+    c, fake = _night_world(world)
+    _late_when_long(fake, monkeypatch)
+    assert c.cycle(NOW).submitted
+    assert _minutes(fake)[:2] == [120, 30]
+    assert len(fake.cancelled) >= 1
+    assert not _backed_off(c)
+    live = c.live()
+    assert {a.walltime_s for a in live} == {1800}
+    taken = [ch for a in live for ch in a.chunks]
+    assert len(taken) == len(set(taken))
+    assert "cancelled_late_start" in {a.state for a in c.ledger()}
+
+
+def test_fallback_capacity_is_recomputed_for_the_short_job(world, monkeypatch):
+    c, fake = _night_world(world)
+    _late_when_long(fake, monkeypatch)
+    c.cycle(NOW)
+    cancelled = [a for a in c.ledger() if a.state == "cancelled_late_start"]
+    assert cancelled
+    assert max(len(a.chunks) for a in c.live()) <= min(len(a.chunks) for a in cancelled)
+
+
+def test_long_refused_then_fallback_is_submitted(world, monkeypatch):
+    c, fake = _night_world(world)
+    real = fake.submit
+    calls = []
+
+    def submit(site, args):
+        calls.append(args)
+        if len(calls) == 1:
+            raise g5k.RemoteError("refused")
+        return real(site, args)
+
+    monkeypatch.setattr(g5k, "submit", submit)
+    assert c.cycle(NOW).submitted
+    assert _minutes(fake)[0] == 30
+
+
+def test_both_walltimes_failing_backs_the_cluster_off_once(world):
+    c, fake = _night_world(world)
+    fake.late = True
+    logs = []
+    c.log = logs.append
+    assert c.cycle(NOW).submitted == []
+    assert _minutes(fake) == [120, 30]
+    assert sum("backing off" in m for m in logs) == 1
+    assert _backed_off(c)
+
+
+def test_day_window_never_uses_the_long_walltime(world):
+    c, fake = _night_world(world)
+    day = datetime(2026, 9, 29, 10, 0, tzinfo=ZoneInfo("Europe/Paris"))
+    c.now = day
+    c.cycle(day)
+    assert fake.submitted
+    assert set(_minutes(fake)) == {60}
+
+
+def test_queue_limit_is_the_night_value_only_at_night():
+    c = Controller.__new__(Controller)
+    c.settings = Settings(datasets=[], sites=[], max_queued_per_site=2)
+    assert (c.queue_limit(night=True), c.queue_limit(night=False)) == (2, 2)
+    c.settings.night_max_queued_per_site = 15
+    assert (c.queue_limit(night=True), c.queue_limit(night=False)) == (15, 2)
+    c.settings.night_max_queued_per_site = 0
+    assert c.queue_limit(night=True) == 0
+
+
+def test_queue_room_counts_waiting_jobs_against_the_window_limit():
+    c = Controller.__new__(Controller)
+    c.settings = Settings(datasets=[], sites=[], max_queued_per_site=1, night_max_queued_per_site=3)
+    jobs = {"nancy": [g5k.Job("nancy", str(i), "n", "Waiting", "abaca") for i in range(2)]}
+    assert not c.queue_room("nancy", jobs)
+    assert c.queue_room("nancy", jobs, night=True)
+
+
+def test_run_command_passes_the_fallback_and_night_queue_options(monkeypatch, tmp_path):
+    from typer.testing import CliRunner
+
+    from landuse_filter.cli import g5k as cli
+
+    seen = {}
+    monkeypatch.setattr(cli, "_controller", lambda work, s: seen.setdefault("s", s))
+    monkeypatch.setattr(ctl_mod, "run_loop", lambda *a, **k: None)
+    args = ["run", "--datasets", "d", "--work", str(tmp_path)]
+    args += ["--night-walltime-minutes", "120", "--night-fallback-walltime-minutes", "45"]
+    args += ["--night-max-queued-per-site", "15"]
+    result = CliRunner().invoke(cli.g5k_app, args)
+    assert result.exit_code == 0, result.output
+    s = seen["s"]
+    assert s.night_fallback_walltime == timedelta(minutes=45)
+    assert (s.night_walltime, s.night_max_queued_per_site) == (timedelta(minutes=120), 15)
