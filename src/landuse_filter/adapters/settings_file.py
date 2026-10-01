@@ -11,7 +11,13 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from landuse_filter.domain.settings import INT_FIELDS, OpsSettings, SettingsError, parse_settings
+from landuse_filter.domain.settings import (
+    INT_FIELDS,
+    OPTIONAL_INT_FIELDS,
+    OpsSettings,
+    SettingsError,
+    parse_settings,
+)
 
 DEFAULT = Path(__file__).resolve().parents[3] / "luf.toml"
 
@@ -21,14 +27,14 @@ ENV_FIELDS = {
     "bucket": "hub",
     "sites": "grid5000",
     "cuda_module": "grid5000",
-    **dict.fromkeys(INT_FIELDS, "grid5000"),
+    **dict.fromkeys((*INT_FIELDS, *OPTIONAL_INT_FIELDS), "grid5000"),
 }
 
 
 def _env_value(field: str, text: str) -> Any:
     if field == "sites":
         return [s.strip() for s in text.split(",")]
-    if field in INT_FIELDS:
+    if field in INT_FIELDS or field in OPTIONAL_INT_FIELDS:
         try:
             return int(text)
         except ValueError:

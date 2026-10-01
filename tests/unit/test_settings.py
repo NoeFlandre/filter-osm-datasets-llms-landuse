@@ -83,3 +83,15 @@ def test_all_fields_are_read():
         ops.max_jobs_per_site,
         ops.interval_seconds,
     ) == (60, 120, 30, 1, 1, 5)
+
+
+def test_day_walltime_settings_are_optional_and_validated():
+    ops = parse_settings(good())
+    assert (ops.day_walltime_minutes, ops.day_long_max_failures) == (None, 3)
+    raw = good()
+    raw["grid5000"].update(day_walltime_minutes=60, day_long_max_failures=5)
+    ops = parse_settings(raw)
+    assert (ops.day_walltime_minutes, ops.day_long_max_failures) == (60, 5)
+    raw["grid5000"]["day_walltime_minutes"] = 0
+    with pytest.raises(SettingsError, match="'day_walltime_minutes' must be positive"):
+        parse_settings(raw)
