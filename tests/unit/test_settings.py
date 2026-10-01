@@ -19,6 +19,7 @@ def good():
             "sites": ["a"],
             "walltime_minutes": 60,
             "night_walltime_minutes": 120,
+            "night_fallback_walltime_minutes": 30,
             "max_jobs": 1,
             "max_jobs_per_site": 1,
             "interval_seconds": 5,
@@ -56,6 +57,7 @@ def test_invalid_settings_are_rejected(mutate, message):
     [
         "walltime_minutes",
         "night_walltime_minutes",
+        "night_fallback_walltime_minutes",
         "max_jobs",
         "max_jobs_per_site",
         "interval_seconds",
@@ -76,7 +78,8 @@ def test_all_fields_are_read():
     assert (
         ops.walltime_minutes,
         ops.night_walltime_minutes,
+        ops.night_fallback_walltime_minutes,
         ops.max_jobs,
         ops.max_jobs_per_site,
         ops.interval_seconds,
-    ) == (60, 120, 1, 1, 5)
+    ) == (60, 120, 30, 1, 1, 5)

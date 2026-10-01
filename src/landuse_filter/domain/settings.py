@@ -20,6 +20,7 @@ class OpsSettings:
     sites: tuple[str, ...]
     walltime_minutes: int
     night_walltime_minutes: int
+    night_fallback_walltime_minutes: int
     max_jobs: int
     max_jobs_per_site: int
     interval_seconds: int
@@ -32,6 +33,7 @@ class OpsSettings:
 INT_FIELDS = (
     "walltime_minutes",
     "night_walltime_minutes",
+    "night_fallback_walltime_minutes",
     "max_jobs",
     "max_jobs_per_site",
     "interval_seconds",

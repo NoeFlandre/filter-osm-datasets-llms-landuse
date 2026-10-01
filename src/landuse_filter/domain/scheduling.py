@@ -20,6 +20,7 @@ class Slot:
     sentences_per_second: float  # per GPU, from the calibrated profile
     besteffort: bool = False  # submit as a preemptible besteffort job
     queued: bool = False  # no GPU free now: a bounded queue entry that may wait a while
+    fallbacks: tuple[timedelta, ...] = ()  # shorter walltimes to retry in this same slot
 
 
 def slot_for(  # noqa: PLR0913 - one value per fact the decision needs
@@ -34,6 +35,7 @@ def slot_for(  # noqa: PLR0913 - one value per fact the decision needs
     besteffort: bool,
     queue_room: bool,
     queued_wait: timedelta,
+    fallbacks: tuple[timedelta, ...] = (),
 ) -> Slot | None:
     """The slot a cluster offers, or ``None``.
 
@@ -59,6 +61,7 @@ def slot_for(  # noqa: PLR0913 - one value per fact the decision needs
         sentences_per_second,
         besteffort=besteffort,
         queued=queued,
+        fallbacks=fallbacks,
     )
 
 
@@ -100,3 +103,22 @@ def assign_chunks(
         picked.append(chunk)
         used += size
     return picked
+
+
+def walltime_ladder(
+    *,
+    window_max: timedelta,
+    night: bool,
+    day: timedelta,
+    preferred: timedelta,
+    fallback: timedelta,
+) -> tuple[timedelta, ...]:
+    """Walltimes to try, in order, for one slot: the preferred one, then a shorter fallback.
+
+    By day (``night`` false) there is a single rung, ``day`` capped by the window. At night
+    the rungs are ``preferred`` then ``fallback``, each capped by the window maximum, the
+    fallback never longer than the preferred one, duplicates and non-positive values dropped.
+    """
+    caps = (day,) if not night else (preferred, min(fallback, preferred))
+    rungs = [min(cap, window_max) for cap in caps]
+    return tuple(w for i, w in enumerate(rungs) if w > timedelta(0) and w not in rungs[:i])

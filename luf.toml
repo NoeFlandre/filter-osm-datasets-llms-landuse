@@ -9,6 +9,7 @@ bucket = "NoeFlandre/landuse-filter-work"     # private work bucket
 sites = ["grenoble", "lille", "lyon", "nancy", "rennes", "sophia", "toulouse", "luxembourg"]
 walltime_minutes = 60
 night_walltime_minutes = 120
+night_fallback_walltime_minutes = 30   # retried in the same slot if the long job cannot start
 max_jobs = 12
 max_jobs_per_site = 4
 interval_seconds = 300

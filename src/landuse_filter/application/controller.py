@@ -12,7 +12,7 @@ import time
 import traceback
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -30,9 +30,15 @@ from landuse_filter.application.work_progress import WorkProgress
 from landuse_filter.domain.capacity import Cluster, free_gpus, oarsub_arguments
 from landuse_filter.domain.fingerprint import config_fingerprint, serving_fingerprint
 from landuse_filter.domain.gpu import Admission, gpu_key
-from landuse_filter.domain.policy import Window, allowed_window
+from landuse_filter.domain.policy import Window, allowed_window, is_daytime
 from landuse_filter.domain.prompting import PROMPT_SHA256
-from landuse_filter.domain.scheduling import Slot, assign_chunks, rank_slots, slot_for
+from landuse_filter.domain.scheduling import (
+    Slot,
+    assign_chunks,
+    rank_slots,
+    slot_for,
+    walltime_ladder,
+)
 
 PARIS = ZoneInfo("Europe/Paris")
 # oarsub's refusal when the account has no Abaca priority on a cluster.
@@ -55,8 +61,10 @@ class Settings:
     max_jobs_total: int = 12
     max_jobs_per_site: int = 4
     max_queued_per_site: int = 0
+    night_max_queued_per_site: int | None = None  # None: same as the day value
     walltime: timedelta = timedelta(hours=1)
     night_walltime: timedelta = timedelta(hours=2)
+    night_fallback_walltime: timedelta = timedelta(minutes=30)
     besteffort: bool = False
     gpu_models: list[str] = field(default_factory=list)  # allow-list of gpu keys; empty = admitted
     window: int | None = None  # candidate concurrency (tuning, issue #17); None = GPU profile
@@ -277,7 +285,8 @@ class Controller:
         if self.memory.backed_off(c, now):
             return None
         window = allowed_window(now, starts_now=True) if not c.production else None
-        wall, job_type = self.walltime_for(c, window)
+        ladder, job_type = self.ladder_for(c, window)
+        wall = ladder[0] if ladder else None
         besteffort = self.memory.besteffort_only(c)
         free = free_gpus(
             c,
@@ -296,13 +305,20 @@ class Controller:
             job_type=job_type,
             sentences_per_second=profile_for(self.store, c.gpu).sentences_per_second,
             besteffort=besteffort,
-            queue_room=self.queue_room(c.site, jobs),
+            queue_room=self.queue_room(c.site, jobs, night=not is_daytime(now)),
             queued_wait=QUEUED_WAIT,
+            fallbacks=tuple(ladder[1:]),
         )
 
-    def queue_room(self, site: str, jobs: dict[str, list[g5k.Job]]) -> bool:
+    def queue_room(self, site: str, jobs: dict[str, list[g5k.Job]], *, night: bool = False) -> bool:
         waiting = sum(j.state == "Waiting" for j in jobs.get(site, []))
-        return waiting < self.settings.max_queued_per_site
+        return waiting < self.queue_limit(night=night)
+
+    def queue_limit(self, *, night: bool) -> int:
+        night_limit = self.settings.night_max_queued_per_site
+        if night and night_limit is not None:
+            return night_limit
+        return self.settings.max_queued_per_site
 
     def starts_soon(self, site: str, job_id: str, tolerance: timedelta = LATE_START) -> bool:
         """OAR is the oracle: a job predicted to start > LATE_START from now is not a free slot."""
@@ -326,12 +342,25 @@ class Controller:
     def walltime_for(
         self, cluster: Cluster, window: Window | None
     ) -> tuple[timedelta | None, str | None]:
+        ladder, job_type = self.ladder_for(cluster, window)
+        return (ladder[0] if ladder else None), job_type
+
+    def ladder_for(
+        self, cluster: Cluster, window: Window | None
+    ) -> tuple[tuple[timedelta, ...], str | None]:
+        """Walltimes to try for a slot (preferred first) and the OAR job type."""
         if cluster.production:
-            return self.settings.walltime, None
+            return (self.settings.walltime,), None
         if window is None:
-            return None, None
-        cap = self.settings.walltime if window.job_type is None else self.settings.night_walltime
-        return min(cap, window.max_walltime), window.job_type
+            return (), None
+        ladder = walltime_ladder(
+            window_max=window.max_walltime,
+            night=window.job_type is not None,
+            day=self.settings.walltime,
+            preferred=self.settings.night_walltime,
+            fallback=self.settings.night_fallback_walltime,
+        )
+        return ladder, window.job_type
 
     def submit(
         self, now: datetime, jobs: dict[str, list[g5k.Job]], pending: list[tuple[str, int]]
@@ -352,13 +381,9 @@ class Controller:
                 if time.monotonic() - last_pull >= PULL_INTERVAL:
                     self.pull()  # each submission waits ~20 s: do not let results pile up
                     last_pull = time.monotonic()
-                capacity = slot.sentences_per_second * max(
-                    0.0, (slot.walltime - SETUP).total_seconds()
-                )
-                chunks = assign_chunks(pending, taken, capacity)
+                job_id, chunks = self.launch_ladder(slot, cluster, pending, taken, code_commit)
                 if not chunks:
                     return submitted
-                job_id = self.launch(slot, cluster, chunks, code_commit)
                 if not job_id:
                     break  # this slot refused us; try the next cluster
                 taken.update(chunks)
@@ -366,6 +391,34 @@ class Controller:
                 per_site[slot.site] = per_site.get(slot.site, 0) + 1
                 submitted.append(f"{slot.site}/{cluster.name}:{job_id}")
         return submitted
+
+    def launch_ladder(
+        self,
+        slot: Slot,
+        cluster: Cluster,
+        pending: list[tuple[str, int]],
+        taken: set[str],
+        code_commit: str,
+    ) -> tuple[str | None, list[str]]:
+        """Try the slot's walltimes in order; only the last failure backs the cluster off.
+
+        Every attempt re-assigns chunks for its own walltime; a failed attempt has already
+        released its chunks (its assignment is no longer live). Returns the job id (``None``
+        when every walltime failed) and the chunks of the last attempt (empty: nothing left).
+        """
+        walltimes = (slot.walltime, *slot.fallbacks)
+        chunks: list[str] = []
+        for i, wall in enumerate(walltimes):
+            attempt = replace(slot, walltime=wall)
+            chunks = assign_chunks(pending, taken, _capacity(attempt))
+            if not chunks:
+                return None, []
+            job_id = self.launch(
+                attempt, cluster, chunks, code_commit, final=i == len(walltimes) - 1
+            )
+            if job_id:
+                return job_id, chunks
+        return None, chunks
 
     def _taken_chunks(self) -> set[str]:
         """Chunks held by a live work job of this namespace."""
@@ -423,6 +476,7 @@ class Controller:
         *,
         fp: str | None = None,
         kind: str = "work",
+        final: bool = True,
     ) -> str | None:
         a = self.assignment(slot, chunks, code_commit, fp=fp, kind=kind)
         site = slot.site
@@ -449,11 +503,7 @@ class Controller:
                 g5k.cancel(site, a.job_id)
                 a.state = "cancelled_late_start"
                 self.save(a)
-                self.memory.back_off(cluster.site, cluster.name, self.now + BACKOFF)
-                self.log(
-                    f"{site}/{cluster.name}: job {a.job_id} would start late; "
-                    "cancelled, backing off"
-                )
+                self._late_cancelled(a, cluster, final=final)
                 return None
             a.submitted_at = datetime.now(PARIS).isoformat(timespec="seconds")
             self.save(a)
@@ -472,6 +522,14 @@ class Controller:
             self.log(f"{site}: submission failed: {exc}")
             return None
 
+    def _late_cancelled(self, a: Assignment, cluster: Cluster, *, final: bool) -> None:
+        if final:
+            self.memory.back_off(cluster.site, cluster.name, self.now + BACKOFF)
+        self.log(
+            f"{a.site}/{cluster.name}: job {a.job_id} would start late; cancelled"
+            + (", backing off" if final else ", retrying with a shorter walltime")
+        )
+
     # --- control ---------------------------------------------------------------------
 
     def cancel_all(self) -> list[str]:
@@ -481,6 +539,11 @@ class Controller:
                 g5k.cancel(site, job.job_id)
                 cancelled.append(f"{site}:{job.job_id}")
         return cancelled
+
+
+def _capacity(slot: Slot) -> float:
+    """Sentences a job in ``slot`` is expected to finish once its environment is up."""
+    return slot.sentences_per_second * max(0.0, (slot.walltime - SETUP).total_seconds())
 
 
 ARCHIVE_ATTEMPTS = 3

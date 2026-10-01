@@ -137,3 +137,58 @@ def test_exactly_one_free_gpu_is_a_free_slot_not_a_queued_one():
 
     slot = slot_for(**_slot_args(free=1))
     assert (slot.free_nodes, slot.queued, slot.wait.total_seconds()) == (1, False, 0)
+
+
+def _ladder(window=600, night=True, day=60, preferred=120, fallback=30):
+    from landuse_filter.domain.scheduling import walltime_ladder
+
+    m = timedelta
+    return tuple(
+        int(w.total_seconds() // 60)
+        for w in walltime_ladder(
+            window_max=m(minutes=window),
+            night=night,
+            day=m(minutes=day),
+            preferred=m(minutes=preferred),
+            fallback=m(minutes=fallback),
+        )
+    )
+
+
+def test_night_ladder_is_long_then_fallback():
+    assert _ladder() == (120, 30)
+
+
+def test_night_ladder_is_capped_by_the_window():
+    assert _ladder(window=90) == (90, 30)
+    assert _ladder(window=20) == (20,)
+    assert _ladder(window=0) == ()
+
+
+def test_night_fallback_never_exceeds_the_preferred_walltime():
+    assert _ladder(preferred=20, fallback=30) == (20,)
+    assert _ladder(preferred=30, fallback=30) == (30,)
+
+
+def test_day_ladder_is_single_and_ignores_night_values():
+    assert _ladder(window=60, night=False, day=60) == (60,)
+    assert _ladder(window=45, night=False, day=60) == (45,)
+
+
+def test_slot_for_carries_the_fallbacks():
+    from landuse_filter.domain.scheduling import slot_for
+
+    s = slot_for(
+        site="a",
+        cluster="c",
+        gpu="g",
+        free=1,
+        walltime=timedelta(hours=2),
+        job_type="night",
+        sentences_per_second=1.0,
+        besteffort=False,
+        queue_room=False,
+        queued_wait=timedelta(0),
+        fallbacks=(timedelta(minutes=30),),
+    )
+    assert s.fallbacks == (timedelta(minutes=30),)

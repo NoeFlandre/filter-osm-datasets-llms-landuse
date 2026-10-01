@@ -60,11 +60,18 @@ def g5k_run(
     max_jobs_per_site: int = typer.Option(OPS.max_jobs_per_site),
     walltime_minutes: int = typer.Option(OPS.walltime_minutes),
     night_walltime_minutes: int = typer.Option(
-        OPS.night_walltime_minutes, help="Walltime cap for night/weekend jobs."
+        OPS.night_walltime_minutes, help="Preferred (long) walltime for night/weekend jobs."
+    ),
+    night_fallback_walltime_minutes: int = typer.Option(
+        OPS.night_fallback_walltime_minutes,
+        help="Shorter night walltime retried in the same slot if the long job cannot start.",
     ),
     besteffort: bool = typer.Option(False),
     max_queued_per_site: int = typer.Option(
         1, help="Waiting jobs allowed per site when nothing is free (start predicted < 2 h)."
+    ),
+    night_max_queued_per_site: int | None = typer.Option(
+        None, help="Waiting jobs per site at night/weekend (default: --max-queued-per-site)."
     ),
     window: int | None = typer.Option(
         None, help="Candidate concurrency (tuning); default: GPU profile."
@@ -87,6 +94,8 @@ def g5k_run(
         max_queued_per_site=max_queued_per_site,
         walltime=timedelta(minutes=walltime_minutes),
         night_walltime=timedelta(minutes=night_walltime_minutes),
+        night_fallback_walltime=timedelta(minutes=night_fallback_walltime_minutes),
+        night_max_queued_per_site=night_max_queued_per_site,
         besteffort=besteffort,
         gpu_models=[g for g in gpu_models.split(",") if g],
         window=window,
@@ -108,10 +117,17 @@ def g5k_run_admission(
     max_jobs_per_site: int = typer.Option(3),
     walltime_minutes: int = typer.Option(OPS.walltime_minutes),
     night_walltime_minutes: int = typer.Option(
-        OPS.night_walltime_minutes, help="Walltime cap for night/weekend jobs."
+        OPS.night_walltime_minutes, help="Preferred (long) walltime for night/weekend jobs."
+    ),
+    night_fallback_walltime_minutes: int = typer.Option(
+        OPS.night_fallback_walltime_minutes,
+        help="Shorter night walltime retried in the same slot if the long job cannot start.",
     ),
     max_queued_per_site: int = typer.Option(
         2, help="Waiting jobs allowed per site when nothing is free (night/weekend)."
+    ),
+    night_max_queued_per_site: int | None = typer.Option(
+        None, help="Waiting jobs per site at night/weekend (default: --max-queued-per-site)."
     ),
     interval: int = typer.Option(OPS.interval_seconds),
 ) -> None:
@@ -133,6 +149,8 @@ def g5k_run_admission(
                 max_queued_per_site=max_queued_per_site,
                 walltime=timedelta(minutes=walltime_minutes),
                 night_walltime=timedelta(minutes=night_walltime_minutes),
+                night_fallback_walltime=timedelta(minutes=night_fallback_walltime_minutes),
+                night_max_queued_per_site=night_max_queued_per_site,
                 besteffort=True,
                 gpu_models=[g],
                 namespace=f"gpu-{g}",
