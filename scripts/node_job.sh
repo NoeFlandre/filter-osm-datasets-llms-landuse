@@ -53,6 +53,26 @@ export LD_LIBRARY_PATH="$cuda_root/lib64:$cuda_root/lib:${LD_LIBRARY_PATH:-}"
 export SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1
 fi
 
+# >>> run_forwarding
+# OAR's --checkpoint sends SIGUSR2 to this script only; forward it (and TERM/INT) to the child so
+# `luf node ...` flushes gracefully, then wait for the child's real exit code (regression: bash
+# died with 12 on the unhandled USR2 and python never saw the signal).
+run_forwarding() {
+  local child rc=0
+  "$@" &
+  child=$!
+  trap 'kill -USR2 "$child" 2>/dev/null || true' USR2
+  trap 'kill -TERM "$child" 2>/dev/null || true' TERM
+  trap 'kill -INT "$child" 2>/dev/null || true' INT
+  wait "$child" || rc=$?
+  while kill -0 "$child" 2>/dev/null; do
+    wait "$child" || rc=$?
+  done
+  trap - USR2 TERM INT
+  return "$rc"
+}
+# <<< run_forwarding
+
 cd "$CODE"
 t0=$(date +%s)
 # Always a private env on node-local disk (1-2 min): shared NFS venvs cost ~8 GB of
@@ -81,13 +101,15 @@ env_seconds=$(( $(date +%s) - t0 ))
 export LUF_ENV_READY_SECONDS="$env_seconds"  # recorded in the job timeline (luf node run)
 echo "luf: env ready in ${env_seconds}s ($venv)"
 if [[ "$MODE" == "calibrate" ]]; then
-  luf node calibrate --chunk "$1"
-  exit $?
+  rc=0
+  run_forwarding luf node calibrate --chunk "$1" || rc=$?
+  exit "$rc"
 fi
 if [[ "$MODE" == "repair" ]]; then
   export HF_HOME="$LUF_SCRATCH/hf"
-  luf node repair --dataset "$1"
-  exit $?
+  rc=0
+  run_forwarding luf node repair --dataset "$1" || rc=$?
+  exit "$rc"
 fi
 if [[ "$MODE" == "publish" && -n "${OAR_JOB_ID:-}" ]]; then
   # The job's end time lets `luf node publish` stop starting files 6 minutes before it; silently
@@ -103,11 +125,14 @@ fi
 if [[ "$MODE" != "run" ]]; then
   # Input shards and parts are large: keep them on node-local scratch, never on NFS.
   export HF_HOME="$LUF_SCRATCH/hf"
+  rc=0
   if [[ "$MODE" == "card" ]]; then
-    luf node publish --card-only --dataset "$1" --revision "$2"
+    run_forwarding luf node publish --card-only --dataset "$1" --revision "$2" || rc=$?
   else
-    luf node "$MODE" --dataset "$1" --revision "$2"
+    run_forwarding luf node "$MODE" --dataset "$1" --revision "$2" || rc=$?
   fi
-  exit $?
+  exit "$rc"
 fi
-luf node run --assignment "$ASSIGNMENT"
+rc=0
+run_forwarding luf node run --assignment "$ASSIGNMENT" || rc=$?
+exit "$rc"
