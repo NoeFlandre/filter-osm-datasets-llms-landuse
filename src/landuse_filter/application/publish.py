@@ -242,7 +242,7 @@ def refresh_card_only(
     labelled = len([f for f in total if f"labels/{f}" in done])
     partial = {r["path"] for r in store.compact_jsonl(partial_ledger(dataset))} - done
     if not labelled and not partial:
-        return PublishReport(0, len(total), 0, {})
+        return PublishReport(dataset, 0, len(total), 0, {})
     decisions = _refresh_card(
         store,
         hub,
@@ -253,7 +253,7 @@ def refresh_card_only(
         coverage=Coverage(labelled, len(total), sorted(partial)),
         on_progress=on_progress,
     )
-    return PublishReport(labelled, len(total), 0, decisions, len(partial))
+    return PublishReport(dataset, labelled, len(total), 0, decisions, len(partial))
 
 
 def _prepare(
