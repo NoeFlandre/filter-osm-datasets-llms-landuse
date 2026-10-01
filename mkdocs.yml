@@ -34,6 +34,7 @@ nav:
       - adr/0017-day-walltime-fallback.md
       - adr/0018-over-assignment.md
       - adr/0019-batched-policy-check.md
+      - adr/0020-parallel-submission.md
 markdown_extensions:
   - pymdownx.superfences:
       custom_fences:
