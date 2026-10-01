@@ -121,11 +121,12 @@ def walltime_ladder(
     the fallback never longer than the preferred one, duplicates and non-positive values
     dropped.
     """
-    if night:
-        caps = (preferred, min(fallback, preferred))
-    else:
-        caps = (day,) if day_short is None else (day, min(day_short, day))
-    rungs = [min(cap, window_max) for cap in caps]
+    first, second = (preferred, fallback) if night else (day, day_short or day)
+    rungs = [min(first, window_max), min(second, first, window_max)]
+    return _distinct_positive(rungs)
+
+
+def _distinct_positive(rungs: list[timedelta]) -> tuple[timedelta, ...]:
     return tuple(w for i, w in enumerate(rungs) if w > timedelta(0) and w not in rungs[:i])
 
 

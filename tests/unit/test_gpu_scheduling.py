@@ -235,8 +235,10 @@ def test_without_long_keeps_only_the_shortest_rung():
     m = timedelta
     assert without_long((m(minutes=60), m(minutes=30))) == (m(minutes=30),)
     assert without_long(()) == ()
+    assert without_long((m(minutes=90), m(minutes=60), m(minutes=30))) == (m(minutes=30),)
     assert not long_attempt_tripped(2, 3)
     assert long_attempt_tripped(3, 3)
+    assert (long_attempt_tripped(2), long_attempt_tripped(3)) == (False, True)
 
 
 @given(
