@@ -536,3 +536,115 @@ def test_the_card_is_refreshed_at_the_start_of_a_run_from_the_ledgers(tmp_path, 
     )
     pub.publish(store, WEBSITE, "rev", hub=hub)
     assert order[:2] == ["card", "build"]  # the card first, before the slow loop over files
+
+
+def two_files(tmp_path):
+    store = WorkStore(tmp_path / "work")
+    planner = Planner(store, WEBSITE, config.GENERATION_FP)
+    planner.register(["polygons/a.parquet", "polygons/b.parquet"])
+    planner.scan(lambda _: INPUTS / "website.parquet")
+    return store
+
+
+def stop_after_files(monkeypatch, n):
+    """A stop request that fires once ``n`` input files were built (the mirror is not counted)."""
+    count = {"n": 0}
+    real = pub.build_labels
+
+    def counting(*args, **kwargs):
+        count["n"] += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(pub, "build_labels", counting)
+    return lambda: "signal SIGUSR2" if count["n"] >= n else None
+
+
+def test_a_stop_in_the_middle_flushes_refreshes_the_card_and_the_next_run_resumes(
+    tmp_path, monkeypatch
+):
+    hub = fake_hub(tmp_path)
+    hub.files = ["polygons/a.parquet", "polygons/b.parquet"]
+    store = two_files(tmp_path)
+    generate_all(store)
+    report = pub.publish(
+        store, WEBSITE, "rev", hub=hub, should_stop=stop_after_files(monkeypatch, 1)
+    )
+    assert report.stopped == "signal SIGUSR2"
+    assert (report.labelled_files, report.total_files) == (1, 2)
+    flat = [p for batch in hub.uploads for p in batch]
+    assert "labels/polygons/a.parquet" in flat
+    assert "labels/polygons/b.parquet" not in flat
+    assert any(p.startswith("generations/") for p in flat)  # shipped with the finished file
+    done = {r["path"] for r in store.read_jsonl(f"published/{WEBSITE}.jsonl")}
+    assert "labels/polygons/a.parquet" in done
+    assert "README.md" in flat  # the card was refreshed after the stop
+    assert store.path(f"published/{WEBSITE}.card.sha256").exists()
+    before = len(hub.uploads)
+    resumed = pub.publish(store, WEBSITE, "rev", hub=hub)
+    assert resumed.stopped is None
+    assert resumed.labelled_files == 2
+    again = [p for batch in hub.uploads[before:] for p in batch]
+    assert "labels/polygons/b.parquet" in again
+    assert "labels/polygons/a.parquet" not in again  # not redone
+
+
+def test_a_stop_flushes_the_pending_partial_files_and_records_them(tmp_path, monkeypatch):
+    hub = fake_hub(tmp_path)
+    hub.files = ["polygons/a.parquet", "polygons/b.parquet"]
+    store = two_files(tmp_path)
+    generate_some(store, "p1", 0, 20)
+    saved = []
+    report = pub.publish(
+        store,
+        WEBSITE,
+        "rev",
+        hub=hub,
+        on_progress=lambda: saved.append(1),
+        should_stop=stop_after_files(monkeypatch, 1),
+    )
+    assert report.stopped
+    ledger = {r["path"] for r in store.read_jsonl(pub.partial_ledger(WEBSITE))}
+    assert ledger == {"labels/polygons/a.parquet"}
+    assert saved  # the ledgers were handed to the bucket
+    assert "pending" in hub.sources["README.md"].read_text()
+    before = len(hub.uploads)
+    pub.publish(store, WEBSITE, "rev", hub=hub)
+    again = [p for batch in hub.uploads[before:] for p in batch]
+    assert "labels/polygons/a.parquet" not in again
+    assert "labels/polygons/b.parquet" in again
+
+
+def test_a_stop_during_the_mirror_leaves_the_ledger_consistent_and_resumes(tmp_path, monkeypatch):
+    monkeypatch.setattr(pub, "BATCH", 2)
+    names = [f"f{i}.bin" for i in range(5)]
+    hub = FakeHub(tmp_path, names)
+    store = WorkStore(tmp_path / "work")
+    stops = iter([False, False, True])
+    pub._mirror(
+        hub,
+        store,
+        "d",
+        input_repo="in",
+        revision="r",
+        repo="out",
+        done=set(),
+        should_stop=lambda: next(stops),
+    )
+    assert hub.uploads == [names[:2], names[2:4]]
+    ledger = {r["path"] for r in store.read_jsonl(pub.mirror_ledger("d"))}
+    assert ledger == {p for batch in hub.uploads for p in batch}  # what is up is what is recorded
+    assert not list(store.read_jsonl("published/d.jsonl"))  # no mirror marker: not finished
+    hub2 = FakeHub(tmp_path, names)
+    pub._mirror(hub2, store, "d", input_repo="in", revision="r", repo="out", done=set())
+    assert hub2.uploads == [names[4:]]
+
+
+def test_publish_stopped_in_the_mirror_does_no_file_work(tmp_path, monkeypatch):
+    monkeypatch.setattr(pub, "BATCH", 1)
+    hub = fake_hub(tmp_path)
+    store = planned(tmp_path)
+    generate_all(store)
+    report = pub.publish(store, WEBSITE, "rev", hub=hub, should_stop=lambda: "deadline")
+    assert report.stopped == "deadline"
+    assert hub.uploads == []
+    assert report.labelled_files == 0

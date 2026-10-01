@@ -14,6 +14,8 @@ from landuse_filter.cli import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from landuse_filter.application.remote_plan import PlanInputs
 
 
@@ -160,6 +162,22 @@ def node_calibrate(
     typer.echo(json.dumps(profile))
 
 
+def _stop_watch() -> "Callable[[], str | None]":
+    """Reason to wind down, once SIGTERM/SIGUSR2/SIGINT arrived (OAR's checkpoint, 5 minutes
+    before the end) or the job deadline from ``LUF_JOB_DEADLINE_EPOCH`` is near."""
+    import os
+    import signal
+    import time
+
+    from landuse_filter.domain.stop import deadline_from_env, stop_reason
+
+    received: list[str] = []
+    for sig in (signal.SIGTERM, signal.SIGUSR2, signal.SIGINT):
+        signal.signal(sig, lambda n, _f: received.append(signal.Signals(n).name))
+    deadline = deadline_from_env(os.environ)
+    return lambda: stop_reason(time.time(), deadline, received[0] if received else None)
+
+
 @node_app.command("publish")
 def node_publish(
     dataset: str = typer.Option(...),
@@ -173,7 +191,16 @@ def node_publish(
     from landuse_filter.application.remote_publish import run_publish
 
     scratch = _store(config.scratch_dir())
-    report = run_publish(BucketRemote(bucket), scratch, dataset, revision, config.GENERATION_FP)
+    report = run_publish(
+        BucketRemote(bucket),
+        scratch,
+        dataset,
+        revision,
+        config.GENERATION_FP,
+        should_stop=_stop_watch(),
+    )
+    if report.stopped:
+        typer.echo(f"luf: publish stopped early ({report.stopped}); ledgers and card are saved")
     typer.echo(json.dumps(asdict(report)))
 
 

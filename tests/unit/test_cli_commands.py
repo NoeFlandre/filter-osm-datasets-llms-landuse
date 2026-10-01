@@ -297,11 +297,13 @@ def test_node_publish_passes_dataset_revision_bucket(monkeypatch, tmp_path):
     monkeypatch.setattr(remote_mod, "BucketRemote", lambda bucket: ("remote", bucket))
     seen = {}
 
-    def fake(rem, scratch, dataset, revision, fp):
+    def fake(rem, scratch, dataset, revision, fp, *, should_stop):
         seen.update(rem=rem, dataset=dataset, revision=revision, fp=fp)
+        assert should_stop() is None
         return results_report
 
-    results_report = SimpleNamespace(new_files=2)
+    results_report = SimpleNamespace(new_files=2, stopped=None)
+    monkeypatch.setattr("signal.signal", lambda *_: None)
     monkeypatch.setattr(remote_publish, "run_publish", fake)
     monkeypatch.setattr("dataclasses.asdict", lambda r: {"new_files": r.new_files})
     result = invoke("node", "publish", "--dataset", "d", "--revision", "r", "--bucket", "x/y")
@@ -489,3 +491,24 @@ def test_publish_exit_4_when_nothing_new(monkeypatch, tmp_path):
     result = invoke("publish", "--dataset", "d", "--revision", "r", "--work", tmp_path, "--dry-run")
     assert result.exit_code == 4
     assert seen["a"] == ("d", "r", True)
+
+
+def test_stop_watch_reports_signals_and_the_deadline(monkeypatch):
+    import os
+    import signal
+    import time
+
+    from landuse_filter.cli.node import _stop_watch
+
+    old = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGUSR2, signal.SIGINT)}
+    try:
+        monkeypatch.delenv("LUF_JOB_DEADLINE_EPOCH", raising=False)
+        watch = _stop_watch()
+        assert watch() is None
+        os.kill(os.getpid(), signal.SIGUSR2)
+        assert watch() == "signal SIGUSR2"
+        monkeypatch.setenv("LUF_JOB_DEADLINE_EPOCH", str(time.time() + 60))
+        assert _stop_watch()() == "deadline"  # within the 6-minute margin
+    finally:
+        for s, handler in old.items():
+            signal.signal(s, handler)
