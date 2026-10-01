@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
+from landuse_filter.domain.policy_check import MODES, PER_JOB
+
 T = TypeVar("T")
 
 SCHEMA_VERSION = 1
@@ -28,6 +30,7 @@ class OpsSettings:
     day_walltime_minutes: int | None = None  # None: same as walltime_minutes
     day_long_max_failures: int = 3
     chunk_overflow: float = 1.2  # work assigned per job = capacity x this (ADR-0018)
+    policy_check: str = PER_JOB  # usagepolicycheck cadence (ADR-0019)
 
     def output_repo(self, dataset: str) -> str:
         return f"{self.namespace}/{dataset}-landuse"
@@ -89,6 +92,13 @@ def _overflow(g5k: Mapping[str, Any]) -> float:
     return float(value)
 
 
+def _policy_check(g5k: Mapping[str, Any]) -> str:
+    value = g5k.get("policy_check", PER_JOB)
+    if value not in MODES:
+        raise SettingsError(f"luf.toml: 'policy_check' must be one of {', '.join(MODES)}")
+    return value
+
+
 def parse_settings(raw: Mapping[str, Any]) -> OpsSettings:
     if raw.get("schema_version") != SCHEMA_VERSION:
         raise SettingsError(f"luf.toml: schema_version must be {SCHEMA_VERSION}")
@@ -99,6 +109,7 @@ def parse_settings(raw: Mapping[str, Any]) -> OpsSettings:
         if "day_long_max_failures" in g5k
         else 3,
         chunk_overflow=_overflow(g5k),
+        policy_check=_policy_check(g5k),
         namespace=_need(hub, "namespace", str),
         bucket=_need(hub, "bucket", str),
         sites=_sites(g5k),

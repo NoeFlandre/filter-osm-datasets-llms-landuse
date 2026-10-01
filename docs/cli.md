@@ -281,6 +281,16 @@ Usage: root g5k run [OPTIONS]
 │                                                                          return to the pool at   │
 │                                                                          the checkpoint signal.  │
 │                                                                          [default: 1.2]          │
+│    --policy-check                                <per-job|per-batch>     usagepolicycheck        │
+│                                                                          cadence: per-job        │
+│                                                                          (before and after every │
+│                                                                          submission) or          │
+│                                                                          per-batch (once per     │
+│                                                                          site before its first   │
+│                                                                          submission of a cycle   │
+│                                                                          and once after its      │
+│                                                                          last; see ADR-0019).    │
+│                                                                          [default: per-job]      │
 │    --night-walltime-minut…                       <int>                   Preferred (long)        │
 │                                                                          walltime for            │
 │                                                                          night/weekend jobs.     │
@@ -353,6 +363,13 @@ Usage: root g5k run-admission [OPTIONS]
 │                                                                  unfinished chunks return to the │
 │                                                                  pool at the checkpoint signal.  │
 │                                                                  [default: 1.2]                  │
+│    --policy-check                        <per-job|per-batch>     usagepolicycheck cadence:       │
+│                                                                  per-job (before and after every │
+│                                                                  submission) or per-batch (once  │
+│                                                                  per site before its first       │
+│                                                                  submission of a cycle and once  │
+│                                                                  after its last; see ADR-0019).  │
+│                                                                  [default: per-job]              │
 │    --night-walltime-minutes              <int>                   Preferred (long) walltime for   │
 │                                                                  night/weekend jobs.             │
 │                                                                  [default: 120]                  │

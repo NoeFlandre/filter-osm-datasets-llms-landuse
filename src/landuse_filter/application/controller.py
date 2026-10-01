@@ -24,6 +24,7 @@ from landuse_filter.adapters.store import WorkStore
 from landuse_filter.application.assignment import Assignment, CycleReport
 from landuse_filter.application.inventory import admission, eligible, load_clusters, profile_for
 from landuse_filter.application.memory import ClusterMemory
+from landuse_filter.application.policy_gate import PolicyGate
 from landuse_filter.application.site_cache import SiteCache
 from landuse_filter.application.staging import Transport
 from landuse_filter.application.work_progress import WorkProgress
@@ -31,6 +32,7 @@ from landuse_filter.domain.capacity import Cluster, free_gpus, oarsub_arguments
 from landuse_filter.domain.fingerprint import config_fingerprint, serving_fingerprint
 from landuse_filter.domain.gpu import Admission, gpu_key
 from landuse_filter.domain.policy import Window, allowed_window, is_daytime
+from landuse_filter.domain.policy_check import PER_JOB
 from landuse_filter.domain.prompting import PROMPT_SHA256
 from landuse_filter.domain.scheduling import (
     LONG_FAILURES,
@@ -77,6 +79,7 @@ class Settings:
     namespace: str | None = None  # results of a candidate config live under <fp>-<namespace>
     bucket: str = "NoeFlandre/landuse-filter-work"  # private HF Bucket: chunks, parts (ADR-0009)
     paused: bool = False
+    policy_check: str = PER_JOB  # "per-batch": one usage-policy check per site and cycle (ADR-0019)
 
 
 DEPLOY_REF = "origin/main"
@@ -124,6 +127,7 @@ class Controller:
         self.fp = config_fingerprint(self.cfg)
         self.now = datetime.now(PARIS)
         self.memory = ClusterMemory(store)
+        self.policy = PolicyGate(settings.policy_check, log)
         self.transport = Transport(
             store, remote or BucketRemote(settings.bucket), settings.bucket, log
         )
@@ -389,27 +393,36 @@ class Controller:
         total = sum(len(v) for v in jobs.values())
         per_site = {s: len(v) for s, v in jobs.items()}
         code_commit = commit()
+        self.policy.begin_cycle()
         last_pull = time.monotonic()
-        for slot, cluster in self.candidate_slots(now, jobs):
-            for _ in range(slot.free_nodes):
-                if (
-                    total >= self.settings.max_jobs_total
-                    or per_site.get(slot.site, 0) >= self.settings.max_jobs_per_site
-                ):
-                    break
-                if time.monotonic() - last_pull >= PULL_INTERVAL:
-                    self.pull()  # each submission waits ~20 s: do not let results pile up
-                    last_pull = time.monotonic()
-                job_id, chunks = self.launch_ladder(slot, cluster, pending, taken, code_commit)
-                if not chunks:
-                    return submitted
-                if not job_id:
-                    break  # this slot refused us; try the next cluster
-                taken.update(chunks)
-                total += 1
-                per_site[slot.site] = per_site.get(slot.site, 0) + 1
-                submitted.append(f"{slot.site}/{cluster.name}:{job_id}")
+        try:
+            for slot, cluster in self.candidate_slots(now, jobs):
+                for _ in range(slot.free_nodes):
+                    if not self._room(slot.site, total, per_site):
+                        break
+                    if time.monotonic() - last_pull >= PULL_INTERVAL:
+                        self.pull()  # each submission waits ~20 s: do not let results pile up
+                        last_pull = time.monotonic()
+                    job_id, chunks = self.launch_ladder(slot, cluster, pending, taken, code_commit)
+                    if not chunks:
+                        return submitted
+                    if not job_id:
+                        break  # this slot refused us; try the next cluster
+                    taken.update(chunks)
+                    total += 1
+                    per_site[slot.site] = per_site.get(slot.site, 0) + 1
+                    submitted.append(f"{slot.site}/{cluster.name}:{job_id}")
+        finally:
+            self.policy.finish_all()
         return submitted
+
+    def _room(self, site: str, total: int, per_site: dict[str, int]) -> bool:
+        """Whether another job may be submitted on ``site`` (caps, policy check not failed)."""
+        return (
+            total < self.settings.max_jobs_total
+            and per_site.get(site, 0) < self.settings.max_jobs_per_site
+            and not self.policy.blocked(site)
+        )
 
     def launch_ladder(
         self,
@@ -436,6 +449,8 @@ class Controller:
             job_id = self.launch(
                 attempt, cluster, chunks, code_commit, final=i == len(walltimes) - 1
             )
+            if job_id is None and self.policy.blocked(slot.site):
+                return None, chunks  # the policy check failed: no other walltime will do
             if i == 0 and long_try:
                 self._note_long(cluster, walltimes, ok=bool(job_id))
             if job_id:
@@ -526,7 +541,7 @@ class Controller:
         try:
             code = g5k.deploy_code(site, code_commit, git_archive(code_commit))
             self.transport.stage(site, a)
-            g5k.policy_check(site)
+            self.policy.before(site)
             self.save(a)  # before oarsub: crash-safe
             command = f"{code}/scripts/node_job.sh {code} {a.id}"
             args = oarsub_arguments(
@@ -550,7 +565,7 @@ class Controller:
                 return None
             a.submitted_at = datetime.now(PARIS).isoformat(timespec="seconds")
             self.save(a)
-            g5k.policy_check(site)
+            self.policy.after_job(site)
             self.log(
                 f"submitted {a.name} on {site}/{cluster.name} "
                 f"({len(chunks)} chunks): job {a.job_id}"

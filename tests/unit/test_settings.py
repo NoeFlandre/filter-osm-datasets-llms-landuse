@@ -119,3 +119,17 @@ def test_chunk_overflow_defaults_validates_and_reads_environment():
             parse_settings(raw)
     with pytest.raises(SettingsError, match="LUF_CHUNK_OVERFLOW"):
         with_environment(good(), {"LUF_CHUNK_OVERFLOW": "abc"})
+
+
+def test_policy_check_defaults_validates_and_reads_environment():
+    from landuse_filter.adapters.settings_file import with_environment
+
+    assert parse_settings(good()).policy_check == "per-job"
+    raw = good()
+    raw["grid5000"]["policy_check"] = "per-batch"
+    assert parse_settings(raw).policy_check == "per-batch"
+    env = with_environment(good(), {"LUF_POLICY_CHECK": "per-batch"})
+    assert parse_settings(env).policy_check == "per-batch"
+    raw["grid5000"]["policy_check"] = "sometimes"
+    with pytest.raises(SettingsError, match="'policy_check' must be one of per-job, per-batch"):
+        parse_settings(raw)

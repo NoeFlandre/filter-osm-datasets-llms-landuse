@@ -28,6 +28,7 @@ ENV_FIELDS = {
     "sites": "grid5000",
     "cuda_module": "grid5000",
     "chunk_overflow": "grid5000",
+    "policy_check": "grid5000",
     **dict.fromkeys((*INT_FIELDS, *OPTIONAL_INT_FIELDS), "grid5000"),
 }
 

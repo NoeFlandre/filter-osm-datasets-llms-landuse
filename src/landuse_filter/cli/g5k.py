@@ -14,6 +14,7 @@ from landuse_filter.cli import (
     _store,
     g5k_app,
 )
+from landuse_filter.domain.policy_check import PolicyCheck
 
 if TYPE_CHECKING:
     from landuse_filter.adapters.store import WorkStore
@@ -74,6 +75,12 @@ def g5k_run(
         help="Work given to a job = expected capacity x this (>= 1.0); unfinished chunks "
         "return to the pool at the checkpoint signal.",
     ),
+    policy_check: PolicyCheck = typer.Option(
+        PolicyCheck(OPS.policy_check),
+        help="usagepolicycheck cadence: per-job (before and after every submission) or "
+        "per-batch (once per site before its first submission of a cycle and once after "
+        "its last; see ADR-0019).",
+    ),
     night_walltime_minutes: int = typer.Option(
         OPS.night_walltime_minutes, help="Preferred (long) walltime for night/weekend jobs."
     ),
@@ -111,6 +118,7 @@ def g5k_run(
         day_walltime=timedelta(minutes=day_walltime_minutes or walltime_minutes),
         day_long_max_failures=day_long_max_failures,
         chunk_overflow=chunk_overflow,
+        policy_check=policy_check.value,
         night_walltime=timedelta(minutes=night_walltime_minutes),
         night_fallback_walltime=timedelta(minutes=night_fallback_walltime_minutes),
         night_max_queued_per_site=night_max_queued_per_site,
@@ -149,6 +157,12 @@ def g5k_run_admission(
         help="Work given to a job = expected capacity x this (>= 1.0); unfinished chunks "
         "return to the pool at the checkpoint signal.",
     ),
+    policy_check: PolicyCheck = typer.Option(
+        PolicyCheck(OPS.policy_check),
+        help="usagepolicycheck cadence: per-job (before and after every submission) or "
+        "per-batch (once per site before its first submission of a cycle and once after "
+        "its last; see ADR-0019).",
+    ),
     night_walltime_minutes: int = typer.Option(
         OPS.night_walltime_minutes, help="Preferred (long) walltime for night/weekend jobs."
     ),
@@ -184,6 +198,7 @@ def g5k_run_admission(
                 day_walltime=timedelta(minutes=day_walltime_minutes or walltime_minutes),
                 day_long_max_failures=day_long_max_failures,
                 chunk_overflow=chunk_overflow,
+                policy_check=policy_check.value,
                 night_walltime=timedelta(minutes=night_walltime_minutes),
                 night_fallback_walltime=timedelta(minutes=night_fallback_walltime_minutes),
                 night_max_queued_per_site=night_max_queued_per_site,
