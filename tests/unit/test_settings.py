@@ -133,3 +133,19 @@ def test_policy_check_defaults_validates_and_reads_environment():
     raw["grid5000"]["policy_check"] = "sometimes"
     with pytest.raises(SettingsError, match="'policy_check' must be one of per-job, per-batch"):
         parse_settings(raw)
+
+
+def test_submit_workers_defaults_validates_and_reads_environment():
+    from landuse_filter.adapters.settings_file import with_environment
+
+    assert parse_settings(good()).submit_workers == 1
+    raw = good()
+    raw["grid5000"]["submit_workers"] = 8
+    assert parse_settings(raw).submit_workers == 8
+    raw["grid5000"]["submit_workers"] = 1
+    assert parse_settings(raw).submit_workers == 1  # boundary
+    env = with_environment(good(), {"LUF_SUBMIT_WORKERS": "4"})
+    assert parse_settings(env).submit_workers == 4
+    raw["grid5000"]["submit_workers"] = 0
+    with pytest.raises(SettingsError, match="'submit_workers' must be positive"):
+        parse_settings(raw)

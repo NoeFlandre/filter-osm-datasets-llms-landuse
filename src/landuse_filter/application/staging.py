@@ -5,6 +5,7 @@ receives just the small assignment file, and the controller pulls only manifests
 job summaries. There is no other transport.
 """
 
+import threading
 from collections.abc import Callable
 
 from landuse_filter.adapters import g5k
@@ -23,6 +24,7 @@ class Transport:
         self.remote = remote
         self.bucket_id = bucket_id
         self.log = log
+        self._bucket_lock = threading.Lock()  # one bucket upload at a time across sites
 
     def stage(self, site: str, a: Assignment) -> None:
         """Upload the assignment's chunk inputs once and ship the assignment file."""
@@ -40,6 +42,10 @@ class Transport:
         local = [c for c in chunks if self.store.exists(f"chunks/{c}.parquet")]
         if not local:  # planned on a node: already in the bucket, and listing it takes ~a minute
             return
+        with self._bucket_lock:
+            self._upload(local)
+
+    def _upload(self, local: list[str]) -> None:
         present = set(self.remote.ls("chunks/"))
         todo = [c for c in local if f"chunks/{c}.parquet" not in present]
         self.remote.put(

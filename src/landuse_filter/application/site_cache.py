@@ -1,5 +1,7 @@
 """One view of each site per cycle, shared by several controllers (issue #44)."""
 
+import threading
+
 from landuse_filter.adapters import g5k
 
 
@@ -13,15 +15,20 @@ class SiteCache:
     def __init__(self) -> None:
         self._jobs: dict[str, list[g5k.Job]] = {}
         self._status: dict[str, dict] = {}
+        self._lock = threading.Lock()  # submission workers invalidate sites concurrently
 
     def reset(self) -> None:
         self._jobs.clear()
         self._status.clear()
 
     def our_jobs(self, site: str) -> list[g5k.Job]:
-        if site not in self._jobs:
-            self._jobs[site] = g5k.our_jobs(site)
-        return list(self._jobs[site])
+        with self._lock:
+            known = self._jobs.get(site)
+        if known is None:
+            known = g5k.our_jobs(site)
+            with self._lock:
+                self._jobs[site] = known
+        return list(known)
 
     def site_status(self, site: str) -> dict:
         if site not in self._status:
@@ -29,4 +36,5 @@ class SiteCache:
         return self._status[site]
 
     def invalidate(self, site: str) -> None:
-        self._jobs.pop(site, None)
+        with self._lock:
+            self._jobs.pop(site, None)

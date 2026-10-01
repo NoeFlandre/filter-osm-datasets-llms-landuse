@@ -59,6 +59,7 @@ class PolicyGate:
             return
         with self._lock:
             due = check_due(self.mode, AFTER, checked_before=site in self._checked)
+            self._checked.discard(site)  # finished: finish_all() must not recheck it
         if not due:
             return
         try:

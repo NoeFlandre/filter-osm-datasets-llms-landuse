@@ -8,10 +8,12 @@ tree, so killing the controller at any point loses nothing.
 
 import json
 import subprocess
+import threading
 import time
 import traceback
 import uuid
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -31,6 +33,7 @@ from landuse_filter.application.work_progress import WorkProgress
 from landuse_filter.domain.capacity import Cluster, free_gpus, oarsub_arguments
 from landuse_filter.domain.fingerprint import config_fingerprint, serving_fingerprint
 from landuse_filter.domain.gpu import Admission, gpu_key
+from landuse_filter.domain.launch_plan import Planned, by_site, plan_launches
 from landuse_filter.domain.policy import Window, allowed_window, is_daytime
 from landuse_filter.domain.policy_check import PER_JOB
 from landuse_filter.domain.prompting import PROMPT_SHA256
@@ -79,6 +82,7 @@ class Settings:
     namespace: str | None = None  # results of a candidate config live under <fp>-<namespace>
     bucket: str = "NoeFlandre/landuse-filter-work"  # private HF Bucket: chunks, parts (ADR-0009)
     paused: bool = False
+    submit_workers: int = 1  # sites submitted to in parallel (ADR-0020); 1 = in turn
     policy_check: str = PER_JOB  # "per-batch": one usage-policy check per site and cycle (ADR-0019)
 
 
@@ -119,10 +123,12 @@ class Controller:
         sites: "SiteCache | None" = None,
         remote: "Remote | None" = None,
     ) -> None:
+        log = _serialised(log)  # sites submitted in parallel log from several threads
         self.store = store
         self.sites = sites  # shared per-cycle view when several controllers run together
         self.settings = settings
         self.log = log
+        self._chunk_lock = threading.Lock()  # guards the shared ``taken`` set
         self.cfg = config.reference_config()
         self.fp = config_fingerprint(self.cfg)
         self.now = datetime.now(PARIS)
@@ -190,7 +196,13 @@ class Controller:
         report = CycleReport(len(pending), sum(len(v) for v in jobs.values()))
         if self.settings.paused or not pending:
             return report
+        started = time.monotonic()
         report.submitted = self.submit(now, jobs, pending)
+        sites = {j.split("/", 1)[0] for j in report.submitted}
+        self.log(
+            f"cycle submitted {len(report.submitted)} jobs in "
+            f"{time.monotonic() - started:.0f} s (sites {len(sites)})"
+        )
         return report
 
     def reconcile(self) -> dict[str, list[g5k.Job]]:
@@ -388,6 +400,8 @@ class Controller:
     def submit(
         self, now: datetime, jobs: dict[str, list[g5k.Job]], pending: list[tuple[str, int]]
     ) -> list[str]:
+        if self.settings.submit_workers > 1:
+            return self._submit_parallel(now, jobs, pending)
         submitted: list[str] = []
         taken = self._taken_chunks()
         total = sum(len(v) for v in jobs.values())
@@ -424,6 +438,79 @@ class Controller:
             and not self.policy.blocked(site)
         )
 
+    def _submit_parallel(
+        self, now: datetime, jobs: dict[str, list[g5k.Job]], pending: list[tuple[str, int]]
+    ) -> list[str]:
+        """Decide everything first (single thread, deterministic), then launch per site.
+
+        One worker runs one site's launches in order (ssh, oarsub and the policy check
+        are per site); different sites run concurrently, up to ``submit_workers``.
+        Results come back in plan order, whatever order the threads finished in.
+        """
+        taken = self._taken_chunks()
+        code_commit = commit()
+        self.policy.begin_cycle()
+        plan = plan_launches(
+            self.candidate_slots(now, jobs),
+            pending,
+            taken,
+            capacity=_capacity,
+            overflow=self.settings.chunk_overflow,
+            max_total=self.settings.max_jobs_total,
+            max_per_site=self.settings.max_jobs_per_site,
+            total=sum(len(v) for v in jobs.values()),
+            per_site={s: len(v) for s, v in jobs.items()},
+        )
+        taken.update(c for p in plan for c in p.chunks)
+        groups = by_site(plan)
+        done: dict[int, str] = {}
+        if groups:
+            workers = min(self.settings.submit_workers, len(groups))
+            with ThreadPoolExecutor(workers, thread_name_prefix="submit") as pool:
+                futures = {
+                    site: pool.submit(self._run_site, site, items, pending, taken, code_commit)
+                    for site, items in groups.items()
+                }
+            for site, future in futures.items():
+                try:
+                    done.update(future.result())
+                except Exception as exc:  # noqa: BLE001 - one site's bug must not hide the others
+                    log_failure(self.log, f"{site}: submission worker failed", exc)
+        self.policy.finish_all()
+        return [done[i] for i in sorted(done)]
+
+    def _run_site(
+        self,
+        site: str,
+        items: list[Planned[Cluster]],
+        pending: list[tuple[str, int]],
+        taken: set[str],
+        code_commit: str,
+    ) -> dict[int, str]:
+        """Launch one site's planned jobs in order; a refusing slot is skipped from then on."""
+        done: dict[int, str] = {}
+        refused: set[str] = set()
+        try:
+            for p in items:
+                cluster = p.payload
+                if cluster.name in refused or self.policy.blocked(site):
+                    self._release(taken, list(p.chunks))
+                    continue
+                job_id, _ = self.launch_ladder(
+                    p.slot, cluster, pending, taken, code_commit, reserved=list(p.chunks)
+                )
+                if job_id:
+                    done[p.index] = f"{site}/{cluster.name}:{job_id}"
+                else:
+                    refused.add(cluster.name)
+        finally:
+            self.policy.finish(site)
+        return done
+
+    def _release(self, taken: set[str], chunks: list[str]) -> None:
+        with self._chunk_lock:
+            taken.difference_update(chunks)
+
     def launch_ladder(
         self,
         slot: Slot,
@@ -431,19 +518,39 @@ class Controller:
         pending: list[tuple[str, int]],
         taken: set[str],
         code_commit: str,
+        *,
+        reserved: list[str] | None = None,
     ) -> tuple[str | None, list[str]]:
         """Try the slot's walltimes in order; only the last failure backs the cluster off.
 
         Every attempt re-assigns chunks for its own walltime; a failed attempt has already
         released its chunks (its assignment is no longer live). Returns the job id (``None``
         when every walltime failed) and the chunks of the last attempt (empty: nothing left).
+
+        ``reserved`` (parallel submission): the chunks already held in ``taken`` for the
+        first attempt; they are returned to the pool when the slot ends without a job.
         """
+        job_id, chunks = self._climb(slot, cluster, pending, taken, code_commit, reserved=reserved)
+        if reserved is not None and not job_id:
+            self._release(taken, chunks)
+        return job_id, chunks
+
+    def _climb(
+        self,
+        slot: Slot,
+        cluster: Cluster,
+        pending: list[tuple[str, int]],
+        taken: set[str],
+        code_commit: str,
+        *,
+        reserved: list[str] | None,
+    ) -> tuple[str | None, list[str]]:
         walltimes = (slot.walltime, *slot.fallbacks)
-        chunks: list[str] = []
+        chunks: list[str] | None = None
         long_try = len(walltimes) > 1 and is_daytime(self.now)
         for i, wall in enumerate(walltimes):
             attempt = replace(slot, walltime=wall)
-            chunks = assign_chunks(pending, taken, _capacity(attempt), self.settings.chunk_overflow)
+            chunks = self._chunks_for(attempt, pending, taken, reserved, chunks)
             if not chunks:
                 return None, []
             job_id = self.launch(
@@ -455,7 +562,32 @@ class Controller:
                 self._note_long(cluster, walltimes, ok=bool(job_id))
             if job_id:
                 return job_id, chunks
-        return None, chunks
+        return None, chunks or []
+
+    def _chunks_for(
+        self,
+        attempt: Slot,
+        pending: list[tuple[str, int]],
+        taken: set[str],
+        reserved: list[str] | None,
+        previous: list[str] | None,
+    ) -> list[str]:
+        """Chunks for one attempt at its walltime.
+
+        Sequential: assigned now (``taken`` is only updated once a job exists). Parallel:
+        the first attempt keeps the planned chunks; a retry gives its chunks back and
+        takes what fits its own walltime, under the lock shared by every site's worker.
+        """
+        overflow = self.settings.chunk_overflow
+        if reserved is None:
+            return assign_chunks(pending, taken, _capacity(attempt), overflow)
+        if previous is None:
+            return list(reserved)
+        with self._chunk_lock:
+            taken.difference_update(previous)
+            chunks = assign_chunks(pending, taken, _capacity(attempt), overflow)
+            taken.update(chunks)
+        return chunks
 
     def _note_long(self, cluster: Cluster, walltimes: tuple[timedelta, ...], *, ok: bool) -> None:
         """Count a day long attempt; log the fallback and any throttle (parseable lines)."""
@@ -599,6 +731,16 @@ class Controller:
         return cancelled
 
 
+def _serialised(log: Callable[[str], None]) -> Callable[[str], None]:
+    lock = threading.Lock()
+
+    def locked(message: str) -> None:
+        with lock:
+            log(message)
+
+    return locked
+
+
 def _minutes(wall: timedelta) -> int:
     return int(wall.total_seconds() // 60)
 
@@ -640,18 +782,20 @@ class ArchiveCache:
         self.attempts = attempts
         self.delay = delay
         self.cache: dict[str, bytes] = {}
+        self._lock = threading.Lock()  # parallel launches read a commit once
 
     def __call__(self, ref: str) -> bytes:
-        if ref not in self.cache:
-            for attempt in range(self.attempts):
-                try:
-                    self.cache[ref] = self.read(ref)
-                    break
-                except subprocess.CalledProcessError:
-                    if attempt == self.attempts - 1:
-                        raise
-                    self.sleep(self.delay)
-        return self.cache[ref]
+        with self._lock:
+            if ref not in self.cache:
+                for attempt in range(self.attempts):
+                    try:
+                        self.cache[ref] = self.read(ref)
+                        break
+                    except subprocess.CalledProcessError:
+                        if attempt == self.attempts - 1:
+                            raise
+                        self.sleep(self.delay)
+            return self.cache[ref]
 
 
 _ARCHIVES = ArchiveCache()

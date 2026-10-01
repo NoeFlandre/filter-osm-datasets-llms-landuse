@@ -9,7 +9,7 @@ Every setting has one documented source order, lowest to highest precedence:
    namespace, bucket, Grid'5000 sites, walltimes, job caps, interval, CUDA module.
 3. **Environment variables**: `LUF_<FIELD>` for each `luf.toml` field
    (`LUF_NAMESPACE`, `LUF_BUCKET`, `LUF_SITES` comma separated, `LUF_WALLTIME_MINUTES`,
-   `LUF_NIGHT_WALLTIME_MINUTES`, `LUF_NIGHT_FALLBACK_WALLTIME_MINUTES`, `LUF_MAX_JOBS`, `LUF_MAX_JOBS_PER_SITE`, `LUF_POLICY_CHECK`,
+   `LUF_NIGHT_WALLTIME_MINUTES`, `LUF_NIGHT_FALLBACK_WALLTIME_MINUTES`, `LUF_MAX_JOBS`, `LUF_MAX_JOBS_PER_SITE`, `LUF_POLICY_CHECK`, `LUF_SUBMIT_WORKERS`,
    `LUF_INTERVAL_SECONDS`, `LUF_CUDA_MODULE`), plus `LUF_WORK` (local work tree,
    default `work`) and `LUF_SCRATCH` (node-local scratch, default `/tmp/luf-scratch`).
 4. **CLI options** (for example `--bucket`, `--max-jobs`, `--work`), which win over everything.
@@ -77,3 +77,13 @@ for the cycle, and a violation found after the batch is logged as `POLICY VIOLAT
 takes minutes per call, so per-batch lets a controller submit many more jobs per hour.
 Production: `--policy-check per-batch`. To revert, leave the option unset. See
 [ADR-0019](adr/0019-batched-policy-check.md).
+
+## Parallel submission (`submit_workers`)
+
+`--submit-workers N` (`luf g5k run` and `run-admission`; `submit_workers` in luf.toml,
+`LUF_SUBMIT_WORKERS`; integer, at least 1, default 1) submits to up to N sites at the same
+time. The controller first decides, in order and deterministically, which slot gets which
+chunks; then one worker per site launches that site's jobs in turn, and results are collected in
+plan order. The cycle logs `cycle submitted N jobs in S s (sites K)`. Production:
+`--submit-workers 8`. To revert, use `--submit-workers 1`. See
+[ADR-0020](adr/0020-parallel-submission.md).

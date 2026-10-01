@@ -281,6 +281,12 @@ Usage: root g5k run [OPTIONS]
 │                                                                          return to the pool at   │
 │                                                                          the checkpoint signal.  │
 │                                                                          [default: 1.2]          │
+│    --submit-workers                              <int range> [x>=1]      Sites submitted to in   │
+│                                                                          parallel (one worker    │
+│                                                                          per site; 1 = one job   │
+│                                                                          after another). See     │
+│                                                                          ADR-0020.               │
+│                                                                          [default: 1]            │
 │    --policy-check                                <per-job|per-batch>     usagepolicycheck        │
 │                                                                          cadence: per-job        │
 │                                                                          (before and after every │
@@ -363,6 +369,11 @@ Usage: root g5k run-admission [OPTIONS]
 │                                                                  unfinished chunks return to the │
 │                                                                  pool at the checkpoint signal.  │
 │                                                                  [default: 1.2]                  │
+│    --submit-workers                      <int range> [x>=1]      Sites submitted to in parallel  │
+│                                                                  (one worker per site; 1 = one   │
+│                                                                  job after another). See         │
+│                                                                  ADR-0020.                       │
+│                                                                  [default: 1]                    │
 │    --policy-check                        <per-job|per-batch>     usagepolicycheck cadence:       │
 │                                                                  per-job (before and after every │
 │                                                                  submission) or per-batch (once  │

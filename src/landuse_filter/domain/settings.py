@@ -31,6 +31,7 @@ class OpsSettings:
     day_long_max_failures: int = 3
     chunk_overflow: float = 1.2  # work assigned per job = capacity x this (ADR-0018)
     policy_check: str = PER_JOB  # usagepolicycheck cadence (ADR-0019)
+    submit_workers: int = 1  # sites submitted to in parallel (ADR-0020)
 
     def output_repo(self, dataset: str) -> str:
         return f"{self.namespace}/{dataset}-landuse"
@@ -67,7 +68,7 @@ def _sites(g5k: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(sites)
 
 
-OPTIONAL_INT_FIELDS = ("day_walltime_minutes", "day_long_max_failures")
+OPTIONAL_INT_FIELDS = ("day_walltime_minutes", "day_long_max_failures", "submit_workers")
 
 
 def _positive(g5k: Mapping[str, Any], key: str) -> int:
@@ -110,6 +111,7 @@ def parse_settings(raw: Mapping[str, Any]) -> OpsSettings:
         else 3,
         chunk_overflow=_overflow(g5k),
         policy_check=_policy_check(g5k),
+        submit_workers=_positive(g5k, "submit_workers") if "submit_workers" in g5k else 1,
         namespace=_need(hub, "namespace", str),
         bucket=_need(hub, "bucket", str),
         sites=_sites(g5k),

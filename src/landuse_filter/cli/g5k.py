@@ -75,6 +75,12 @@ def g5k_run(
         help="Work given to a job = expected capacity x this (>= 1.0); unfinished chunks "
         "return to the pool at the checkpoint signal.",
     ),
+    submit_workers: int = typer.Option(
+        OPS.submit_workers,
+        min=1,
+        help="Sites submitted to in parallel (one worker per site; 1 = one job after "
+        "another). See ADR-0020.",
+    ),
     policy_check: PolicyCheck = typer.Option(
         PolicyCheck(OPS.policy_check),
         help="usagepolicycheck cadence: per-job (before and after every submission) or "
@@ -119,6 +125,7 @@ def g5k_run(
         day_long_max_failures=day_long_max_failures,
         chunk_overflow=chunk_overflow,
         policy_check=policy_check.value,
+        submit_workers=submit_workers,
         night_walltime=timedelta(minutes=night_walltime_minutes),
         night_fallback_walltime=timedelta(minutes=night_fallback_walltime_minutes),
         night_max_queued_per_site=night_max_queued_per_site,
@@ -156,6 +163,12 @@ def g5k_run_admission(
         min=1.0,
         help="Work given to a job = expected capacity x this (>= 1.0); unfinished chunks "
         "return to the pool at the checkpoint signal.",
+    ),
+    submit_workers: int = typer.Option(
+        OPS.submit_workers,
+        min=1,
+        help="Sites submitted to in parallel (one worker per site; 1 = one job after "
+        "another). See ADR-0020.",
     ),
     policy_check: PolicyCheck = typer.Option(
         PolicyCheck(OPS.policy_check),
@@ -199,6 +212,7 @@ def g5k_run_admission(
                 day_long_max_failures=day_long_max_failures,
                 chunk_overflow=chunk_overflow,
                 policy_check=policy_check.value,
+                submit_workers=submit_workers,
                 night_walltime=timedelta(minutes=night_walltime_minutes),
                 night_fallback_walltime=timedelta(minutes=night_fallback_walltime_minutes),
                 night_max_queued_per_site=night_max_queued_per_site,
