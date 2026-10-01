@@ -334,6 +334,14 @@ Usage: root g5k run [OPTIONS]
 │                                                                          [default: 30]           │
 │    --besteffort               --no-besteffort                            [default:               │
 │                                                                          no-besteffort]          │
+│    --stale-besteffort-min…                       <int range> [x>=1]      Cancel our besteffort   │
+│                                                                          jobs still waiting this │
+│                                                                          long after submission   │
+│                                                                          (their GPUs were        │
+│                                                                          taken); night/exotic    │
+│                                                                          jobs are never reaped.  │
+│                                                                          See ADR-0025.           │
+│                                                                          [default: 20]           │
 │    --max-queued-per-site                         <int>                   Waiting jobs allowed    │
 │                                                                          per site when nothing   │
 │                                                                          is free (start          │
@@ -414,6 +422,9 @@ Usage: root g5k run-admission [OPTIONS]
 │                                                                  in the same slot if the long    │
 │                                                                  job cannot start.               │
 │                                                                  [default: 30]                   │
+│    --stale-besteffort-minutes            <int range> [x>=1]      Cancel besteffort jobs still    │
+│                                                                  waiting this long (ADR-0025).   │
+│                                                                  [default: 20]                   │
 │    --max-queued-per-site                 <int>                   Waiting jobs allowed per site   │
 │                                                                  when nothing is free            │
 │                                                                  (night/weekend).                │
