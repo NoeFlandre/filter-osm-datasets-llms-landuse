@@ -41,6 +41,7 @@ SETUP = timedelta(minutes=8)
 LATE_START = timedelta(minutes=15)
 BACKOFF = timedelta(minutes=30)
 POST_SUBMIT_WAIT = 20.0
+PULL_INTERVAL = 180.0  # seconds: ingest results again if a cycle of submissions runs longer
 # Bounded queue (#20): when nothing is free, a site may hold a few of our waiting jobs
 # predicted to start within QUEUED_START; they rank below free slots.
 QUEUED_START = timedelta(hours=2)
@@ -340,6 +341,7 @@ class Controller:
         total = sum(len(v) for v in jobs.values())
         per_site = {s: len(v) for s, v in jobs.items()}
         code_commit = commit()
+        last_pull = time.monotonic()
         for slot, cluster in self.candidate_slots(now, jobs):
             for _ in range(slot.free_nodes):
                 if (
@@ -347,6 +349,9 @@ class Controller:
                     or per_site.get(slot.site, 0) >= self.settings.max_jobs_per_site
                 ):
                     break
+                if time.monotonic() - last_pull >= PULL_INTERVAL:
+                    self.pull()  # each submission waits ~20 s: do not let results pile up
+                    last_pull = time.monotonic()
                 capacity = slot.sentences_per_second * max(
                     0.0, (slot.walltime - SETUP).total_seconds()
                 )
