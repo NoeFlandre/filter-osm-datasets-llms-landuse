@@ -59,7 +59,11 @@ for line in sys.stdin:
         except Exception: pass
 print(' '.join(f'{k}={v}' for k, v in sorted(last.items()) if v))")
   err=$(tail -n 60 $W/controller-production.log $W/controller-admission.log 2>/dev/null | grep -hE "cycle failed|submission failed" | grep -v "besteffort. Reserve" | tail -1 | cut -c1-140)
-  echo "$(date +%H:%M) GPUS $gpus | chunks $ds | admission pending: ${adm:-none} ${err:+| error: $err}"
+  # A controller that submits but no longer ingests results (seen 2026-10-01: wedged for an hour)
+  # shows up as a growing age of the progress index.
+  last=$(stat -f %m "$W/index/progress-"*.sqlite 2>/dev/null | sort -n | tail -n 1)
+  age=$(( ( $(date +%s) - ${last:-0} ) / 60 ))
+  echo "$(date +%H:%M) GPUS $gpus | chunks $ds | ingest ${age}m ago | admission pending: ${adm:-none} ${err:+| error: $err}"
   [ -n "${GPU_WATCH_ONCE:-}" ] && exit 0
   sleep 600
 done

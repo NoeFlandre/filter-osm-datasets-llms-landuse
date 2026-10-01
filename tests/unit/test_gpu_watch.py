@@ -4,6 +4,7 @@ import re
 import shutil
 import stat
 import subprocess
+import time
 from pathlib import Path
 
 SCRIPT = Path(__file__).parents[2] / "scripts" / "ops" / "gpu_watch.sh"
@@ -63,7 +64,7 @@ def test_one_cycle_prints_a_summary_line_and_exits(tmp_path):
     assert len(lines) == 1
     assert re.fullmatch(
         r"\d\d:\d\d GPUS running=1 waiting=1 prod:l40s=1 UNREACHABLE=lille "
-        r"\| chunks desc=3/10 webs=0/4 \| admission pending: none ?",
+        r"\| chunks desc=3/10 webs=0/4 \| ingest \d+m ago \| admission pending: none ?",
         lines[0],
     ), lines[0]
 
@@ -77,3 +78,24 @@ def test_a_failing_ssh_marks_the_site_unreachable_not_empty(tmp_path):
 def test_the_last_controller_error_is_appended(tmp_path):
     done = run_watch(tmp_path, log="ok\nxx cycle failed (boom)\n")
     assert "| error: xx cycle failed (boom)" in done.stdout
+
+
+def _with_index(tmp_path: Path, age_seconds: float) -> Path:
+    progress = tmp_path / "work" / "index" / "progress-abc.sqlite"
+    progress.parent.mkdir(parents=True)
+    progress.write_bytes(b"")
+    stamp = time.time() - age_seconds
+    os.utime(progress, (stamp, stamp))
+    return progress
+
+
+def test_a_stale_progress_index_is_reported_in_minutes(tmp_path):
+    """A controller that keeps submitting but stopped ingesting results (wedged for an hour on
+    2026-10-01) must be visible: the line carries the minutes since the progress index changed."""
+    _with_index(tmp_path, 3 * 3600)
+    assert re.search(r"ingest 1[78]\dm ago", run_watch(tmp_path).stdout)
+
+
+def test_a_fresh_progress_index_reads_zero_minutes(tmp_path):
+    _with_index(tmp_path, 0)
+    assert "ingest 0m ago" in run_watch(tmp_path).stdout
