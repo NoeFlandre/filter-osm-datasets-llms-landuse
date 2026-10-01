@@ -35,6 +35,8 @@ duckdb.sql("""
 
 ## Dataset card and world map
 
+`luf node publish --card-only` renders the same card from the bucket ledgers alone (ADR-0021).
+
 The card of each `-landuse` repo is rendered from counts made over the **published** tables
 (never from a single run): per-file stats are cached in `published/<dataset>.stats.jsonl` and
 backfilled from the Hub. Every dataset's card embeds `assets/yes_share_map.png` (ADR-0015):
@@ -53,9 +55,10 @@ installed by publish jobs only.
 `viewer/<input path>.parquet` carries only what a reader of the dataset viewer needs: `sentence`
 (the text; the whole text for `skipped_unsplit`), `label` (`yes`, `no`, `failed`,
 `skipped_unsplit`), `language` and `region` (the input file's name). It holds only sentences with
-a model answer or deliberately skipped, never `pending` ones (those stay in `labels/`, which
-keeps every row), so on a partial dataset it is a subset of `labels/`; for a complete file it
-mirrors `labels/` row for row. A file with no such row gets no viewer file (the Hub viewer fails
+a model answer or deliberately skipped, never `pending` ones, and only sentences with at least
+2 letters (digits and punctuation do not count: debris such as `-`, `|`, `...` or `7` is noise in
+the Hub viewer). Those rows stay in `labels/`, which keeps every row, so the viewer is always a
+subset of `labels/`. A file with no such row gets no viewer file (the Hub viewer fails
 on zero-row parquet files); this cannot go stale, because resolved sentences never revert to
 `pending`. The card lists it as the first, default config (`sentences`), so the Hub viewer opens
 on it. Files labelled before this table existed get theirs on the next publish.
@@ -78,6 +81,6 @@ The card is refreshed after every partial commit (every 100 files), from the per
 `published/<dataset>.stats.jsonl` and the cached map cells, so a publish job stopped at its walltime
 leaves a card that matches the Hub; a failed refresh is logged and retried by the next one and by
 the final one. The input mirror is recorded in `published/<dataset>.mirror.jsonl` (one line per
-mirrored path and revision) so a restart resumes where it stopped. A publish job also stops on its own before its walltime (ADR-0021): after a SIGUSR2/SIGTERM or
+mirrored path and revision) so a restart resumes where it stopped. A publish job also stops on its own before its walltime (ADR-0022): after a SIGUSR2/SIGTERM or
 6 minutes before the deadline it stops starting files, flushes, refreshes the card and saves the
 ledgers; the JSON report's `stopped` field says why (`null` when the run finished).

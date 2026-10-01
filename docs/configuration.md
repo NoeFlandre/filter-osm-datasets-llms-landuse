@@ -84,6 +84,7 @@ Production: `--policy-check per-batch`. To revert, leave the option unset. See
 `LUF_SUBMIT_WORKERS`; integer, at least 1, default 1) submits to up to N sites at the same
 time. The controller first decides, in order and deterministically, which slot gets which
 chunks; then one worker per site launches that site's jobs in turn, and results are collected in
-plan order. The cycle logs `cycle submitted N jobs in S s (sites K)`. Production:
+plan order. While the workers run, the main thread ingests results every `PULL_INTERVAL`
+(180 s) so progress and chunk counts stay current; the cycle ingests again at its end. The cycle logs `cycle submitted N jobs in S s (sites K)`. Production:
 `--submit-workers 8`. To revert, use `--submit-workers 1`. See
 [ADR-0020](adr/0020-parallel-submission.md).

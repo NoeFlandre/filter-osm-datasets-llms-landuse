@@ -1,4 +1,4 @@
-# ADR-0021: Publish jobs stop gracefully before their walltime
+# ADR-0022: Publish jobs stop gracefully before their walltime
 
 Status: accepted (2026-10-01)
 

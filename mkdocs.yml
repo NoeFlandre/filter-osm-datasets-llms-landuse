@@ -12,6 +12,7 @@ nav:
   - Speed tuning: tuning.md
   - Grid'5000: grid5000.md
   - Configuration: configuration.md
+  - Resume from another machine: resume.md
   - CLI reference: cli.md
   - Known weaknesses: debt.md
   - Decisions:
@@ -35,7 +36,8 @@ nav:
       - adr/0018-over-assignment.md
       - adr/0019-batched-policy-check.md
       - adr/0020-parallel-submission.md
-      - adr/0021-publish-graceful-stop.md
+      - adr/0021-card-only-publish.md
+      - adr/0022-publish-graceful-stop.md
 markdown_extensions:
   - pymdownx.superfences:
       custom_fences:

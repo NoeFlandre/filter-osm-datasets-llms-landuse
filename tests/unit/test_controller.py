@@ -688,7 +688,7 @@ def test_results_are_ingested_again_during_a_long_run_of_submissions(world, monk
     monkeypatch.setattr(ctl_mod, "PULL_INTERVAL", 0.0)
     report = c.cycle(NOW)
     assert len(report.submitted) == 2
-    assert len(pulls) == 1 + 2  # at the start of the cycle and before each submission
+    assert len(pulls) == 1 + 2 + 1  # start, before each submission, end
 
 
 def test_no_extra_ingest_when_submissions_are_quick(world, monkeypatch):
@@ -697,7 +697,7 @@ def test_no_extra_ingest_when_submissions_are_quick(world, monkeypatch):
     monkeypatch.setattr(c, "pull", lambda: pulls.append(1))
     monkeypatch.setattr(ctl_mod, "PULL_INTERVAL", 3600.0)
     c.cycle(NOW)
-    assert len(pulls) == 1
+    assert len(pulls) == 2  # start and end of the cycle
 
 
 # --- long night jobs with a shorter fallback (ADR-0016) -------------------------------

@@ -188,7 +188,7 @@ Usage: root g5k cpu-job [OPTIONS] {mode}
  Submit one resumable planning or publishing job (default queue, one CPU node).                     
                                                                                                     
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────╮
-│ *    mode      <str>  plan, replan, publish or repair [required]                                 │
+│ *    mode      <str>  plan, replan, publish, card or repair [required]                           │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
 │ *  --site                    <str>  Site to run the CPU job on. [required]                       │
@@ -474,10 +474,11 @@ Usage: root node publish [OPTIONS]
  Build and upload the -landuse dataset on this node's scratch.                                      
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --dataset         <str>  [required]                                                           │
-│ *  --revision        <str>  [required]                                                           │
-│    --bucket          <str>  [default: NoeFlandre/landuse-filter-work]                            │
-│    --help                   Show this message and exit.                                          │
+│ *  --dataset          <str>  [required]                                                          │
+│ *  --revision         <str>  [required]                                                          │
+│    --bucket           <str>  [default: NoeFlandre/landuse-filter-work]                           │
+│    --card-only               Only refresh the dataset card from the bucket's ledgers.            │
+│    --help                    Show this message and exit.                                         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 

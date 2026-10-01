@@ -1,4 +1,4 @@
-"""When a publish job must stop starting new work (ADR-0021, pure).
+"""When a publish job must stop starting new work (ADR-0022, pure).
 
 A job ends at its OAR walltime; it is warned by a signal 5 minutes before and may know its
 deadline. Either way it stops *starting* files early enough to flush, refresh the card and

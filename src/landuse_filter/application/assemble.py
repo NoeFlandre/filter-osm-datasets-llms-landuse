@@ -125,12 +125,23 @@ def labels_table(dataset: str, rows: list[dict]) -> pa.Table:
     return pa.Table.from_pylist(rows, schema=schema)
 
 
+MIN_VIEWER_LETTERS = 2  # navigation debris (`-`, `|`, `...`, `7`) is not worth a viewer row
+
+
+def readable(text: str) -> bool:
+    """Whether a sentence has enough letters (digits and punctuation do not count)."""
+    return sum(c.isalpha() for c in text) >= MIN_VIEWER_LETTERS
+
+
 def viewer_table(refs: list[SentenceRef], rows: list[dict], region: str) -> pa.Table:
     """The sentence next to its label: a plain table for the dataset viewer.
 
-    Only sentences with a model answer or deliberately skipped: ``pending`` rows stay in
-    ``labels/`` and never reach the viewer."""
-    kept = [i for i, row in enumerate(rows) if row["decision"] != PENDING]
+    Only sentences with a model answer or deliberately skipped, and with at least
+    ``MIN_VIEWER_LETTERS`` letters: ``pending`` rows and debris stay in ``labels/`` and never
+    reach the viewer."""
+    kept = [
+        i for i, row in enumerate(rows) if row["decision"] != PENDING and readable(refs[i].text)
+    ]
     refs, rows = [refs[i] for i in kept], [rows[i] for i in kept]
     return pa.table(
         {

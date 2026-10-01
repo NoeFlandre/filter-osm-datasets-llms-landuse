@@ -48,3 +48,15 @@ where the chunk assignment depends on thread timing (never producing a chunk twi
 ## Reverting
 
 `--submit-workers 1` (or leave unset).
+
+## Addendum: ingesting while sites submit
+
+In parallel mode the sequential loop's periodic pull (`PULL_INTERVAL`) does not run, so the
+progress view lagged by a whole cycle. `_submit_parallel` now waits for the site workers in the
+main thread with `concurrent.futures.wait(..., timeout=PULL_INTERVAL)`; each time the timeout
+elapses with workers still running it calls `pull()` and `progress.pending()` (which completes
+and forgets finished chunks). This is done only from the main thread: the SQLite progress index
+must not leave the thread that created it, and workers never touch it. A failed in-loop ingest is
+logged ("ingest during submission failed") and the wait goes on. `cycle()` also ingests once more
+after the submissions, so the status line is current when the cycle ends. `--submit-workers 1`
+keeps its own sequential loop unchanged.

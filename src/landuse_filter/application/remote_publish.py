@@ -5,7 +5,7 @@ from collections.abc import Callable
 from landuse_filter.adapters.hub import Hub
 from landuse_filter.adapters.remote import Remote
 from landuse_filter.adapters.store import WorkStore
-from landuse_filter.application.publish import PublishReport, publish
+from landuse_filter.application.publish import PublishReport, publish, refresh_card_only
 from landuse_filter.application.remote_plan import restore_index
 from landuse_filter.application.sync import fetch
 
@@ -64,3 +64,31 @@ def reset_card_cache(remote: Remote, scratch: WorkStore, dataset: str) -> None:
     scratch.path(marker).parent.mkdir(parents=True, exist_ok=True)
     scratch.path(marker).write_text("reset\n")
     remote.put([(scratch.path(marker), marker)])
+
+
+def run_card_only(
+    remote: Remote,
+    scratch: WorkStore,
+    dataset: str,
+    revision: str,
+    *,
+    hub: Hub | None = None,
+) -> PublishReport:
+    """Refresh the dataset card from the bucket's ledgers and gates alone (minutes, not hours).
+
+    Skips the planner index, the result parts and the resolution index; counts any missing
+    per-file stats from the Hub and saves the ledgers back as it goes."""
+    fetch(remote, scratch, [g for g in remote.ls("gates/admission/") if g.endswith(".json")])
+    ledgers = [
+        f"published/{dataset}{suffix}"
+        for suffix in (".jsonl", ".stats.jsonl", ".partial.jsonl", ".mirror.jsonl", ".card.sha256")
+    ]
+    on_bucket = remote.ls("published/")
+    fetch(remote, scratch, [p for p in ledgers if p in on_bucket])
+
+    def save() -> None:
+        remote.put([(scratch.path(p), p) for p in ledgers if scratch.exists(p)])
+
+    report = refresh_card_only(scratch, dataset, revision, on_progress=save, hub=hub)
+    save()
+    return report
