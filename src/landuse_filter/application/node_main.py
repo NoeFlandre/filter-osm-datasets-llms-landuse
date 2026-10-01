@@ -13,6 +13,7 @@ from landuse_filter.adapters.store import WorkStore
 if TYPE_CHECKING:
     from landuse_filter.adapters.remote import BucketRemote
 from landuse_filter.application.node import Runner
+from landuse_filter.application.node_timeline import Timeline, timeline_record
 from landuse_filter.domain.gpu import GpuSpec, gpu_key, ineligibility
 
 
@@ -61,6 +62,7 @@ def workspace(assignment: dict) -> tuple[WorkStore, "BucketRemote"]:
 def run(assignment_id: str) -> int:
     from landuse_filter.adapters.engine import SGLangEngine
 
+    timeline = Timeline()
     spool = WorkStore(config.work_dir())
     assignment = spool.read_json(f"assignments/{assignment_id}.json")
     store, remote = workspace(assignment)
@@ -72,7 +74,8 @@ def run(assignment_id: str) -> int:
     stop = Stop()
     t0 = time.monotonic()
     engine = SGLangEngine(assignment["engine_kwargs"], assignment["sampling"])
-    load_seconds = time.monotonic() - t0
+    engine_ready = time.monotonic()
+    load_seconds = engine_ready - t0
     provenance = {
         **assignment["provenance"],
         "sglang_version": engine.version,
@@ -115,6 +118,15 @@ def run(assignment_id: str) -> int:
             "sentences_per_second": round(stats.sentences_per_second, 3),
             "chunks_done": stats.chunks_done,
             "stopped": stop.requested,
+            **timeline_record(
+                timeline,
+                engine_ready=engine_ready,
+                first_result=stats.first_result,
+                last_result=stats.last_result,
+                walltime_s=int(assignment.get("walltime_s") or 0),
+                assigned_texts=sum(store.read_chunk(c).num_rows for c in assignment["chunks"]),
+                environ=os.environ,
+            ),
         },
     )
     remote.put([(spool.path(summary_path), summary_path)])

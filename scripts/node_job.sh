@@ -75,7 +75,9 @@ export PATH="$venv/bin:$PATH"
 # ran stale code without `node plan`).
 export PYTHONPATH="$CODE/src${PYTHONPATH:+:$PYTHONPATH}"
 luf() { "$venv/bin/python" -c 'import sys; from landuse_filter.cli import app; sys.exit(app())' "$@"; }
-echo "luf: env ready in $(( $(date +%s) - t0 ))s ($venv)"
+env_seconds=$(( $(date +%s) - t0 ))
+export LUF_ENV_READY_SECONDS="$env_seconds"  # recorded in the job timeline (luf node run)
+echo "luf: env ready in ${env_seconds}s ($venv)"
 if [[ "$MODE" == "calibrate" ]]; then
   luf node calibrate --chunk "$1"
   exit $?

@@ -6,6 +6,7 @@ from landuse_filter.adapters.store import WorkStore
 from landuse_filter.application.assignment import Assignment
 from landuse_filter.config import GENERATION_FP
 from landuse_filter.domain.gpu import Profile, gpu_key
+from landuse_filter.domain.job_timeline import useful_fraction
 from landuse_filter.domain.progress import alerts, eta
 
 
@@ -82,5 +83,6 @@ def summarize(store: WorkStore, datasets: list[str]) -> dict:
         **{d: _dataset_status(store, d, complete, live) for d in datasets},
         "assignments": dict(Counter(a.state for a in assignments)),
         "throughput_by_gpu": _throughput_by_gpu(jobs),
+        "useful_fraction": useful_fraction(jobs),
         "alerts": _alerts(jobs),
     }
