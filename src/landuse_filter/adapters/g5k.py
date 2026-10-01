@@ -8,12 +8,27 @@ from dataclasses import dataclass
 from pathlib import Path
 
 REMOTE_ROOT = "luf"  # relative to the site home
-SSH_OPTIONS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=20", "-o", "ServerAliveInterval=15"]
+SSH_OPTIONS = [
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "ConnectTimeout=20",
+    "-o",
+    "ServerAliveInterval=15",
+    "-o",
+    "ServerAliveCountMax=3",  # a dead path is dropped after ~45 s, not left to the command timeout
+]
 JOB_PREFIX = "luf-"
 
 
 class RemoteError(RuntimeError):
     pass
+
+
+def is_transport_failure(exc: Exception) -> bool:
+    """Whether ``exc`` means the site could not be reached (ssh 255 or a timeout), not a refusal."""
+    text = str(exc)
+    return ": timed out: " in text or ": exit 255: " in text
 
 
 @dataclass(frozen=True, slots=True)

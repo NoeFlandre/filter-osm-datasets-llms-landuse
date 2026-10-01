@@ -20,11 +20,19 @@ class PolicyGate:
         self._lock = threading.Lock()
         self._checked: set[str] = set()
         self._blocked: set[str] = set()
+        self._tripped: set[str] = set()
 
     def begin_cycle(self) -> None:
         with self._lock:
             self._checked.clear()
             self._blocked.clear()
+            self._tripped.clear()
+
+    def trip(self, site: str) -> None:
+        """Circuit breaker: ``site`` was unreachable, so skip it (and its checks) this cycle."""
+        with self._lock:
+            self._blocked.add(site)
+            self._tripped.add(site)
 
     def blocked(self, site: str) -> bool:
         with self._lock:
@@ -60,6 +68,8 @@ class PolicyGate:
         with self._lock:
             due = check_due(self.mode, AFTER, checked_before=site in self._checked)
             self._checked.discard(site)  # finished: finish_all() must not recheck it
+            if site in self._tripped:
+                return  # unreachable: a check would only wait for its timeout
         if not due:
             return
         try:
