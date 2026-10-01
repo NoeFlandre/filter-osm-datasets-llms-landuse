@@ -607,3 +607,24 @@ def test_commit_gives_up_when_the_ref_stays_unreadable(monkeypatch):
     monkeypatch.setattr(ctl_mod.time, "sleep", lambda s: None)
     with pytest.raises(subprocess.CalledProcessError):
         ctl_mod.commit("origin/main")
+
+
+def test_results_are_ingested_again_during_a_long_run_of_submissions(world, monkeypatch):
+    """Regression: a cycle submitting dozens of jobs (20 s wait + deploy each) ingested results
+    only at its start, so counts lagged by tens of minutes (23 minutes on 2026-10-01)."""
+    c, _ = world
+    pulls = []
+    monkeypatch.setattr(c, "pull", lambda: pulls.append(1))
+    monkeypatch.setattr(ctl_mod, "PULL_INTERVAL", 0.0)
+    report = c.cycle(NOW)
+    assert len(report.submitted) == 2
+    assert len(pulls) == 1 + 2  # at the start of the cycle and before each submission
+
+
+def test_no_extra_ingest_when_submissions_are_quick(world, monkeypatch):
+    c, _ = world
+    pulls = []
+    monkeypatch.setattr(c, "pull", lambda: pulls.append(1))
+    monkeypatch.setattr(ctl_mod, "PULL_INTERVAL", 3600.0)
+    c.cycle(NOW)
+    assert len(pulls) == 1
