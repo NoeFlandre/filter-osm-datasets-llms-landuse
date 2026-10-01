@@ -119,3 +119,52 @@ def test_publish_jobs_export_their_deadline_before_running():
     assert "LUF_JOB_DEADLINE_EPOCH" in SCRIPT
     assert SCRIPT.index("LUF_JOB_DEADLINE_EPOCH") < SCRIPT.index('luf node "$MODE"')
     assert "oarstat -j" in SCRIPT
+
+
+def test_checkpoint_signal_is_forwarded_to_the_child_and_its_exit_code_returned(tmp_path):
+    """Regression: OAR's SIGUSR2 hit bash only (exit 12); python never flushed gracefully."""
+    import re
+    import signal
+    import subprocess
+    import sys
+    import time
+
+    block = re.search(r"# >>> run_forwarding\n(.*?)# <<< run_forwarding", SCRIPT, re.S)
+    assert block, "run_forwarding block missing"
+    child = tmp_path / "child.py"
+    ready = tmp_path / "ready"
+    child.write_text(
+        "import signal, sys, time, pathlib\n"
+        "def h(n, f):\n"
+        "    time.sleep(0.5)\n"
+        "    print('child got usr2', flush=True)\n"
+        "    sys.exit(7)\n"
+        "signal.signal(signal.SIGUSR2, h)\n"
+        f"pathlib.Path({str(ready)!r}).write_text('x')\n"
+        "time.sleep(30)\n"
+    )
+    harness = tmp_path / "h.sh"
+    harness.write_text(
+        "set -euo pipefail\n"
+        + block.group(1)
+        + f"rc=0\nrun_forwarding '{sys.executable}' '{child}'|| rc=$?\n"
+        'echo "wrapper rc=$rc"\nexit "$rc"\n'
+    )
+    proc = subprocess.Popen(
+        ["bash", str(harness)], stdout=subprocess.PIPE, text=True, start_new_session=True
+    )
+    deadline = time.time() + 10
+    while not ready.exists() and time.time() < deadline:
+        time.sleep(0.05)
+    proc.send_signal(signal.SIGUSR2)  # only the wrapper, like OAR
+    out, _ = proc.communicate(timeout=15)
+    assert "child got usr2" in out
+    assert "wrapper rc=7" in out
+    assert proc.returncode == 7
+
+
+def test_every_mode_runs_its_child_through_the_forwarding_wrapper():
+    assert "run_forwarding luf node run --assignment" in SCRIPT
+    for line in SCRIPT.splitlines():
+        if line.lstrip().startswith("luf node"):
+            raise AssertionError(f"unwrapped child: {line}")
