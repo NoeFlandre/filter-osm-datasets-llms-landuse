@@ -9,7 +9,7 @@ Every setting has one documented source order, lowest to highest precedence:
    namespace, bucket, Grid'5000 sites, walltimes, job caps, interval, CUDA module.
 3. **Environment variables**: `LUF_<FIELD>` for each `luf.toml` field
    (`LUF_NAMESPACE`, `LUF_BUCKET`, `LUF_SITES` comma separated, `LUF_WALLTIME_MINUTES`,
-   `LUF_NIGHT_WALLTIME_MINUTES`, `LUF_NIGHT_FALLBACK_WALLTIME_MINUTES`, `LUF_MAX_JOBS`, `LUF_MAX_JOBS_PER_SITE`,
+   `LUF_NIGHT_WALLTIME_MINUTES`, `LUF_NIGHT_FALLBACK_WALLTIME_MINUTES`, `LUF_MAX_JOBS`, `LUF_MAX_JOBS_PER_SITE`, `LUF_POLICY_CHECK`,
    `LUF_INTERVAL_SECONDS`, `LUF_CUDA_MODULE`), plus `LUF_WORK` (local work tree,
    default `work`) and `LUF_SCRATCH` (node-local scratch, default `/tmp/luf-scratch`).
 4. **CLI options** (for example `--bucket`, `--max-jobs`, `--work`), which win over everything.
@@ -65,3 +65,15 @@ chunks early (median useful fraction about 0.5), so a larger factor keeps the GP
 OAR checkpoint signal (5 minutes before the walltime ends), when the node flushes finished texts
 and exits; unfinished chunks return to the pool. Production: `--chunk-overflow 1.6`.
 To revert, leave the option unset (1.2). See [ADR-0018](adr/0018-over-assignment.md).
+
+## Usage-policy check cadence (`policy_check`)
+
+`--policy-check` (`luf g5k run` and `run-admission`; `policy_check` in luf.toml,
+`LUF_POLICY_CHECK`; `per-job` or `per-batch`, default `per-job`) sets when
+`usagepolicycheck -t` runs. `per-job` checks before and after every submission. `per-batch`
+checks each site once before its first submission of a cycle and once after its last (no
+check for a site without submissions); a failing check stops further submissions to that site
+for the cycle, and a violation found after the batch is logged as `POLICY VIOLATION`. The check
+takes minutes per call, so per-batch lets a controller submit many more jobs per hour.
+Production: `--policy-check per-batch`. To revert, leave the option unset. See
+[ADR-0019](adr/0019-batched-policy-check.md).

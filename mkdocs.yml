@@ -31,6 +31,9 @@ nav:
       - adr/0014-geographic-order.md
       - adr/0015-dataset-spec.md
       - adr/0016-night-walltime-fallback.md
+      - adr/0017-day-walltime-fallback.md
+      - adr/0018-over-assignment.md
+      - adr/0019-batched-policy-check.md
 markdown_extensions:
   - pymdownx.superfences:
       custom_fences:

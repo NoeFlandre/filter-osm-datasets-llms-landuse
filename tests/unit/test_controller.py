@@ -40,6 +40,8 @@ class FakeG5K:
         self.submitted: list[list[str]] = []
         self.refuse = refuse
         self.policy_checks = 0
+        self.fail_checks: set[int] = set()  # 1-based indexes of failing policy checks
+        self.events: list[str] = []
         self.late = False
         self.cancelled = []
 
@@ -47,6 +49,7 @@ class FakeG5K:
         return list(self.jobs.get(site, []))
 
     def submit(self, site, args):
+        self.events.append(f"submit:{site}")
         if self.refuse:
             raise g5k.RemoteError(self.refuse)
         self.submitted.append(args)
@@ -58,6 +61,9 @@ class FakeG5K:
 
     def policy_check(self, site):
         self.policy_checks += 1
+        self.events.append(f"check:{site}")
+        if self.policy_checks in self.fail_checks:
+            raise g5k.RemoteError(f"{site}: exit 1: usage policy violated")
 
     def scheduled_start(self, site, job_id):
         return ("Running", None) if not self.late else ("Waiting", 4_000_000_000)
@@ -108,6 +114,70 @@ def test_submits_where_free_with_policy_checks(world):
     assert fake.submitted[0][:2] == ["-q", "abaca"]
     chunks = [set(a.chunks) for a in c.live()]
     assert not chunks[0] & chunks[1]  # disjoint assignments
+
+
+def batch_world(world):
+    c, fake = world
+    c.settings.policy_check = "per-batch"
+    c.policy.mode = "per-batch"
+    return c, fake
+
+
+def test_per_batch_checks_once_before_and_once_after_all_jobs(world):
+    c, fake = batch_world(world)
+    assert len(c.cycle(NOW).submitted) == 2
+    assert fake.events == [
+        "check:nancy",
+        "submit:nancy",
+        "submit:nancy",
+        "check:nancy",
+    ]
+
+
+def test_per_batch_failing_pre_check_blocks_the_site_for_the_cycle(world):
+    c, fake = batch_world(world)
+    fake.fail_checks = {1}
+    assert c.cycle(NOW).submitted == []
+    assert fake.events == ["check:nancy"]  # no oarsub, no retry, no post-check
+    assert [a.state for a in c.ledger()] == ["failed_submit"]
+    fake.fail_checks = set()
+    assert len(c.cycle(NOW).submitted) == 2  # the next cycle checks again and proceeds
+
+
+def test_per_batch_violation_after_the_batch_is_logged_loudly(world):
+    c, fake = batch_world(world)
+    logs = []
+    c.log = c.policy.log = logs.append
+    fake.fail_checks = {2}
+    assert len(c.cycle(NOW).submitted) == 2  # the jobs exist; the violation is surfaced
+    assert any(m.startswith("POLICY VIOLATION: nancy") for m in logs)
+    assert fake.policy_checks == 2
+
+
+def test_per_batch_refused_slot_is_still_checked_before_and_after(world):
+    c, fake = batch_world(world)
+    fake.refuse = "oarsub: quota"
+    assert c.cycle(NOW).submitted == []
+    assert fake.events == ["check:nancy", "submit:nancy", "check:nancy"]
+
+
+def test_per_batch_without_submissions_runs_no_check(world):
+    c, fake = batch_world(world)
+    c.settings.paused = True
+    assert c.cycle(NOW).submitted == []
+    assert fake.policy_checks == 0
+    c.settings.paused = False
+    fake.jobs["nancy"] = [g5k.Job("nancy", "9", "other", "Running", "abaca")]
+    c.settings.max_jobs_per_site = 1  # site full: nothing is submitted
+    assert c.cycle(NOW).submitted == []
+    assert fake.policy_checks == 0
+
+
+def test_per_job_failing_pre_check_refuses_the_slot_as_before(world):
+    c, fake = world
+    fake.fail_checks = {1}
+    assert c.cycle(NOW).submitted == []
+    assert fake.policy_checks == 1
 
 
 def test_second_cycle_does_not_duplicate(world):
