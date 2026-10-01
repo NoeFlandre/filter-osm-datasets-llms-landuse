@@ -27,6 +27,7 @@ class OpsSettings:
     cuda_module: str
     day_walltime_minutes: int | None = None  # None: same as walltime_minutes
     day_long_max_failures: int = 3
+    chunk_overflow: float = 1.2  # work assigned per job = capacity x this (ADR-0018)
 
     def output_repo(self, dataset: str) -> str:
         return f"{self.namespace}/{dataset}-landuse"
@@ -77,6 +78,17 @@ def _optional(g5k: Mapping[str, Any], key: str, default: int | None) -> int | No
     return _positive(g5k, key) if key in g5k else default
 
 
+def _overflow(g5k: Mapping[str, Any]) -> float:
+    if "chunk_overflow" not in g5k:
+        return 1.2
+    value = g5k["chunk_overflow"]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise SettingsError("luf.toml: 'chunk_overflow' must be float")
+    if value < 1.0:
+        raise SettingsError("luf.toml: 'chunk_overflow' must be at least 1.0")
+    return float(value)
+
+
 def parse_settings(raw: Mapping[str, Any]) -> OpsSettings:
     if raw.get("schema_version") != SCHEMA_VERSION:
         raise SettingsError(f"luf.toml: schema_version must be {SCHEMA_VERSION}")
@@ -86,6 +98,7 @@ def parse_settings(raw: Mapping[str, Any]) -> OpsSettings:
         day_long_max_failures=_positive(g5k, "day_long_max_failures")
         if "day_long_max_failures" in g5k
         else 3,
+        chunk_overflow=_overflow(g5k),
         namespace=_need(hub, "namespace", str),
         bucket=_need(hub, "bucket", str),
         sites=_sites(g5k),

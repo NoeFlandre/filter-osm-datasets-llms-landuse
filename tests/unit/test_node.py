@@ -121,3 +121,54 @@ def test_gathered_decisions_merge_local_and_bucket_parts_without_keeping_them(
     decisions = gathered_decisions(local, bucket, "fp")
     assert set(decisions) == {"s00", "s01", "z"}
     assert set(Path(tempfile.gettempdir()).glob("luf-gate-*")) == before  # temp tree removed
+
+
+def test_checkpoint_signal_with_more_chunks_than_can_finish_flushes_and_exits(tmp_path):
+    """Over-assigned job (ADR-0018): SIGUSR2/SIGTERM flush finished texts, unfinished stay open."""
+    import os
+    import signal
+
+    from landuse_filter.application.node_main import Stop
+
+    for sig in (signal.SIGUSR2, signal.SIGTERM):
+        store = WorkStore(tmp_path / str(int(sig)))
+        for cid in ("c1", "c2", "c3"):
+            shas = [f"{cid}-{i:02d}" for i in range(10)]
+            store.write_chunk(
+                cid,
+                pa.table(
+                    {"text_sha256": shas, "text": shas, "input_ids": [[i, 1] for i in range(10)]},
+                    schema=CHUNK,
+                ),
+            )
+
+        class SignallingEngine(FakeEngine):
+            async def generate(self, input_ids, _sig=sig):
+                if self.calls == 14:
+                    os.kill(os.getpid(), _sig)
+                return await super().generate(input_ids)
+
+        old = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGUSR2, signal.SIGINT)}
+        uploaded: list[tuple[str, list[str]]] = []
+        try:
+            stop = Stop()
+            stats = asyncio.run(
+                runner(
+                    store,
+                    SignallingEngine(),
+                    should_stop=stop,
+                    on_part=lambda chunk, _part, shas, sink=uploaded: sink.append((chunk, shas)),
+                ).run(["c1", "c2", "c3"])
+            )
+        finally:
+            for s, handler in old.items():
+                signal.signal(s, handler)
+        assert stop.requested
+        assert 10 <= stats.completed < 30  # stopped early, nothing thrown away
+        assert sum(len(shas) for _, shas in uploaded) == stats.completed  # all flushed
+        per_chunk: dict[str, int] = {}
+        for chunk_id, shas in uploaded:
+            per_chunk[chunk_id] = per_chunk.get(chunk_id, 0) + len(shas)
+        # a chunk is reported done only when every one of its texts was uploaded
+        assert all(per_chunk[c] == 10 for c in stats.chunks_done)
+        assert "c3" not in stats.chunks_done

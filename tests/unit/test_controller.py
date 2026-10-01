@@ -886,10 +886,14 @@ def test_day_options_reach_the_controller_settings(monkeypatch, tmp_path):
     monkeypatch.setattr(ctl_mod, "run_loop", lambda *a, **k: None)
     base = ["run", "--datasets", "d", "--work", str(tmp_path)]
     args = [*base, "--walltime-minutes", "30", "--day-walltime-minutes", "60"]
-    args += ["--day-long-max-failures", "5"]
+    args += ["--day-long-max-failures", "5", "--chunk-overflow", "1.6"]
     assert CliRunner().invoke(cli.g5k_app, args).exit_code == 0
     assert seen["s"].day_walltime == timedelta(minutes=60)
     assert seen["s"].day_long_max_failures == 5
+    assert seen["s"].chunk_overflow == 1.6
+    seen.clear()
+    assert CliRunner().invoke(cli.g5k_app, [*base, "--chunk-overflow", "0.9"]).exit_code != 0
     seen.clear()
     assert CliRunner().invoke(cli.g5k_app, [*base, "--walltime-minutes", "45"]).exit_code == 0
     assert seen["s"].day_walltime == timedelta(minutes=45)  # unset: equals the short value
+    assert seen["s"].chunk_overflow == 1.2  # unset: previous behaviour

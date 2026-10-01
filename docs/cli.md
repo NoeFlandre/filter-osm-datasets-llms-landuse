@@ -248,56 +248,76 @@ Usage: root g5k run [OPTIONS]
  The controller loop: reconcile, pull results, submit where GPUs are free now.                      
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --datasets                                            <str>   Comma-separated, in priority    │
-│                                                                  order (benchmark first for      │
-│                                                                  parity).                        │
-│                                                                  [required]                      │
-│    --work                                                <path>  Local work tree.                │
-│                                                                  [default: work]                 │
-│    --sites                                               <str>   [default:                       │
-│                                                                  grenoble,lille,lyon,nancy,renn… │
-│    --gpu-models                                          <str>   Comma-separated gpu keys to     │
-│                                                                  allow (default: admitted        │
-│                                                                  models).                        │
-│    --max-jobs                                            <int>   [default: 12]                   │
-│    --max-jobs-per-site                                   <int>   [default: 4]                    │
-│    --walltime-minutes                                    <int>   [default: 60]                   │
-│    --day-walltime-minutes                                <int>   Preferred (long) day walltime,  │
-│                                                                  retried with --walltime-minutes │
-│                                                                  if it cannot start (default:    │
-│                                                                  --walltime-minutes).            │
-│    --day-long-max-failures                               <int>   Consecutive failed long day     │
-│                                                                  attempts on a cluster before a  │
-│                                                                  1 h pause.                      │
-│                                                                  [default: 3]                    │
-│    --night-walltime-minutes                              <int>   Preferred (long) walltime for   │
-│                                                                  night/weekend jobs.             │
-│                                                                  [default: 120]                  │
-│    --night-fallback-walltime-minu…                       <int>   Shorter night walltime retried  │
-│                                                                  in the same slot if the long    │
-│                                                                  job cannot start.               │
-│                                                                  [default: 30]                   │
-│    --besteffort                       --no-besteffort            [default: no-besteffort]        │
-│    --max-queued-per-site                                 <int>   Waiting jobs allowed per site   │
-│                                                                  when nothing is free (start     │
-│                                                                  predicted < 2 h).               │
-│                                                                  [default: 1]                    │
-│    --night-max-queued-per-site                           <int>   Waiting jobs per site at        │
-│                                                                  night/weekend (default:         │
-│                                                                  --max-queued-per-site).         │
-│    --window                                              <int>   Candidate concurrency (tuning); │
-│                                                                  default: GPU profile.           │
-│    --namespace                                           <str>   Store a candidate config's      │
-│                                                                  results under <fp>-<namespace>. │
-│    --bucket                                              <str>   Private HF Bucket for chunks    │
-│                                                                  and parts.                      │
-│                                                                  [default:                       │
-│                                                                  NoeFlandre/landuse-filter-work] │
-│    --interval                                            <int>   Seconds between cycles.         │
-│                                                                  [default: 300]                  │
-│    --once                             --no-once                  Run a single cycle and exit.    │
-│                                                                  [default: no-once]              │
-│    --help                                                        Show this message and exit.     │
+│ *  --datasets                                    <str>                   Comma-separated, in     │
+│                                                                          priority order          │
+│                                                                          (benchmark first for    │
+│                                                                          parity).                │
+│                                                                          [required]              │
+│    --work                                        <path>                  Local work tree.        │
+│                                                                          [default: work]         │
+│    --sites                                       <str>                   [default:               │
+│                                                                          grenoble,lille,lyon,na… │
+│    --gpu-models                                  <str>                   Comma-separated gpu     │
+│                                                                          keys to allow (default: │
+│                                                                          admitted models).       │
+│    --max-jobs                                    <int>                   [default: 12]           │
+│    --max-jobs-per-site                           <int>                   [default: 4]            │
+│    --walltime-minutes                            <int>                   [default: 60]           │
+│    --day-walltime-minutes                        <int>                   Preferred (long) day    │
+│                                                                          walltime, retried with  │
+│                                                                          --walltime-minutes if   │
+│                                                                          it cannot start         │
+│                                                                          (default:               │
+│                                                                          --walltime-minutes).    │
+│    --day-long-max-failures                       <int>                   Consecutive failed long │
+│                                                                          day attempts on a       │
+│                                                                          cluster before a 1 h    │
+│                                                                          pause.                  │
+│                                                                          [default: 3]            │
+│    --chunk-overflow                              <float range> [x>=1.0]  Work given to a job =   │
+│                                                                          expected capacity x     │
+│                                                                          this (>= 1.0);          │
+│                                                                          unfinished chunks       │
+│                                                                          return to the pool at   │
+│                                                                          the checkpoint signal.  │
+│                                                                          [default: 1.2]          │
+│    --night-walltime-minut…                       <int>                   Preferred (long)        │
+│                                                                          walltime for            │
+│                                                                          night/weekend jobs.     │
+│                                                                          [default: 120]          │
+│    --night-fallback-wallt…                       <int>                   Shorter night walltime  │
+│                                                                          retried in the same     │
+│                                                                          slot if the long job    │
+│                                                                          cannot start.           │
+│                                                                          [default: 30]           │
+│    --besteffort               --no-besteffort                            [default:               │
+│                                                                          no-besteffort]          │
+│    --max-queued-per-site                         <int>                   Waiting jobs allowed    │
+│                                                                          per site when nothing   │
+│                                                                          is free (start          │
+│                                                                          predicted < 2 h).       │
+│                                                                          [default: 1]            │
+│    --night-max-queued-per…                       <int>                   Waiting jobs per site   │
+│                                                                          at night/weekend        │
+│                                                                          (default:               │
+│                                                                          --max-queued-per-site). │
+│    --window                                      <int>                   Candidate concurrency   │
+│                                                                          (tuning); default: GPU  │
+│                                                                          profile.                │
+│    --namespace                                   <str>                   Store a candidate       │
+│                                                                          config's results under  │
+│                                                                          <fp>-<namespace>.       │
+│    --bucket                                      <str>                   Private HF Bucket for   │
+│                                                                          chunks and parts.       │
+│                                                                          [default:               │
+│                                                                          NoeFlandre/landuse-fil… │
+│    --interval                                    <int>                   Seconds between cycles. │
+│                                                                          [default: 300]          │
+│    --once                     --no-once                                  Run a single cycle and  │
+│                                                                          exit.                   │
+│                                                                          [default: no-once]      │
+│    --help                                                                Show this message and   │
+│                                                                          exit.                   │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -310,34 +330,45 @@ Usage: root g5k run-admission [OPTIONS]
  per cycle; afterwards run `luf bench admit --gpu <key>`.                                           
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --gpus                                   <str>   Comma-separated GPU keys to admit (full      │
-│                                                     benchmark each).                             │
-│                                                     [required]                                   │
-│    --work                                   <path>  Local work tree. [default: work]             │
-│    --sites                                  <str>   [default:                                    │
-│                                                     grenoble,lille,lyon,nancy,rennes,sophia,tou… │
-│    --max-jobs                               <int>   Per GPU type. [default: 5]                   │
-│    --max-jobs-per-site                      <int>   [default: 3]                                 │
-│    --walltime-minutes                       <int>   [default: 60]                                │
-│    --day-walltime-minutes                   <int>   Preferred (long) day walltime, retried with  │
-│                                                     --walltime-minutes if it cannot start        │
-│                                                     (default: --walltime-minutes).               │
-│    --day-long-max-failures                  <int>   Consecutive failed long day attempts on a    │
-│                                                     cluster before a 1 h pause.                  │
-│                                                     [default: 3]                                 │
-│    --night-walltime-minutes                 <int>   Preferred (long) walltime for night/weekend  │
-│                                                     jobs.                                        │
-│                                                     [default: 120]                               │
-│    --night-fallback-walltime-minutes        <int>   Shorter night walltime retried in the same   │
-│                                                     slot if the long job cannot start.           │
-│                                                     [default: 30]                                │
-│    --max-queued-per-site                    <int>   Waiting jobs allowed per site when nothing   │
-│                                                     is free (night/weekend).                     │
-│                                                     [default: 2]                                 │
-│    --night-max-queued-per-site              <int>   Waiting jobs per site at night/weekend       │
-│                                                     (default: --max-queued-per-site).            │
-│    --interval                               <int>   [default: 300]                               │
-│    --help                                           Show this message and exit.                  │
+│ *  --gpus                                <str>                   Comma-separated GPU keys to     │
+│                                                                  admit (full benchmark each).    │
+│                                                                  [required]                      │
+│    --work                                <path>                  Local work tree.                │
+│                                                                  [default: work]                 │
+│    --sites                               <str>                   [default:                       │
+│                                                                  grenoble,lille,lyon,nancy,renn… │
+│    --max-jobs                            <int>                   Per GPU type. [default: 5]      │
+│    --max-jobs-per-site                   <int>                   [default: 3]                    │
+│    --walltime-minutes                    <int>                   [default: 60]                   │
+│    --day-walltime-minutes                <int>                   Preferred (long) day walltime,  │
+│                                                                  retried with --walltime-minutes │
+│                                                                  if it cannot start (default:    │
+│                                                                  --walltime-minutes).            │
+│    --day-long-max-failures               <int>                   Consecutive failed long day     │
+│                                                                  attempts on a cluster before a  │
+│                                                                  1 h pause.                      │
+│                                                                  [default: 3]                    │
+│    --chunk-overflow                      <float range> [x>=1.0]  Work given to a job = expected  │
+│                                                                  capacity x this (>= 1.0);       │
+│                                                                  unfinished chunks return to the │
+│                                                                  pool at the checkpoint signal.  │
+│                                                                  [default: 1.2]                  │
+│    --night-walltime-minutes              <int>                   Preferred (long) walltime for   │
+│                                                                  night/weekend jobs.             │
+│                                                                  [default: 120]                  │
+│    --night-fallback-walltime-min…        <int>                   Shorter night walltime retried  │
+│                                                                  in the same slot if the long    │
+│                                                                  job cannot start.               │
+│                                                                  [default: 30]                   │
+│    --max-queued-per-site                 <int>                   Waiting jobs allowed per site   │
+│                                                                  when nothing is free            │
+│                                                                  (night/weekend).                │
+│                                                                  [default: 2]                    │
+│    --night-max-queued-per-site           <int>                   Waiting jobs per site at        │
+│                                                                  night/weekend (default:         │
+│                                                                  --max-queued-per-site).         │
+│    --interval                            <int>                   [default: 300]                  │
+│    --help                                                        Show this message and exit.     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 

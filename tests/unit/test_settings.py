@@ -95,3 +95,27 @@ def test_day_walltime_settings_are_optional_and_validated():
     raw["grid5000"]["day_walltime_minutes"] = 0
     with pytest.raises(SettingsError, match="'day_walltime_minutes' must be positive"):
         parse_settings(raw)
+
+
+def test_chunk_overflow_defaults_validates_and_reads_environment():
+    from landuse_filter.adapters.settings_file import with_environment
+
+    assert parse_settings(good()).chunk_overflow == 1.2
+    raw = good()
+    raw["grid5000"]["chunk_overflow"] = 1.6
+    assert parse_settings(raw).chunk_overflow == 1.6
+    raw["grid5000"]["chunk_overflow"] = 1
+    assert parse_settings(raw).chunk_overflow == 1.0  # boundary is allowed
+    raw["grid5000"]["chunk_overflow"] = 1.6
+    env = with_environment(good(), {"LUF_CHUNK_OVERFLOW": "2"})
+    assert parse_settings(env).chunk_overflow == 2.0
+    for bad, message in (
+        (0.9, "must be at least 1.0"),
+        ("x", "must be float"),
+        (True, "must be float"),
+    ):
+        raw["grid5000"]["chunk_overflow"] = bad
+        with pytest.raises(SettingsError, match=f"luf.toml: 'chunk_overflow' {message}$"):
+            parse_settings(raw)
+    with pytest.raises(SettingsError, match="LUF_CHUNK_OVERFLOW"):
+        with_environment(good(), {"LUF_CHUNK_OVERFLOW": "abc"})

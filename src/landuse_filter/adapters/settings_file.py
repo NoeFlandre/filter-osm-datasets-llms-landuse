@@ -27,6 +27,7 @@ ENV_FIELDS = {
     "bucket": "hub",
     "sites": "grid5000",
     "cuda_module": "grid5000",
+    "chunk_overflow": "grid5000",
     **dict.fromkeys((*INT_FIELDS, *OPTIONAL_INT_FIELDS), "grid5000"),
 }
 
@@ -34,6 +35,11 @@ ENV_FIELDS = {
 def _env_value(field: str, text: str) -> Any:
     if field == "sites":
         return [s.strip() for s in text.split(",")]
+    if field == "chunk_overflow":
+        try:
+            return float(text)
+        except ValueError:
+            raise SettingsError(f"LUF_{field.upper()}: {text!r} is not a number") from None
     if field in INT_FIELDS or field in OPTIONAL_INT_FIELDS:
         try:
             return int(text)
