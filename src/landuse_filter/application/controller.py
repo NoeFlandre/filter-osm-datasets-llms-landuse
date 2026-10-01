@@ -734,6 +734,9 @@ class Controller:
             a.error = str(exc)[-500:]
             self.save(a)
             self.log(f"{site}: submission failed: {exc}")
+            if g5k.is_transport_failure(exc):
+                self.policy.trip(site)  # unreachable: no more attempts here this cycle
+                self.log(f"{site}: skipped for the rest of this cycle")
             return None
 
     def _late_cancelled(self, a: Assignment, cluster: Cluster, *, final: bool) -> None:

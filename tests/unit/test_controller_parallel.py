@@ -267,3 +267,28 @@ def test_memory_counters_are_not_lost_when_clusters_fail_together(tmp_path, monk
     c.cycle(NOW)
     for site in SITES:
         assert c.store.exists(f"backoff/{site}_gres.json")  # one per site, none overwritten
+
+
+def test_unreachable_site_is_skipped_for_the_rest_of_the_cycle(tmp_path, monkeypatch):
+    fake = ThreadedG5K()
+    c, _ = build(tmp_path, monkeypatch, workers=8, fake=fake)
+    calls = []
+    real = fake.submit
+
+    def submit(site, args):
+        if site != "nancy":
+            return real(site, args)
+        calls.append(site)
+        raise g5k.RemoteError(f"{site}: exit 255: Connection timed out during banner exchange")
+
+    monkeypatch.setattr(g5k, "submit", submit)
+    report = c.cycle(NOW)
+    assert calls == ["nancy"]  # one attempt, then the breaker skips the site
+    assert all(not s.startswith("nancy/") for s in report.submitted)
+    assert any(s.startswith("lille/") for s in report.submitted)
+
+
+def test_transport_failure_is_told_from_a_refusal():
+    assert g5k.is_transport_failure(g5k.RemoteError("x: timed out: oarstat -u -J"))
+    assert g5k.is_transport_failure(g5k.RemoteError("x: exit 255: Broken pipe"))
+    assert not g5k.is_transport_failure(g5k.RemoteError("x: exit 1: bad request"))
