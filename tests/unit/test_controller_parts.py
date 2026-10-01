@@ -103,3 +103,21 @@ def test_transport_uploads_chunks_once_and_frees_local_copies(tmp_path):
     assert remote.ls("chunks/") == ["chunks/c1.parquet", "chunks/c2.parquet"]
     assert not store.exists("chunks/c1.parquet")
     assert not store.exists("chunks/c2.parquet")
+
+
+def test_transport_does_not_list_the_bucket_when_no_chunk_is_local(tmp_path):
+    """Regression: every submission listed `chunks/` (70,000 files, ~50 s), so a cycle with dozens
+    of submissions took tens of minutes and results were ingested only once per cycle (an hour
+    without ingest on 2026-10-01). Chunks planned on a node are already in the bucket."""
+    calls = []
+
+    class Spy(DirRemote):
+        def ls(self, prefix):
+            calls.append(prefix)
+            return super().ls(prefix)
+
+    store = WorkStore(tmp_path / "w")
+    Transport(store, Spy(tmp_path / "bucket"), "bucket", log=lambda m: None).upload_chunks(
+        ["c1", "c2"]
+    )
+    assert calls == []

@@ -37,8 +37,10 @@ class Transport:
 
     def upload_chunks(self, chunks: list[str]) -> None:
         """Put chunk inputs in the bucket once, then drop the local copies (scarce SSD)."""
-        present = set(self.remote.ls("chunks/"))
         local = [c for c in chunks if self.store.exists(f"chunks/{c}.parquet")]
+        if not local:  # planned on a node: already in the bucket, and listing it takes ~a minute
+            return
+        present = set(self.remote.ls("chunks/"))
         todo = [c for c in local if f"chunks/{c}.parquet" not in present]
         self.remote.put(
             [(self.store.path(f"chunks/{c}.parquet"), f"chunks/{c}.parquet") for c in todo]
