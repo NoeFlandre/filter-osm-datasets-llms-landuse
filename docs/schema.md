@@ -35,6 +35,8 @@ duckdb.sql("""
 
 ## Dataset card and world map
 
+`luf node publish --card-only` renders the same card from the bucket ledgers alone (ADR-0021).
+
 The card of each `-landuse` repo is rendered from counts made over the **published** tables
 (never from a single run): per-file stats are cached in `published/<dataset>.stats.jsonl` and
 backfilled from the Hub. Every dataset's card embeds `assets/yes_share_map.png` (ADR-0015):

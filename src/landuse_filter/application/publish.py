@@ -15,6 +15,7 @@ Published files are recorded in ``published/<dataset>.jsonl``, so re-running res
 """
 
 import contextlib
+import fnmatch
 import hashlib
 import logging
 import math
@@ -189,6 +190,42 @@ def publish(
     new += _missing_viewers(run, resolved=run.ctx.resolved, out=run.ctx.out)
     new += _generation_files(run, new_shas)
     return _finish(run, new)
+
+
+def refresh_card_only(
+    store: WorkStore,
+    dataset: str,
+    revision: str,
+    *,
+    on_progress: Callable[[], None] | None = None,
+    hub: Hub | None = None,
+) -> PublishReport:
+    """Refresh the card from the ledgers alone: no planner index, no result parts, no uploads
+    of labels. Missing per-file counts are read from the Hub (resumably, see
+    :func:`published_stats.complete`). A dataset without any labels file keeps its card."""
+    hub = hub or HfHub()
+    source = SPECS[dataset].source
+    total = {
+        f
+        for f in hub.list_files(source.repo_id, revision)
+        if any(fnmatch.fnmatch(f, p) for p in source.patterns)
+    }
+    done = {r["path"] for r in store.read_jsonl(f"published/{dataset}.jsonl")}
+    labelled = len([f for f in total if f"labels/{f}" in done])
+    partial = {r["path"] for r in store.compact_jsonl(partial_ledger(dataset))} - done
+    if not labelled and not partial:
+        return PublishReport(0, len(total), 0, {})
+    decisions = _refresh_card(
+        store,
+        hub,
+        dataset,
+        repo=output_repo(dataset),
+        revision=revision,
+        local={},
+        coverage=Coverage(labelled, len(total), sorted(partial)),
+        on_progress=on_progress,
+    )
+    return PublishReport(labelled, len(total), 0, decisions, len(partial))
 
 
 def _prepare(

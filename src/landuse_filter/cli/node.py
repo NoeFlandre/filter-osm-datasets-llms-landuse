@@ -165,14 +165,21 @@ def node_publish(
     dataset: str = typer.Option(...),
     revision: str = typer.Option(...),
     bucket: str = typer.Option(OPS.bucket),
+    card_only: bool = typer.Option(
+        False, "--card-only", help="Only refresh the dataset card from the bucket's ledgers."
+    ),
 ) -> None:
     """Build and upload the -landuse dataset on this node's scratch."""
     from dataclasses import asdict
 
     from landuse_filter.adapters.remote import BucketRemote
-    from landuse_filter.application.remote_publish import run_publish
+    from landuse_filter.application.remote_publish import run_card_only, run_publish
 
     scratch = _store(config.scratch_dir())
+    if card_only:
+        card = run_card_only(BucketRemote(bucket), scratch, dataset, revision)
+        typer.echo(json.dumps(asdict(card)))
+        return
     report = run_publish(BucketRemote(bucket), scratch, dataset, revision, config.GENERATION_FP)
     typer.echo(json.dumps(asdict(report)))
 

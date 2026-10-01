@@ -489,3 +489,19 @@ def test_publish_exit_4_when_nothing_new(monkeypatch, tmp_path):
     result = invoke("publish", "--dataset", "d", "--revision", "r", "--work", tmp_path, "--dry-run")
     assert result.exit_code == 4
     assert seen["a"] == ("d", "r", True)
+
+
+def test_node_publish_card_only_runs_the_card_job(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "scratch_dir", lambda: tmp_path)
+    monkeypatch.setattr(remote_mod, "BucketRemote", lambda bucket: ("remote", bucket))
+    seen = {}
+
+    def fake(rem, scratch, dataset, revision):
+        seen.update(rem=rem, dataset=dataset, revision=revision)
+        return SimpleNamespace(new_files=0)
+
+    monkeypatch.setattr(remote_publish, "run_card_only", fake)
+    monkeypatch.setattr("dataclasses.asdict", lambda r: {"new_files": r.new_files})
+    result = invoke("node", "publish", "--card-only", "--dataset", "d", "--revision", "r")
+    assert result.exit_code == 0, result.output
+    assert seen["dataset"] == "d"
