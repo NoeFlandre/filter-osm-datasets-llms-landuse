@@ -69,3 +69,29 @@ def test_deadline_from_oarstat_falls_back_to_now_and_flat_shape():
 def test_deadline_from_oarstat_ignores_garbage():
     for bad in ("", "nope", "{}", "[]", json.dumps({"1": {"walltime": 0}}), json.dumps({"1": {}})):
         assert deadline_from_oarstat(bad, 1) is None
+
+
+def test_stop_reason_honours_an_explicit_margin():
+    assert stop_reason(100, 200, None, margin=150) == "deadline"
+    assert stop_reason(100, 200, None, margin=50) is None
+    assert stop_reason(100, 200, "", margin=50) is None  # an empty signal name is no signal
+
+
+def test_deadline_from_env_accepts_any_positive_number():
+    assert deadline_from_env({"LUF_JOB_DEADLINE_EPOCH": "0.5"}) == 0.5
+    assert deadline_from_env({"LUF_JOB_DEADLINE_EPOCH": "1e3"}) == 1000
+    assert deadline_from_env({"OTHER": "5"}) is None
+
+
+def test_deadline_from_oarstat_returns_whole_seconds_and_accepts_strings():
+    out = deadline_from_oarstat(json.dumps({"1": {"walltime": "60.7", "startTime": "1000"}}), 5)
+    assert out == 1060
+    assert isinstance(out, int)
+    assert deadline_from_oarstat(json.dumps({"walltime": 10}), 7.9) == 17
+
+
+def test_deadline_from_oarstat_rejects_negative_walltime_and_odd_json():
+    assert deadline_from_oarstat(json.dumps({"1": {"walltime": -1}}), 5) is None
+    assert deadline_from_oarstat(json.dumps({"1": {"walltime": "n/a"}}), 5) is None
+    for odd in ("null", "5", '"text"', "[1]", json.dumps({"1": 7})):
+        assert deadline_from_oarstat(odd, 1) is None

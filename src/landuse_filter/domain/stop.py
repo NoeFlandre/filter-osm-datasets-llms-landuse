@@ -33,8 +33,8 @@ def stop_reason(
 def deadline_from_env(environ: Mapping[str, str]) -> float | None:
     """The job end time exported by ``scripts/node_job.sh`` (epoch seconds), when valid."""
     try:
-        value = float(environ.get("LUF_JOB_DEADLINE_EPOCH", ""))
-    except ValueError:
+        value = float(environ.get("LUF_JOB_DEADLINE_EPOCH"))  # ty: ignore[invalid-argument-type]
+    except (TypeError, ValueError):  # missing or not a number
         return None
     return value if value > 0 else None
 
