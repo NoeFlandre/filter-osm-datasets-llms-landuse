@@ -95,3 +95,8 @@ def test_deadline_from_oarstat_rejects_negative_walltime_and_odd_json():
     assert deadline_from_oarstat(json.dumps({"1": {"walltime": "n/a"}}), 5) is None
     for odd in ("null", "5", '"text"', "[1]", json.dumps({"1": 7})):
         assert deadline_from_oarstat(odd, 1) is None
+
+
+def test_deadline_from_oarstat_boundaries_of_walltime_and_start():
+    assert deadline_from_oarstat(json.dumps({"1": {"walltime": 1, "startTime": 5}}), 9) == 6
+    assert deadline_from_oarstat(json.dumps({"1": {"walltime": 10, "startTime": 1}}), 9) == 11
