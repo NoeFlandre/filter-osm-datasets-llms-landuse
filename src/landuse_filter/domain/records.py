@@ -36,3 +36,23 @@ def from_sglang(text_sha256: str, output: dict, prompt_tokens: int) -> Generatio
         proposed_drafts=meta.get("spec_num_proposed_drafts"),
         latency_s=None if latency is None else float(latency),
     )
+
+
+# finish_reason of a row decided by rule instead of by the model (ADR-0024).
+RULE_NO_LETTERS = "rule:no_letters"
+
+
+def rule_decided_no(text_sha256: str, prompt_tokens: int) -> Generation:
+    """The row of a letterless sentence: a plain ``no`` that parses like a model answer."""
+    return Generation(
+        text_sha256=text_sha256,
+        raw_output="</think>no",
+        prompt_tokens=prompt_tokens,
+        generated_tokens=0,
+        finish_reason=RULE_NO_LETTERS,
+        truncated=False,
+        verify_steps=None,
+        accepted_drafts=None,
+        proposed_drafts=None,
+        latency_s=None,
+    )

@@ -19,8 +19,8 @@ from landuse_filter.adapters.schema import generation_table
 from landuse_filter.adapters.store import CorruptPartError, WorkStore
 from landuse_filter.domain.completion import Part
 from landuse_filter.domain.parsing import parse_generation
-from landuse_filter.domain.records import Generation, from_sglang
-from landuse_filter.domain.sentences import Decision
+from landuse_filter.domain.records import RULE_NO_LETTERS, Generation, from_sglang, rule_decided_no
+from landuse_filter.domain.sentences import Decision, has_no_letters
 
 
 class AsyncEngine(Protocol):
@@ -30,6 +30,7 @@ class AsyncEngine(Protocol):
 @dataclass
 class RunStats:
     completed: int = 0
+    rule_decided: int = 0  # letterless texts labelled no without the model (ADR-0024)
     generated_tokens: int = 0
     parts: int = 0
     failed: int = 0  # generations whose verdict failed to parse (drift signal)
@@ -47,7 +48,7 @@ class RunStats:
     @property
     def sentences_per_second(self) -> float:
         elapsed = time.monotonic() - self.started
-        return self.completed / elapsed if elapsed > 0 else 0.0
+        return (self.completed - self.rule_decided) / elapsed if elapsed > 0 else 0.0
 
 
 @dataclass
@@ -135,6 +136,8 @@ class Runner:
     async def _one(self, table: pa.Table, i: int) -> Generation:
         ids = table.column("input_ids")[i].as_py()
         sha = table.column("text_sha256")[i].as_py()
+        if has_no_letters(table.column("text")[i].as_py()):
+            return rule_decided_no(sha, len(ids))
         output = await self.engine.generate(ids)
         return from_sglang(sha, output, len(ids))
 
@@ -146,6 +149,7 @@ class Runner:
         if self.on_part:
             self.on_part(chunk_id, part, [r.text_sha256 for r in rows])
         self.stats.completed += len(rows)
+        self.stats.rule_decided += sum(r.finish_reason == RULE_NO_LETTERS for r in rows)
         self.stats.generated_tokens += sum(r.generated_tokens for r in rows)
         self.stats.parts += 1
         self.stats.failed += sum(

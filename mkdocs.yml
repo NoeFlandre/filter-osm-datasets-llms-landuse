@@ -39,6 +39,8 @@ nav:
       - adr/0021-card-only-publish.md
       - adr/0022-publish-graceful-stop.md
       - adr/0023-publish-loop.md
+      - adr/0024-letterless-sentences-are-no.md
+      - adr/0024-letterless-sentences-are-no.md
 markdown_extensions:
   - pymdownx.superfences:
       custom_fences:

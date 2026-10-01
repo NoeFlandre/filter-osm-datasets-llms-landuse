@@ -21,6 +21,9 @@ One row per unique text: `generation_id`, `raw_output` (full, including reasonin
 counts, latency, model and draft revisions, prompt sha256, SGLang version, GPU, site,
 OAR job id, code commit, timestamp.
 
+`finish_reason = 'rule:no_letters'` marks a row decided by rule, not by the model (ADR-0024):
+sentences with no letter at all get `raw_output` `</think>no`, zero generated tokens and `decision = no`.
+
 ```python
 import duckdb
 

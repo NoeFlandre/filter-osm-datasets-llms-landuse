@@ -41,3 +41,12 @@ class SentenceRef:
     def label_id(self) -> str:
         keys = [f"{name}={value}" for name, value in self.locator]
         return sha256_parts(self.dataset, *keys)
+
+
+def has_no_letters(text: str) -> bool:
+    """True when ``text`` holds no alphabetic character at all (ADR-0024).
+
+    Digits, punctuation, symbols, emoji and whitespace do not count; any Unicode letter
+    does, so CJK, Arabic or Cyrillic text still goes to the model.
+    """
+    return not any(ch.isalpha() for ch in text)
