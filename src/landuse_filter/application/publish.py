@@ -184,6 +184,7 @@ def publish(
     run = _prepare(
         store, dataset, revision, hub or HfHub(), dry_run=dry_run, on_progress=on_progress
     )
+    _card_from_ledgers(run)
     new, new_shas = _build_files(run)
     new += _missing_viewers(run, resolved=run.ctx.resolved, out=run.ctx.out)
     new += _generation_files(run, new_shas)
@@ -325,6 +326,17 @@ def _finish(run: _Run, new: list[tuple[Path, str]]) -> PublishReport:
             on_progress=run.sink.on_progress,
         )
     return PublishReport(labelled, len(run.files), len(new), decisions, len(partial_paths))
+
+
+def _card_from_ledgers(run: _Run) -> None:
+    """Bring the card in line with the ledgers before the slow loop over input files: a run
+    stopped at its walltime while downloading them must not leave a stale card."""
+    if run.dry_run or not (run.done or run.resolved_before):
+        return
+    try:
+        _progress_card(run, {})
+    except Exception:
+        log.exception("card refresh at the start failed; continuing")
 
 
 def _progress_card(run: _Run, local: dict[str, Path]) -> None:

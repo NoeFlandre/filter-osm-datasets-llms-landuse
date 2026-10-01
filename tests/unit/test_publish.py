@@ -516,3 +516,23 @@ def test_mirror_frees_each_batch_after_its_upload(tmp_path):
     )
     assert not link.exists()
     assert not (cache / "blob").exists()
+
+
+def test_the_card_is_refreshed_at_the_start_of_a_run_from_the_ledgers(tmp_path, monkeypatch):
+    """Regression: a run that spent its walltime downloading input files (386 for website) before
+    any upload left the card stale for hours; the card must match the ledgers before any work."""
+    hub = fake_hub(tmp_path)
+    store = planned(tmp_path)
+    generate_some(store, "p1", 0, 20)
+    pub.publish(store, WEBSITE, "rev", hub=hub)  # run 1 publishes the partial file and the card
+    store.path(f"published/{WEBSITE}.card.sha256").unlink()  # the Hub card is "stale" now
+    order = []
+    real_card, real_build = pub._refresh_card, pub._build_files
+    monkeypatch.setattr(
+        pub, "_refresh_card", lambda *a, **k: (order.append("card"), real_card(*a, **k))[1]
+    )
+    monkeypatch.setattr(
+        pub, "_build_files", lambda run: (order.append("build"), real_build(run))[1]
+    )
+    pub.publish(store, WEBSITE, "rev", hub=hub)
+    assert order[:2] == ["card", "build"]  # the card first, before the slow loop over files
