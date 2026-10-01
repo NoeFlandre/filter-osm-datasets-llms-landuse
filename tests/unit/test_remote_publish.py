@@ -196,3 +196,43 @@ def test_a_stopped_publish_job_still_saves_the_ledgers_to_the_bucket(tmp_path, m
     )
     assert report.stopped == "signal SIGTERM"
     assert remote.ls(f"published/{WEBSITE}.mirror.jsonl")  # progress survives the node
+
+
+def test_publish_job_writes_the_status_marker_the_loop_waits_for(tmp_path):
+    import json
+
+    hub = fake_hub(tmp_path)
+    planning = WorkStore(tmp_path / "planning-node")
+    planner = Planner(planning, WEBSITE, config.GENERATION_FP)
+    planner.register(["polygons/a.parquet"])
+    planner.scan(lambda _: INPUTS / "website.parquet")
+    planner.db.commit()
+    remote = DirRemote(tmp_path / "bucket")
+    remote.put([(planning.path(f"index/{WEBSITE}.sqlite"), f"index/{WEBSITE}.sqlite")])
+
+    def run(**kw):
+        remote_publish.run_publish(
+            remote,
+            WorkStore(tmp_path / "node"),
+            WEBSITE,
+            "rev",
+            config.GENERATION_FP,
+            hub=hub,
+            **kw,
+        )
+        return json.loads((tmp_path / "bucket" / f"published/{WEBSITE}.status.json").read_text())
+
+    first = run()  # nothing generated yet: mirrored, 0 of 1 labelled
+    assert first["done"] is False
+    assert first["mirrored"] is True
+    assert first["files"] == {"total": 1, "complete": 0, "partial": 0, "unscanned": 0}
+    generate_all(planning)
+    for p in planning.part_paths(config.GENERATION_FP):
+        remote.put([(p, str(p.relative_to(planning.root)))])
+    stopped = run(should_stop=lambda: "deadline")
+    assert stopped["done"] is False
+    assert stopped["stopped"] == "deadline"
+    last = run()
+    assert last["done"] is True
+    assert last["revision"] == "rev"
+    assert last["files"]["complete"] == last["files"]["total"] == 1

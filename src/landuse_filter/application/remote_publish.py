@@ -6,8 +6,10 @@ from landuse_filter.adapters.hub import Hub
 from landuse_filter.adapters.remote import Remote
 from landuse_filter.adapters.store import WorkStore
 from landuse_filter.application.publish import PublishReport, publish, refresh_card_only
+from landuse_filter.application.publish_loop import status_path
 from landuse_filter.application.remote_plan import restore_index
 from landuse_filter.application.sync import fetch
+from landuse_filter.domain.publish_loop import PublishStatus
 
 
 def run_publish(
@@ -48,7 +50,25 @@ def run_publish(
         )
     finally:
         save()  # whatever happened, the ledgers and the card marker leave the node
+    _save_status(remote, scratch, revision, report)
     return report
+
+
+def _save_status(remote: Remote, scratch: WorkStore, revision: str, report: PublishReport) -> None:
+    """The machine-readable end-of-run marker ``luf g5k publish-loop`` waits for."""
+    path = status_path(report.dataset)
+    status = PublishStatus(
+        report.dataset,
+        revision,
+        report.total_files,
+        report.labelled_files,
+        report.partial_files,
+        report.mirrored,
+        report.unscanned,
+        report.stopped,
+    )
+    scratch.write_json(path, status.to_json())
+    remote.put([(scratch.path(path), path)])
 
 
 def reset_card_cache(remote: Remote, scratch: WorkStore, dataset: str) -> None:

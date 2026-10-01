@@ -54,12 +54,15 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class PublishReport:
+    dataset: str
     labelled_files: int
     total_files: int
     new_files: int
     decisions: dict[str, int]
     partial_files: int = 0
     stopped: str | None = None  # why the run ended early (signal, deadline), else None
+    mirrored: bool = False  # every input file is in the output repo
+    unscanned: int = 0  # registered input files the planner has not scanned yet
 
 
 def partial_ledger(dataset: str) -> str:
@@ -239,7 +242,7 @@ def refresh_card_only(
     labelled = len([f for f in total if f"labels/{f}" in done])
     partial = {r["path"] for r in store.compact_jsonl(partial_ledger(dataset))} - done
     if not labelled and not partial:
-        return PublishReport(0, len(total), 0, {})
+        return PublishReport(dataset, 0, len(total), 0, {})
     decisions = _refresh_card(
         store,
         hub,
@@ -250,7 +253,7 @@ def refresh_card_only(
         coverage=Coverage(labelled, len(total), sorted(partial)),
         on_progress=on_progress,
     )
-    return PublishReport(labelled, len(total), 0, decisions, len(partial))
+    return PublishReport(dataset, labelled, len(total), 0, decisions, len(partial))
 
 
 def _prepare(
@@ -393,8 +396,20 @@ def _finish(run: _Run, new: list[tuple[Path, str]]) -> PublishReport:
             on_progress=run.sink.on_progress,
         )
     return PublishReport(
-        labelled, len(run.files), len(new), decisions, len(partial_paths), run.stop.reason
+        run.dataset,
+        labelled,
+        len(run.files),
+        len(new),
+        decisions,
+        len(partial_paths),
+        run.stop.reason,
+        mirrored=f"mirror:{run.revision}" in {r["path"] for r in _ledger(run)},
+        unscanned=run.db.execute("SELECT COUNT(*) FROM files WHERE done = 0").fetchone()[0],
     )
+
+
+def _ledger(run: _Run) -> list[dict]:
+    return list(run.store.read_jsonl(f"published/{run.dataset}.jsonl"))
 
 
 def _card_from_ledgers(run: _Run) -> None:
