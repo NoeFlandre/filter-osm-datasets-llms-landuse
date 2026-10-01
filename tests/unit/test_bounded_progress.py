@@ -84,3 +84,22 @@ def test_completed_chunks_are_forgotten_so_the_index_stays_bounded(tmp_path):
     assert index.count("c1") == 0  # forgotten: only in-flight chunks stay in the index
     assert index.count("c2") == 1
     assert store.read_jsonl("complete.jsonl") == [{"chunk_id": "c1"}]
+
+
+def test_a_corrupt_manifest_is_dropped_and_never_marked_seen(tmp_path):
+    """Regression: an empty manifest left by an interrupted download made every controller cycle
+    raise JSONDecodeError at ingest, so nothing was counted or submitted for an hour."""
+    index = ProgressIndex(tmp_path / "idx.sqlite")
+    good = tmp_path / "fp" / "c1" / "good.json"
+    good.parent.mkdir(parents=True)
+    good.write_text('{"text_sha256s": ["a", "b"]}')
+    empty = tmp_path / "fp" / "c1" / "empty.json"
+    empty.write_text("")
+    wrong = tmp_path / "fp" / "c1" / "wrong.json"
+    wrong.write_text('{"other": 1}')
+    assert index.ingest([empty, good, wrong]) == 1  # only the good one counts as new
+    assert index.count("c1") == 2
+    assert not empty.exists()
+    assert not wrong.exists()  # removed, so the next pull downloads them again
+    assert not index.has_seen(str(empty))
+    assert good.exists()

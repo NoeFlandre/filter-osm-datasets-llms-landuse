@@ -21,6 +21,14 @@ def _key(location: str) -> str:
     return "/".join(location.replace("\\", "/").split("/")[-3:])
 
 
+def _read_hashes(path: Path) -> list[str] | None:
+    """The text hashes of a manifest, or ``None`` when the file is unreadable or malformed."""
+    try:
+        return list(json.loads(path.read_text(encoding="utf-8"))["text_sha256s"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 class ProgressIndex:
     """Generated hashes of the chunks still in flight, plus every manifest ever consumed.
 
@@ -42,11 +50,14 @@ class ProgressIndex:
         new = 0
         with self.db:
             for path in manifests:
-                cur = self.db.execute("INSERT OR IGNORE INTO seen VALUES (?)", (_key(str(path)),))
-                if not cur.rowcount:
+                if self.has_seen(str(path)):
                     continue
+                shas = _read_hashes(path)
+                if shas is None:  # a truncated download: drop it, the next pull fetches it again
+                    path.unlink(missing_ok=True)
+                    continue
+                self.db.execute("INSERT OR IGNORE INTO seen VALUES (?)", (_key(str(path)),))
                 new += 1
-                shas = json.loads(path.read_text(encoding="utf-8"))["text_sha256s"]
                 chunk = path.parent.name
                 self.db.executemany(
                     "INSERT OR IGNORE INTO done VALUES (?, ?)", [(chunk, s) for s in shas]
