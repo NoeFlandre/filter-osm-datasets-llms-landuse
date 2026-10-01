@@ -53,9 +53,10 @@ installed by publish jobs only.
 `viewer/<input path>.parquet` carries only what a reader of the dataset viewer needs: `sentence`
 (the text; the whole text for `skipped_unsplit`), `label` (`yes`, `no`, `failed`,
 `skipped_unsplit`), `language` and `region` (the input file's name). It holds only sentences with
-a model answer or deliberately skipped, never `pending` ones (those stay in `labels/`, which
-keeps every row), so on a partial dataset it is a subset of `labels/`; for a complete file it
-mirrors `labels/` row for row. A file with no such row gets no viewer file (the Hub viewer fails
+a model answer or deliberately skipped, never `pending` ones, and only sentences with at least
+2 letters (digits and punctuation do not count: debris such as `-`, `|`, `...` or `7` is noise in
+the Hub viewer). Those rows stay in `labels/`, which keeps every row, so the viewer is always a
+subset of `labels/`. A file with no such row gets no viewer file (the Hub viewer fails
 on zero-row parquet files); this cannot go stale, because resolved sentences never revert to
 `pending`. The card lists it as the first, default config (`sentences`), so the Hub viewer opens
 on it. Files labelled before this table existed get theirs on the next publish.

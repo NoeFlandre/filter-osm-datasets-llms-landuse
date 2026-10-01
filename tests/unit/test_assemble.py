@@ -52,7 +52,7 @@ def test_failed_is_kept_with_reason():
 
 
 def test_viewer_table_holds_only_what_a_reader_cares_about(tmp_path):
-    from landuse_filter.application.assemble import VIEWER_COLUMNS, build_viewer
+    from landuse_filter.application.assemble import VIEWER_COLUMNS, build_viewer, readable
 
     rs = refs()
     resolved = {r.text_sha256: Resolved("no", "exact", None) for r in rs if not r.unsplit}
@@ -61,16 +61,20 @@ def test_viewer_table_holds_only_what_a_reader_cares_about(tmp_path):
     )
     table = pq.read_table(tmp_path / "viewer" / "polygons" / "x.parquet")
     assert table.column_names == VIEWER_COLUMNS == ["sentence", "label", "language", "region"]
-    assert table.num_rows == n == len(rs)
+    shown = [r for r in rs if readable(r.text)]
+    assert n == len(rs)  # build_viewer returns the number of input sentences
+    assert table.num_rows == len(shown) <= len(rs)
     rows = table.to_pylist()
     by_text = {r["sentence"]: r for r in rows}
-    for ref in rs:
+    for ref in shown:
         assert by_text[ref.text]["label"] == ("skipped_unsplit" if ref.unsplit else "no")
         assert by_text[ref.text]["language"] == ref.language
     assert {r["region"] for r in rows} == {"x"}  # the input file's stem
 
 
 def test_build_labels_writes_the_viewer_table_too(tmp_path):
+    from landuse_filter.application.assemble import readable
+
     rs = refs()
     resolved = {r.text_sha256: Resolved("yes", "exact", None) for r in rs if not r.unsplit}
     build_labels(
@@ -83,8 +87,10 @@ def test_build_labels_writes_the_viewer_table_too(tmp_path):
     )
     viewer = pq.read_table(tmp_path / "viewer" / "polygons" / "x.parquet")
     labels = pq.read_table(tmp_path / "labels" / "polygons" / "x.parquet")
-    assert viewer.num_rows == labels.num_rows
-    assert viewer.column("label").to_pylist() == labels.column("decision").to_pylist()
+    readable_rows = [i for i, t in enumerate(rs) if readable(t.text)]
+    assert viewer.num_rows == len(readable_rows) <= labels.num_rows
+    decisions = labels.column("decision").to_pylist()
+    assert viewer.column("label").to_pylist() == [decisions[i] for i in readable_rows]
 
 
 def test_unresolved_texts_are_pending_when_the_file_is_published_partially():
@@ -137,3 +143,16 @@ def test_a_file_without_viewer_rows_gets_no_viewer_file_and_loses_a_stale_one(tm
     _write_viewer(tmp_path, "polygons/x.parquet", only_split, rows)
     assert not viewer.exists()
     _write_viewer(tmp_path, "polygons/x.parquet", only_split, rows)  # idempotent
+
+
+def test_the_viewer_hides_sentences_without_two_letters_but_labels_keep_them():
+    """Navigation debris (`-`, `|`, `...`, a lone digit) is noise in the Hub viewer; it stays in
+    `labels/`."""
+    from landuse_filter.application.assemble import viewer_table
+    from landuse_filter.domain.sentences import SentenceRef
+
+    texts = ["-", "|", "...", "7", "a", "ab", "12 34", "Home", "日本"]
+    refs = [SentenceRef("w", "f", (("polygon_id", str(i)),), t, "en") for i, t in enumerate(texts)]
+    rows = [{"decision": "no"}] * len(refs)
+    shown = viewer_table(refs, rows, "region").column("sentence").to_pylist()
+    assert shown == ["ab", "Home", "日本"]  # two letters is the minimum; digits are not letters
