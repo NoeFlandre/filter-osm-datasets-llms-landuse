@@ -252,3 +252,8 @@ def test_day_ladder_properties(window, day, short):
     assert all(w <= day for w in ladder)
     assert list(ladder) == sorted(set(ladder), reverse=True)
     assert len(ladder) <= 2
+
+
+def test_default_overflow_is_twenty_percent():
+    pending = [("a", 6), ("b", 6), ("c", 1)]
+    assert assign_chunks(pending, set(), capacity=10) == ["a", "b"]  # budget 12, not 13

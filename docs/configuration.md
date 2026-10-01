@@ -55,3 +55,13 @@ attempts resume. The controller log has one line per event:
 To revert, unset `--day-walltime-minutes` (or set it equal to `--walltime-minutes`). Production:
 `--walltime-minutes 30 --day-walltime-minutes 60`. See
 [ADR-0017](adr/0017-day-walltime-fallback.md).
+
+## Over-assignment (`chunk_overflow`)
+
+`--chunk-overflow` (`luf g5k run` and `run-admission`; `chunk_overflow` in luf.toml,
+`LUF_CHUNK_OVERFLOW`; float, at least 1.0, default 1.2) sets how much work a job receives:
+profile `sentences_per_second` x (walltime - setup) x this factor. Jobs usually finish their
+chunks early (median useful fraction about 0.5), so a larger factor keeps the GPU busy until the
+OAR checkpoint signal (5 minutes before the walltime ends), when the node flushes finished texts
+and exits; unfinished chunks return to the pool. Production: `--chunk-overflow 1.6`.
+To revert, leave the option unset (1.2). See [ADR-0018](adr/0018-over-assignment.md).

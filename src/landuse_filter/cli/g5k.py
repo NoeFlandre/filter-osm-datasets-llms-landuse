@@ -68,6 +68,12 @@ def g5k_run(
         OPS.day_long_max_failures,
         help="Consecutive failed long day attempts on a cluster before a 1 h pause.",
     ),
+    chunk_overflow: float = typer.Option(
+        OPS.chunk_overflow,
+        min=1.0,
+        help="Work given to a job = expected capacity x this (>= 1.0); unfinished chunks "
+        "return to the pool at the checkpoint signal.",
+    ),
     night_walltime_minutes: int = typer.Option(
         OPS.night_walltime_minutes, help="Preferred (long) walltime for night/weekend jobs."
     ),
@@ -104,6 +110,7 @@ def g5k_run(
         walltime=timedelta(minutes=walltime_minutes),
         day_walltime=timedelta(minutes=day_walltime_minutes or walltime_minutes),
         day_long_max_failures=day_long_max_failures,
+        chunk_overflow=chunk_overflow,
         night_walltime=timedelta(minutes=night_walltime_minutes),
         night_fallback_walltime=timedelta(minutes=night_fallback_walltime_minutes),
         night_max_queued_per_site=night_max_queued_per_site,
@@ -135,6 +142,12 @@ def g5k_run_admission(
     day_long_max_failures: int = typer.Option(
         OPS.day_long_max_failures,
         help="Consecutive failed long day attempts on a cluster before a 1 h pause.",
+    ),
+    chunk_overflow: float = typer.Option(
+        OPS.chunk_overflow,
+        min=1.0,
+        help="Work given to a job = expected capacity x this (>= 1.0); unfinished chunks "
+        "return to the pool at the checkpoint signal.",
     ),
     night_walltime_minutes: int = typer.Option(
         OPS.night_walltime_minutes, help="Preferred (long) walltime for night/weekend jobs."
@@ -170,6 +183,7 @@ def g5k_run_admission(
                 walltime=timedelta(minutes=walltime_minutes),
                 day_walltime=timedelta(minutes=day_walltime_minutes or walltime_minutes),
                 day_long_max_failures=day_long_max_failures,
+                chunk_overflow=chunk_overflow,
                 night_walltime=timedelta(minutes=night_walltime_minutes),
                 night_fallback_walltime=timedelta(minutes=night_fallback_walltime_minutes),
                 night_max_queued_per_site=night_max_queued_per_site,

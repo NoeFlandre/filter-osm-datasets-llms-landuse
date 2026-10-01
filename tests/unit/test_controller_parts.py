@@ -121,3 +121,30 @@ def test_transport_does_not_list_the_bucket_when_no_chunk_is_local(tmp_path):
         ["c1", "c2"]
     )
     assert calls == []
+
+
+def test_chunk_stopped_with_unfinished_texts_stays_pending_and_is_reassigned(tmp_path):
+    """A job over-assigned more than it could finish leaves the chunk in the pool (ADR-0018)."""
+    from landuse_filter.domain.scheduling import assign_chunks
+
+    store = WorkStore(tmp_path)
+    store.append_jsonl(
+        "plans/a/fp/chunks.jsonl", [{"chunk_id": "c1", "size": 3}, {"chunk_id": "c2", "size": 3}]
+    )
+    for chunk, shas in (("c1", ["x", "y", "z"]), ("c2", ["u"])):  # c2 stopped with 1 of 3
+        manifest = store.path(f"parts/fp/{chunk}/p.json")
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(json.dumps({"text_sha256s": shas}))
+    progress = WorkProgress(
+        store,
+        plan_fp="fp",
+        work_fp="fp",
+        datasets=["a"],
+        complete_log="complete.jsonl",
+        log=lambda m: None,
+    )
+    assert progress.done_count("c2") == 1
+    pending = progress.pending()
+    assert pending == [("c2", 3)]
+    assert store.read_jsonl("complete.jsonl") == [{"chunk_id": "c1"}]
+    assert assign_chunks(pending, set(), capacity=1, overflow=1.6) == ["c2"]

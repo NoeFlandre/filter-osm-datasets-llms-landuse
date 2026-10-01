@@ -70,6 +70,7 @@ class Settings:
     night_fallback_walltime: timedelta = timedelta(minutes=30)
     day_walltime: timedelta | None = None  # preferred day walltime; None: same as walltime
     day_long_max_failures: int = LONG_FAILURES  # consecutive long failures before a pause
+    chunk_overflow: float = 1.2  # a job gets capacity x this of work; the rest returns (ADR-0018)
     besteffort: bool = False
     gpu_models: list[str] = field(default_factory=list)  # allow-list of gpu keys; empty = admitted
     window: int | None = None  # candidate concurrency (tuning, issue #17); None = GPU profile
@@ -429,7 +430,7 @@ class Controller:
         long_try = len(walltimes) > 1 and is_daytime(self.now)
         for i, wall in enumerate(walltimes):
             attempt = replace(slot, walltime=wall)
-            chunks = assign_chunks(pending, taken, _capacity(attempt))
+            chunks = assign_chunks(pending, taken, _capacity(attempt), self.settings.chunk_overflow)
             if not chunks:
                 return None, []
             job_id = self.launch(
