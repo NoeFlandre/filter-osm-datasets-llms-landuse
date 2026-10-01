@@ -244,6 +244,14 @@ def g5k_cpu_job(
     walltime_minutes: int = typer.Option(60),
 ) -> None:
     """Submit one resumable planning or publishing job (default queue, one CPU node)."""
+    job_id, wall = _submit_cpu_job(mode, site, dataset, revision, walltime_minutes)
+    typer.echo(f"{mode} job {job_id} on {site} ({wall})")
+
+
+def _submit_cpu_job(
+    mode: str, site: str, dataset: str, revision: str, minutes: int
+) -> tuple[str, str]:
+    """Deploy the code and submit one CPU job; returns (job id, walltime text)."""
     if mode not in ("plan", "replan", "publish", "card", "repair"):
         raise typer.BadParameter("mode must be plan, replan, publish, card or repair")
     from datetime import datetime
@@ -253,13 +261,10 @@ def g5k_cpu_job(
     from landuse_filter.application.controller import commit, git_archive
     from landuse_filter.domain.capacity import walltime_text
     from landuse_filter.domain.policy import allowed_window
+    from landuse_filter.domain.publish_loop import job_name
 
     window = allowed_window(datetime.now(ZoneInfo("Europe/Paris")), starts_now=True)
-    wall = (
-        min(timedelta(minutes=walltime_minutes), window.max_walltime)
-        if window
-        else timedelta(hours=1)
-    )
+    wall = min(timedelta(minutes=minutes), window.max_walltime) if window else timedelta(hours=1)
     code_commit = commit()
     code = g5k.deploy_code(site, code_commit, git_archive(code_commit))
     g5k.ssh(site, f"mkdir -p {g5k.REMOTE_ROOT}/logs")
@@ -275,7 +280,7 @@ def g5k_cpu_job(
             "--checkpoint",
             "300",
             "-n",
-            f"{g5k.JOB_PREFIX}plan-{dataset[:20]}",
+            job_name(g5k.JOB_PREFIX, mode, dataset),
             "-O",
             f"{g5k.REMOTE_ROOT}/logs/%jobid%.out",
             "-E",
@@ -285,7 +290,44 @@ def g5k_cpu_job(
     )
     job_id = g5k.submit(site, args)
     g5k.policy_check(site)
-    typer.echo(f"{mode} job {job_id} on {site} ({walltime_text(wall)})")
+    return job_id, walltime_text(wall)
+
+
+@g5k_app.command("publish-loop")
+def g5k_publish_loop(
+    dataset: str = typer.Option(...),
+    revision: str = typer.Option(...),
+    site: str = typer.Option(..., help="Site to submit the publish jobs on."),
+    walltime_minutes: int = typer.Option(
+        60, help="Walltime asked for each job (policy permitting)."
+    ),
+    interval_seconds: int = typer.Option(300, min=1, help="Pause between two checks."),
+    max_interval_seconds: int = typer.Option(
+        1800, min=1, help="Longest pause after repeated failures (slow frontend, timeouts)."
+    ),
+    bucket: str = typer.Option(OPS.bucket),
+) -> None:
+    """Resubmit `cpu-job publish` whenever none is live, until the bucket status says done."""
+    import time
+
+    from landuse_filter.adapters import g5k
+    from landuse_filter.adapters.remote import BucketRemote
+    from landuse_filter.application.publish_loop import LoopIO, read_status, run_loop
+    from landuse_filter.domain.publish_loop import job_name
+
+    remote = BucketRemote(bucket)
+    name = job_name(g5k.JOB_PREFIX, "publish", dataset)
+    io = LoopIO(
+        status=lambda: read_status(remote, dataset),
+        live=lambda: any(j.name == name for j in g5k.our_jobs(site)),
+        submit=lambda: _submit_cpu_job("publish", site, dataset, revision, walltime_minutes)[0],
+        sleep=time.sleep,
+        log=lambda m: typer.echo(m, err=True),
+    )
+    result = run_loop(
+        io, revision, interval=interval_seconds, cap=max(max_interval_seconds, interval_seconds)
+    )
+    typer.echo(result)
 
 
 @g5k_app.command("calibrate-job")

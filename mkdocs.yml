@@ -38,6 +38,7 @@ nav:
       - adr/0020-parallel-submission.md
       - adr/0021-card-only-publish.md
       - adr/0022-publish-graceful-stop.md
+      - adr/0023-publish-loop.md
 markdown_extensions:
   - pymdownx.superfences:
       custom_fences:

@@ -84,3 +84,7 @@ the final one. The input mirror is recorded in `published/<dataset>.mirror.jsonl
 mirrored path and revision) so a restart resumes where it stopped. A publish job also stops on its own before its walltime (ADR-0022): after a SIGUSR2/SIGTERM or
 6 minutes before the deadline it stops starting files, flushes, refreshes the card and saves the
 ledgers; the JSON report's `stopped` field says why (`null` when the run finished).
+
+`published/<dataset>.status.json` is the machine-readable end-of-run marker (ADR-0023):
+`dataset`, `revision`, `files` (`total`, `complete`, `partial`, `unscanned`), `mirrored`,
+`stopped` (reason or `null`) and `done` (true once nothing is left to publish).

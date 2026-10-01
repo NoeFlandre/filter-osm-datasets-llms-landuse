@@ -528,3 +528,31 @@ def test_stop_watch_reports_signals_and_the_deadline(monkeypatch):
     finally:
         for s, handler in old.items():
             signal.signal(s, handler)
+
+
+def test_publish_jobs_have_their_own_oar_name(remote):
+    invoke("g5k", "cpu-job", "publish", "--site", "lille", "--dataset", "ds", "--revision", "r")
+    invoke("g5k", "cpu-job", "plan", "--site", "lille", "--dataset", "ds", "--revision", "r")
+    names = [args[args.index("-n") + 1] for _, args in remote.submitted]
+    assert names == ["luf-publish-ds", "luf-plan-ds"]
+
+
+def test_publish_loop_submits_until_the_status_says_done(remote, monkeypatch):
+    state = {"polls": 0}
+    done = {"done": True, "revision": "r1"}
+
+    def read(_remote, dataset):
+        state["polls"] += 1
+        return done if state["polls"] >= 3 else None
+
+    monkeypatch.setattr("landuse_filter.application.publish_loop.read_status", read)
+    monkeypatch.setattr(remote_mod, "BucketRemote", lambda b: object())
+    monkeypatch.setattr(
+        g5k_adapter, "our_jobs", lambda site: [SimpleNamespace(name="luf-plan-ds")]
+    )  # a planning job is live, not a publish job
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    result = invoke("g5k", "publish-loop", "--site", "lille", "--dataset", "ds", "--revision", "r1")
+    assert result.exit_code == 0, result.output
+    assert len(remote.submitted) == 2  # polls 1 and 2: nothing live under its own name
+    assert remote.submitted[0][1][-1].endswith("publish ds r1")
+    assert result.output.strip().endswith("finished")

@@ -139,6 +139,8 @@ Usage: root g5k [OPTIONS] COMMAND [ARGS]...
 │ run-admission  One process for every GPU-type admission run (namespace gpu-<key>), sharing one   │
 │                view of each site per cycle; afterwards run `luf bench admit --gpu <key>`.        │
 │ cpu-job        Submit one resumable planning or publishing job (default queue, one CPU node).    │
+│ publish-loop   Resubmit `cpu-job publish` whenever none is live, until the bucket status says    │
+│                done.                                                                             │
 │ calibrate-job  Submit one GPU calibration job on ``cluster`` (1 h, starts now or is cancelled).  │
 │ pause          Stop submitting new jobs (running jobs drain unless --cancel).                    │
 │ resume         Allow the controller to submit again.                                             │
@@ -224,6 +226,30 @@ Usage: root g5k pause [OPTIONS]
 │ --work                     <path>  Local work tree. [default: work]                              │
 │ --cancel    --no-cancel            Also oardel our live jobs. [default: no-cancel]               │
 │ --help                             Show this message and exit.                                   │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+```
+
+## `luf g5k publish-loop`
+
+```text
+Usage: root g5k publish-loop [OPTIONS]                                                             
+                                                                                                    
+ Resubmit `cpu-job publish` whenever none is live, until the bucket status says done.               
+                                                                                                    
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
+│ *  --dataset                     <str>               [required]                                  │
+│ *  --revision                    <str>               [required]                                  │
+│ *  --site                        <str>               Site to submit the publish jobs on.         │
+│                                                      [required]                                  │
+│    --walltime-minutes            <int>               Walltime asked for each job (policy         │
+│                                                      permitting).                                │
+│                                                      [default: 60]                               │
+│    --interval-seconds            <int range> [x>=1]  Pause between two checks. [default: 300]    │
+│    --max-interval-seconds        <int range> [x>=1]  Longest pause after repeated failures (slow │
+│                                                      frontend, timeouts).                        │
+│                                                      [default: 1800]                             │
+│    --bucket                      <str>               [default: NoeFlandre/landuse-filter-work]   │
+│    --help                                            Show this message and exit.                 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
