@@ -4,6 +4,26 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 
+STALE_BESTEFFORT_WAIT = timedelta(minutes=20)
+
+
+def is_stale_besteffort(
+    *,
+    queue: str,
+    state: str,
+    submitted_at: float | None,
+    now: float,
+    max_wait: timedelta = STALE_BESTEFFORT_WAIT,
+) -> bool:
+    """A besteffort job still waiting at least ``max_wait`` after submission.
+
+    Its GPUs were taken meanwhile, so it would hold its chunks and a per-site slot for
+    hours. Other queues (night, exotic) legitimately wait in the schedule: never stale.
+    """
+    if queue != "besteffort" or state != "Waiting" or submitted_at is None:
+        return False
+    return now - submitted_at >= max_wait.total_seconds()
+
 
 @dataclass(frozen=True, slots=True)
 class Slot:

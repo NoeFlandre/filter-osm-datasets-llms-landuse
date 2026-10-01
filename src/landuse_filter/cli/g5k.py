@@ -95,6 +95,12 @@ def g5k_run(
         help="Shorter night walltime retried in the same slot if the long job cannot start.",
     ),
     besteffort: bool = typer.Option(False),
+    stale_besteffort_minutes: int = typer.Option(
+        20,
+        min=1,
+        help="Cancel our besteffort jobs still waiting this long after submission "
+        "(their GPUs were taken); night/exotic jobs are never reaped. See ADR-0025.",
+    ),
     max_queued_per_site: int = typer.Option(
         1, help="Waiting jobs allowed per site when nothing is free (start predicted < 2 h)."
     ),
@@ -130,6 +136,7 @@ def g5k_run(
         night_fallback_walltime=timedelta(minutes=night_fallback_walltime_minutes),
         night_max_queued_per_site=night_max_queued_per_site,
         besteffort=besteffort,
+        stale_besteffort_wait=timedelta(minutes=stale_besteffort_minutes),
         gpu_models=[g for g in gpu_models.split(",") if g],
         window=window,
         namespace=namespace,
@@ -183,6 +190,9 @@ def g5k_run_admission(
         OPS.night_fallback_walltime_minutes,
         help="Shorter night walltime retried in the same slot if the long job cannot start.",
     ),
+    stale_besteffort_minutes: int = typer.Option(
+        20, min=1, help="Cancel besteffort jobs still waiting this long (ADR-0025)."
+    ),
     max_queued_per_site: int = typer.Option(
         2, help="Waiting jobs allowed per site when nothing is free (night/weekend)."
     ),
@@ -217,6 +227,7 @@ def g5k_run_admission(
                 night_fallback_walltime=timedelta(minutes=night_fallback_walltime_minutes),
                 night_max_queued_per_site=night_max_queued_per_site,
                 besteffort=True,
+                stale_besteffort_wait=timedelta(minutes=stale_besteffort_minutes),
                 gpu_models=[g],
                 namespace=f"gpu-{g}",
                 bucket=OPS.bucket,
