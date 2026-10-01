@@ -40,7 +40,7 @@ from landuse_filter.application.card import MAP_ASSET, CardFacts, MapFacts, rend
 from landuse_filter.application.datasets import SPECS
 from landuse_filter.application.results import canonical_generations
 
-PARTIAL_STEP = 0.10  # share of a file's sentences that must be newly labelled to refresh it
+PARTIAL_STEP = 0.01  # share of a file's sentences that must be newly labelled to refresh it
 PARTIAL_FLUSH = 100  # partial files uploaded (and recorded) per commit while building
 
 
