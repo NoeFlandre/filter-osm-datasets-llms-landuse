@@ -153,7 +153,7 @@ def _write_viewer(out: Path, input_path: str, refs: list[SentenceRef], rows: lis
         target.unlink(missing_ok=True)
 
 
-def build_labels(
+def build_labels(  # noqa: PLR0913
     dataset: str,
     input_path: str,
     local: Path,
@@ -162,13 +162,16 @@ def build_labels(
     stamp: Stamp,
     out: Path,
     allow_pending: bool = False,
+    refs: list[SentenceRef] | None = None,
 ) -> int:
-    """Write ``out/labels/<input_path>`` and its ``out/viewer/<input_path>`` companion.
+    """Write ``out/labels/<input_path>`` and its ``out/viewer/<input_path>`` companion
+    (``refs``: the file's sentences when the caller already read them).
 
     Raises ``MissingGenerationError`` if any text is unresolved, unless ``allow_pending``
     (partial publication: those sentences are labelled ``pending``).
     """
-    refs = list(SPECS[dataset].source.read(local, input_path))
+    if refs is None:
+        refs = list(SPECS[dataset].source.read(local, input_path))
     rows = label_rows(refs, resolved, stamp.fp, stamp.revision, allow_pending=allow_pending)
     table = labels_table(dataset, rows)
     write_atomic(out / "labels" / input_path, table_bytes(table))

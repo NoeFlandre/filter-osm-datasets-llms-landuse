@@ -14,11 +14,14 @@ stay open; their ``generations/`` rows ship with the complete file.
 Published files are recorded in ``published/<dataset>.jsonl``, so re-running resumes.
 """
 
+import contextlib
 import hashlib
+import logging
 import math
 import sqlite3
 from collections import Counter
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,8 +33,7 @@ from landuse_filter.adapters.indexes import ResolutionIndex
 from landuse_filter.adapters.store import WorkStore
 from landuse_filter.application import published_stats
 from landuse_filter.application.assemble import (
-    PENDING,
-    MissingGenerationError,
+    Lookup,
     Stamp,
     build_generations,
     build_labels,
@@ -40,9 +42,13 @@ from landuse_filter.application.assemble import (
 from landuse_filter.application.card import MAP_ASSET, CardFacts, MapFacts, render_card
 from landuse_filter.application.datasets import SPECS
 from landuse_filter.application.results import canonical_generations
+from landuse_filter.domain.sentences import SentenceRef
 
 PARTIAL_STEP = 0.01  # share of a file's sentences that must be newly labelled to refresh it
 PARTIAL_FLUSH = 100  # partial files uploaded (and recorded) per commit while building
+MIRROR_WORKERS = 4  # parallel downloads while mirroring the input repo
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -102,6 +108,8 @@ class _PartialSink:
         self.pending: list[tuple[Path, str]] = []
         self.resolved: dict[str, int] = {}  # labels path -> resolved sentences, this run
         self.uploaded: dict[str, Path] = {}
+        self.unrefreshed: dict[str, Path] = {}  # uploaded, not yet counted into the card
+        self.refresh_card: Callable[[dict[str, Path]], None] | None = None
 
     def add(self, files: list[tuple[Path, str]], known: int) -> None:
         self.pending += files
@@ -123,10 +131,26 @@ class _PartialSink:
                     if d in self.resolved
                 ],
             )
-            self.uploaded.update({d: src for src, d in self.pending})
+            batch = {d: src for src, d in self.pending}
+            self.uploaded.update(batch)
+            self.unrefreshed.update(batch)
             if self.on_progress:
                 self.on_progress()  # e.g. save the ledger off the node that may be stopped
+            self._refresh()
         self.pending = []
+
+    def _refresh(self) -> None:
+        """Bring the card up to date with what is on the Hub; a failure must not fail the job
+        (the final refresh retries it, with the same still-uncounted files)."""
+        if self.refresh_card is None:
+            return
+        try:
+            self.refresh_card(dict(self.unrefreshed))
+            self.unrefreshed = {}
+            if self.on_progress:
+                self.on_progress()  # the card marker too
+        except Exception:
+            log.exception("progressive card refresh failed; continuing")
 
 
 @dataclass
@@ -188,13 +212,14 @@ def _prepare(
             revision=revision,
             repo=repo,
             done=done,
+            on_progress=on_progress,
         )
     resolved = ResolutionIndex(store.path(f"index/resolve-{fp}.sqlite"))
     resolved.build(canonical_generations(store, fp))
     db = sqlite3.connect(store.path(f"index/{dataset}.sqlite"))
     indexed = db.execute("SELECT idx, path FROM files WHERE done = 1 ORDER BY idx").fetchall()
     files = [p for _, p in indexed]
-    return _Run(
+    run = _Run(
         store=store,
         dataset=dataset,
         revision=revision,
@@ -211,6 +236,8 @@ def _prepare(
         files=files,
         first_file=dict(zip(files, [i for i, _ in indexed], strict=True)),
     )
+    run.sink.refresh_card = lambda local: _progress_card(run, local)
+    return run
 
 
 def _build_files(run: _Run) -> tuple[list[tuple[Path, str]], set[str]]:
@@ -226,20 +253,31 @@ def _build_files(run: _Run) -> tuple[list[tuple[Path, str]], set[str]]:
         local = Path(
             run.hub.download_all(SPECS[run.dataset].source.repo_id, run.revision, [path])[0][0]
         )
-        try:
-            build_labels(
-                run.dataset,
-                path,
-                local,
-                resolved=ctx.resolved,
-                stamp=Stamp(ctx.fp, run.revision),
-                out=out,
-            )
-        except MissingGenerationError:
-            known = _build_partial(ctx, path, local, last=run.resolved_before.get(target, 0))
-            if known is not None:
+        refs = list(SPECS[run.dataset].source.read(local, path))
+        known, sendable, complete = _resolved_counts(refs, ctx.resolved)
+        if not complete:
+            if _worth_publishing(known, sendable, last=run.resolved_before.get(target, 0)):
+                build_labels(
+                    run.dataset,
+                    path,
+                    local,
+                    resolved=ctx.resolved,
+                    stamp=Stamp(ctx.fp, run.revision),
+                    out=out,
+                    allow_pending=True,
+                    refs=refs,
+                )
                 run.sink.add(_tables(out, path), known)
             continue
+        build_labels(
+            run.dataset,
+            path,
+            local,
+            resolved=ctx.resolved,
+            stamp=Stamp(ctx.fp, run.revision),
+            out=out,
+            refs=refs,
+        )
         new_shas |= _owned_generations(run.db, run.first_file[path], out / target)
         new += _tables(out, path)
     return new, new_shas
@@ -282,11 +320,30 @@ def _finish(run: _Run, new: list[tuple[Path, str]]) -> PublishReport:
             run.hub,
             (run.dataset, run.repo, run.revision),
             new,
-            partial=run.sink.uploaded,
+            partial=run.sink.unrefreshed,
             coverage=Coverage(labelled, len(run.files), sorted(partial_paths)),
             on_progress=run.sink.on_progress,
         )
     return PublishReport(labelled, len(run.files), len(new), decisions, len(partial_paths))
+
+
+def _progress_card(run: _Run, local: dict[str, Path]) -> None:
+    """Refresh the card after a partial flush from the ledgers as they stand: ``local`` are the
+    partial files uploaded since the last refresh (their old records are stale)."""
+    partial = (
+        set(run.resolved_before) | set(run.sink.uploaded) & set(run.sink.resolved)
+    ) - run.done
+    labelled = len([p for p in run.files if f"labels/{p}" in run.done])
+    _refresh_card(
+        run.store,
+        run.hub,
+        run.dataset,
+        repo=run.repo,
+        revision=run.revision,
+        local=local,
+        coverage=Coverage(labelled, len(run.files), sorted(partial)),
+        on_progress=run.sink.on_progress,
+    )
 
 
 def _upload(
@@ -333,29 +390,19 @@ def _owned_generations(db: sqlite3.Connection, file_idx: int, labels: Path) -> s
     }
 
 
-def _build_partial(ctx: _Ctx, path: str, local: Path, *, last: int) -> int | None:
-    """Build the partial tables of a file; ``None`` (and nothing left in ``out``) if it has
-    no answer yet, or (once published) has not gained :data:`PARTIAL_STEP` of its sentences
-    since its last partial upload."""
-    build_labels(
-        ctx.dataset,
-        path,
-        local,
-        resolved=ctx.resolved,
-        stamp=Stamp(ctx.fp, ctx.revision),
-        out=ctx.out,
-        allow_pending=True,
-    )
-    decisions = pq.read_table(ctx.out / "labels" / path, columns=["decision"]).column("decision")
-    decisions = decisions.to_pylist()
-    known = sum(d not in (PENDING, "skipped_unsplit") for d in decisions)
-    sendable = sum(d != "skipped_unsplit" for d in decisions)
+def _resolved_counts(refs: list[SentenceRef], resolved: Lookup) -> tuple[int, int, bool]:
+    """(sentences with an answer, sentences that can get one, all answered) without building
+    any table: one index lookup per sentence."""
+    sendable = [r for r in refs if not r.unsplit]
+    known = sum(resolved.get(r.text_sha256) is not None for r in sendable)
+    return known, len(sendable), known == len(sendable)
+
+
+def _worth_publishing(known: int, sendable: int, *, last: int) -> bool:
+    """A partial file goes up when never published and answered once, or after it gained
+    :data:`PARTIAL_STEP` of its sentences since its last partial upload."""
     first = last == 0 and known >= 1  # every file shows up as soon as it has one answer
-    if first or known - last >= max(1, math.ceil(PARTIAL_STEP * sendable)):
-        return known
-    (ctx.out / "labels" / path).unlink()
-    (ctx.out / "viewer" / path).unlink(missing_ok=True)
-    return None
+    return first or known - last >= max(1, math.ceil(PARTIAL_STEP * sendable))
 
 
 def _missing_viewers(run: _Run, *, resolved: ResolutionIndex, out: Path) -> list[tuple[Path, str]]:
@@ -374,7 +421,36 @@ def _missing_viewers(run: _Run, *, resolved: ResolutionIndex, out: Path) -> list
     return made
 
 
-def _mirror(
+def mirror_ledger(dataset: str) -> str:
+    return f"published/{dataset}.mirror.jsonl"
+
+
+def _discard(files: list[tuple[Path, str]]) -> None:
+    """Free the Hub-cache copy of mirrored files (symlinks to blobs) once uploaded."""
+    for src, _ in files:
+        if src.is_symlink():
+            with contextlib.suppress(OSError):
+                src.resolve().unlink(missing_ok=True)
+                src.unlink(missing_ok=True)
+
+
+def _fetch(hub: Hub, repo: str, revision: str, path: str) -> list[tuple[Path, str]]:
+    return hub.download_all(repo, revision, [path])
+
+
+def _unmirrored(  # noqa: PLR0917
+    hub: Hub, store: WorkStore, dataset: str, input_repo: str, revision: str, repo: str
+) -> list[str]:
+    recorded = {
+        r["path"] for r in store.compact_jsonl(mirror_ledger(dataset)) if r["revision"] == revision
+    }
+    present = recorded or hub.remote_files(repo)
+    return [
+        p for p in hub.list_files(input_repo, revision) if p not in present and p != "README.md"
+    ]
+
+
+def _mirror(  # noqa: PLR0913
     hub: Hub,
     store: WorkStore,
     dataset: str,
@@ -383,20 +459,31 @@ def _mirror(
     revision: str,
     repo: str,
     done: set[str],
+    on_progress: Callable[[], None] | None = None,
 ) -> None:
+    """Copy the input files to the output repo, resumably: each uploaded batch is recorded in
+    ``published/<dataset>.mirror.jsonl`` (so a restart does not even list the output repo
+    once something was recorded), downloads run in parallel and each batch is deleted after
+    its commit."""
     marker = f"mirror:{revision}"
     if marker in done:
         return
-    present = hub.remote_files(repo)
-    wanted = [
-        p for p in hub.list_files(input_repo, revision) if p not in present and p != "README.md"
-    ]
-    for start in range(0, len(wanted), BATCH):
-        hub.upload(
-            repo,
-            hub.download_all(input_repo, revision, wanted[start : start + BATCH]),
-            f"Mirror {input_repo}@{revision[:7]}",
-        )
+    wanted = _unmirrored(hub, store, dataset, input_repo, revision, repo)
+    with ThreadPoolExecutor(MIRROR_WORKERS) as pool:
+        for start in range(0, len(wanted), BATCH):
+            batch = wanted[start : start + BATCH]
+            files = [
+                f
+                for part in pool.map(lambda p: _fetch(hub, input_repo, revision, p), batch)
+                for f in part
+            ]
+            hub.upload(repo, files, f"Mirror {input_repo}@{revision[:7]}")
+            store.append_jsonl(
+                mirror_ledger(dataset), [{"path": p, "revision": revision} for p in batch]
+            )
+            _discard(files)
+            if on_progress:
+                on_progress()
     store.append_jsonl(f"published/{dataset}.jsonl", [{"path": marker}])
 
 

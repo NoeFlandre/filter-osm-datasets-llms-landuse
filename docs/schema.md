@@ -73,3 +73,9 @@ the complete file (the first file where a text appears owns the text's generatio
 file's labels can reference generations that are not published yet. Partial files are recorded in
 `published/<dataset>.partial.jsonl`, never in the main ledger, so they stay open; the card counts
 them (`N more partially`) and shows a `pending` row in the decision table.
+
+The card is refreshed after every partial commit (every 100 files), from the per-file stats ledger
+`published/<dataset>.stats.jsonl` and the cached map cells, so a publish job stopped at its walltime
+leaves a card that matches the Hub; a failed refresh is logged and retried by the next one and by
+the final one. The input mirror is recorded in `published/<dataset>.mirror.jsonl` (one line per
+mirrored path and revision) so a restart resumes where it stopped.

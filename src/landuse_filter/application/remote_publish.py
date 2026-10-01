@@ -30,6 +30,7 @@ def run_publish(
         f"published/{dataset}.jsonl",
         f"published/{dataset}.stats.jsonl",
         f"published/{dataset}.partial.jsonl",
+        f"published/{dataset}.mirror.jsonl",
     ]
     fetch(remote, scratch, [p for p in ledgers if p in remote.ls("published/")])
     card_marker = f"published/{dataset}.card.sha256"

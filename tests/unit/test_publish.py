@@ -127,8 +127,6 @@ def test_card_counts_cover_files_published_by_earlier_runs(tmp_path, monkeypatch
 def test_a_text_shared_by_two_files_is_uploaded_to_generations_once(tmp_path, monkeypatch):
     """Regression: texts repeated across input files were re-uploaded in every later batch
     (465,986 generation rows for 461,463 unique texts), which multiplies rows on the join."""
-    from landuse_filter.application import assemble
-
     hub = fake_hub(tmp_path)
     uploads = hub.uploads
     hub.files = ["polygons/a.parquet", "polygons/b.parquet"]
@@ -139,16 +137,19 @@ def test_a_text_shared_by_two_files_is_uploaded_to_generations_once(tmp_path, mo
     planner.register(["polygons/a.parquet", "polygons/b.parquet"])
     planner.scan(lambda _: INPUTS / "website.parquet")  # both files carry the same texts
     generate_all(store)
-    real = assemble.build_labels
+    real = pub._resolved_counts
 
-    def only_a(dataset, path, *args, **kwargs):
-        if path == "polygons/b.parquet" and not kwargs.get("allow_pending"):
-            raise assemble.MissingGenerationError(path)
-        return real(dataset, path, *args, **kwargs)
+    def only_a(refs, resolved):
+        if len(only_a.calls) % 2:  # file b: pretend it is not fully generated yet
+            only_a.calls.append(1)
+            return 0, 46, False
+        only_a.calls.append(0)
+        return real(refs, resolved)
 
-    monkeypatch.setattr(pub, "build_labels", only_a)
+    only_a.calls = []
+    monkeypatch.setattr(pub, "_resolved_counts", only_a)
     pub.publish(store, WEBSITE, "rev", hub=hub)  # run 1: only file a
-    monkeypatch.setattr(pub, "build_labels", real)
+    monkeypatch.setattr(pub, "_resolved_counts", real)
     pub.publish(store, WEBSITE, "rev", hub=hub)  # run 2: file b, whose texts a already published
     generation_files = [p for batch in uploads for p in batch if p.startswith("generations/")]
     rows = sum(
@@ -394,3 +395,124 @@ def test_a_file_with_nothing_resolved_is_not_published(tmp_path):
     report = pub.publish(store, WEBSITE, "rev", hub=hub)
     assert report.partial_files == 0
     assert not any("labels/polygons/a.parquet" in batch for batch in hub.uploads)
+
+
+def counting_builds(monkeypatch):
+    calls = {"labels": 0, "viewer": 0}
+    real_labels, real_viewer = pub.build_labels, pub.build_viewer
+
+    def labels(*args, **kwargs):
+        calls["labels"] += 1
+        return real_labels(*args, **kwargs)
+
+    def viewer(*args, **kwargs):
+        calls["viewer"] += 1
+        return real_viewer(*args, **kwargs)
+
+    monkeypatch.setattr(pub, "build_labels", labels)
+    monkeypatch.setattr(pub, "build_viewer", viewer)
+    return calls
+
+
+def test_a_partial_file_that_cannot_have_changed_builds_no_tables(tmp_path, monkeypatch):
+    monkeypatch.setattr(pub, "PARTIAL_STEP", 0.50)
+    hub = fake_hub(tmp_path)
+    store = planned(tmp_path)
+    calls = counting_builds(monkeypatch)
+    pub.publish(store, WEBSITE, "rev", hub=hub)
+    assert calls["labels"] == 0  # nothing resolved: counted, not built
+    generate_some(store, "p1", 0, 5)
+    pub.publish(store, WEBSITE, "rev", hub=hub)
+    assert calls["labels"] == 1
+    generate_some(store, "p2", 5, 7)  # under the step
+    pub.publish(store, WEBSITE, "rev", hub=hub)
+    assert calls["labels"] == 1
+    generate_some(store, "p3", 7, 46)  # complete: still built and published
+    report = pub.publish(store, WEBSITE, "rev", hub=hub)
+    assert calls["labels"] == 2
+    assert report.labelled_files == 1
+
+
+def test_the_card_is_refreshed_after_each_partial_flush(tmp_path, monkeypatch):
+    hub = fake_hub(tmp_path)
+    monkeypatch.setattr(pub, "PARTIAL_FLUSH", 1)
+    store = planned(tmp_path)
+    generate_some(store, "p1", 0, 20)
+    seen = []
+    real = pub._refresh_card
+
+    def spy(*args, **kwargs):
+        seen.append(len(hub.uploads))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(pub, "_refresh_card", spy)
+    pub.publish(store, WEBSITE, "rev", hub=hub)
+    assert seen[0] == 2  # mirror, then the partial commit, before the final refresh
+    cards = [b for b in hub.uploads if "README.md" in b]
+    assert len(cards) == 1  # unchanged card: the final refresh does not re-upload it
+    assert "pending" in hub.sources["README.md"].read_text()
+
+
+def test_a_failing_card_refresh_does_not_fail_the_job(tmp_path, monkeypatch):
+    hub = fake_hub(tmp_path)
+    monkeypatch.setattr(pub, "PARTIAL_FLUSH", 1)
+    store = planned(tmp_path)
+    generate_some(store, "p1", 0, 20)
+    real = pub._refresh_card
+    state = {"n": 0}
+
+    def flaky(*args, **kwargs):
+        state["n"] += 1
+        if state["n"] == 1:
+            raise RuntimeError("hub hiccup")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(pub, "_refresh_card", flaky)
+    report = pub.publish(store, WEBSITE, "rev", hub=hub)
+    assert report.partial_files == 1
+    assert "pending" in hub.sources["README.md"].read_text()  # the final refresh still ran
+
+
+def test_mirror_downloads_in_parallel_records_progress_and_resumes(tmp_path, monkeypatch):
+    monkeypatch.setattr(pub, "BATCH", 2)
+    names = [f"f{i}.bin" for i in range(5)]
+    hub = FakeHub(tmp_path, names)
+    store = WorkStore(tmp_path / "work")
+    saved = []
+    pub._mirror(
+        hub,
+        store,
+        "d",
+        input_repo="in",
+        revision="r" * 40,
+        repo="out",
+        done=set(),
+        on_progress=lambda: saved.append(1),
+    )
+    assert hub.uploads == [names[:2], names[2:4], names[4:]]
+    assert len(saved) == 3
+    ledger = {r["path"] for r in store.read_jsonl(pub.mirror_ledger("d"))}
+    assert ledger == set(names)
+    done = {r["path"] for r in store.read_jsonl("published/d.jsonl")}
+    assert done == {"mirror:" + "r" * 40}
+    # A job stopped after two batches: the restart redoes only the rest, without listing out.
+    store2 = WorkStore(tmp_path / "work2")
+    store2.append_jsonl(pub.mirror_ledger("d"), [{"path": p, "revision": "r"} for p in names[:4]])
+    hub2 = FakeHub(tmp_path, names)
+    hub2.remote_files = lambda repo: (_ for _ in ()).throw(AssertionError("listed"))
+    pub._mirror(hub2, store2, "d", input_repo="in", revision="r", repo="out", done=set())
+    assert hub2.uploads == [names[4:]]
+
+
+def test_mirror_frees_each_batch_after_its_upload(tmp_path):
+    cache = tmp_path / "blobs"
+    cache.mkdir()
+    (cache / "blob").write_text("x")
+    link = tmp_path / "snap.bin"
+    link.symlink_to(cache / "blob")
+    hub = FakeHub(link, ["a.bin"])
+    pub._mirror(
+        hub, WorkStore(tmp_path / "w"), "d", input_repo="in", revision="r", repo="out", done=set()
+    )
+    assert not link.exists()
+    assert not (cache / "blob").exists()
