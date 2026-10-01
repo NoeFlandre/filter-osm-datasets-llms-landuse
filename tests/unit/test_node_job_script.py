@@ -112,3 +112,10 @@ def test_replan_mode_builds_the_tokeniser_and_h3_environment():
     """`replan` tokenises texts and bins them into H3 cells, never loads SGLang."""
     assert '"${1:-}" == "replan"' in SCRIPT
     assert "publish | repair | replan) EXTRAS=(--extra tokenize --extra map)" in SCRIPT
+
+
+def test_publish_jobs_export_their_deadline_before_running():
+    """A publish job learns its end time (oarstat) so it can stop starting files 6 minutes early."""
+    assert "LUF_JOB_DEADLINE_EPOCH" in SCRIPT
+    assert SCRIPT.index("LUF_JOB_DEADLINE_EPOCH") < SCRIPT.index('luf node "$MODE"')
+    assert "oarstat -j" in SCRIPT

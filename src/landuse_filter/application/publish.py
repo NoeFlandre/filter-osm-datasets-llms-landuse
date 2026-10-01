@@ -59,6 +59,7 @@ class PublishReport:
     new_files: int
     decisions: dict[str, int]
     partial_files: int = 0
+    stopped: str | None = None  # why the run ended early (signal, deadline), else None
 
 
 def partial_ledger(dataset: str) -> str:
@@ -69,6 +70,19 @@ def output_repo(dataset: str) -> str:
     from landuse_filter.adapters.settings_file import load
 
     return load().output_repo(dataset)
+
+
+class _Stop:
+    """A stop request that, once seen, stays seen: the reason of the first check that fired."""
+
+    def __init__(self, check: Callable[[], str | None]) -> None:
+        self.check = check
+        self.reason: str | None = None
+
+    def __call__(self) -> bool:
+        if self.reason is None:
+            self.reason = self.check()
+        return self.reason is not None
 
 
 @dataclass(frozen=True)
@@ -171,6 +185,7 @@ class _Run:
     db: sqlite3.Connection
     files: list[str]  # scanned input files, in planner order
     first_file: dict[str, int]  # input file -> planner index
+    stop: _Stop
 
 
 def publish(
@@ -181,14 +196,24 @@ def publish(
     dry_run: bool = False,
     on_progress: Callable[[], None] | None = None,
     hub: Hub | None = None,
+    should_stop: Callable[[], str | None] = lambda: None,
 ) -> PublishReport:
+    """Publish what is new. ``should_stop`` returns a reason once the run must wind down
+    (signal, deadline): the current file is finished, then the partial sink is flushed, the card
+    refreshed and the ledgers saved as in a normal end, and the report says why it stopped."""
     run = _prepare(
-        store, dataset, revision, hub or HfHub(), dry_run=dry_run, on_progress=on_progress
+        store,
+        dataset,
+        revision,
+        hub or HfHub(),
+        dry_run=dry_run,
+        on_progress=on_progress,
+        stop=_Stop(should_stop),
     )
     _card_from_ledgers(run)
     new, new_shas = _build_files(run)
     new += _missing_viewers(run, resolved=run.ctx.resolved, out=run.ctx.out)
-    new += _generation_files(run, new_shas)
+    new += _generation_files(run, new_shas)  # ships with the complete files already built
     return _finish(run, new)
 
 
@@ -236,6 +261,7 @@ def _prepare(
     *,
     dry_run: bool,
     on_progress: Callable[[], None] | None,
+    stop: _Stop,
 ) -> _Run:
     repo = output_repo(dataset)
     fp = config.GENERATION_FP
@@ -251,6 +277,7 @@ def _prepare(
             repo=repo,
             done=done,
             on_progress=on_progress,
+            should_stop=stop,
         )
     resolved = ResolutionIndex(store.path(f"index/resolve-{fp}.sqlite"))
     resolved.build(canonical_generations(store, fp))
@@ -273,6 +300,7 @@ def _prepare(
         db=db,
         files=files,
         first_file=dict(zip(files, [i for i, _ in indexed], strict=True)),
+        stop=stop,
     )
     run.sink.refresh_card = lambda local: _progress_card(run, local)
     return run
@@ -288,6 +316,8 @@ def _build_files(run: _Run) -> tuple[list[tuple[Path, str]], set[str]]:
         target = f"labels/{path}"
         if target in run.done:
             continue
+        if run.stop():
+            break
         local = Path(
             run.hub.download_all(SPECS[run.dataset].source.repo_id, run.revision, [path])[0][0]
         )
@@ -362,7 +392,9 @@ def _finish(run: _Run, new: list[tuple[Path, str]]) -> PublishReport:
             coverage=Coverage(labelled, len(run.files), sorted(partial_paths)),
             on_progress=run.sink.on_progress,
         )
-    return PublishReport(labelled, len(run.files), len(new), decisions, len(partial_paths))
+    return PublishReport(
+        labelled, len(run.files), len(new), decisions, len(partial_paths), run.stop.reason
+    )
 
 
 def _card_from_ledgers(run: _Run) -> None:
@@ -461,6 +493,8 @@ def _missing_viewers(run: _Run, *, resolved: ResolutionIndex, out: Path) -> list
         target = f"viewer/{path}"
         if f"labels/{path}" not in run.done or target in run.done:
             continue
+        if run.stop():
+            break
         local = Path(
             run.hub.download_all(SPECS[run.dataset].source.repo_id, run.revision, [path])[0][0]
         )
@@ -509,17 +543,21 @@ def _mirror(  # noqa: PLR0913
     repo: str,
     done: set[str],
     on_progress: Callable[[], None] | None = None,
+    should_stop: Callable[[], bool] = lambda: False,
 ) -> None:
     """Copy the input files to the output repo, resumably: each uploaded batch is recorded in
     ``published/<dataset>.mirror.jsonl`` (so a restart does not even list the output repo
     once something was recorded), downloads run in parallel and each batch is deleted after
-    its commit."""
+    its commit. A stop request is honoured between batches (the ledger then matches what is
+    up) and leaves the mirror marker unwritten, so the next run resumes."""
     marker = f"mirror:{revision}"
     if marker in done:
         return
     wanted = _unmirrored(hub, store, dataset, input_repo, revision, repo)
     with ThreadPoolExecutor(MIRROR_WORKERS) as pool:
         for start in range(0, len(wanted), BATCH):
+            if should_stop():
+                return
             batch = wanted[start : start + BATCH]
             files = [
                 f

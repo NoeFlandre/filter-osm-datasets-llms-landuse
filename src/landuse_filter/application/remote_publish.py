@@ -1,5 +1,7 @@
 """Publishing as a Grid'5000 job: everything bulky stays on node-local scratch."""
 
+from collections.abc import Callable
+
 from landuse_filter.adapters.hub import Hub
 from landuse_filter.adapters.remote import Remote
 from landuse_filter.adapters.store import WorkStore
@@ -16,6 +18,7 @@ def run_publish(
     fp: str,
     *,
     hub: Hub | None = None,
+    should_stop: Callable[[], str | None] = lambda: None,
 ) -> PublishReport:
     """Restore the planner index and all result parts, then publish incrementally.
 
@@ -39,8 +42,12 @@ def run_publish(
     def save() -> None:
         remote.put([(scratch.path(p), p) for p in [*ledgers, card_marker] if scratch.exists(p)])
 
-    report = publish(scratch, dataset, revision, on_progress=save, hub=hub)
-    save()
+    try:
+        report = publish(
+            scratch, dataset, revision, on_progress=save, hub=hub, should_stop=should_stop
+        )
+    finally:
+        save()  # whatever happened, the ledgers and the card marker leave the node
     return report
 
 

@@ -89,6 +89,17 @@ if [[ "$MODE" == "repair" ]]; then
   luf node repair --dataset "$1"
   exit $?
 fi
+if [[ "$MODE" == "publish" && -n "${OAR_JOB_ID:-}" ]]; then
+  # The job's end time lets `luf node publish` stop starting files 6 minutes before it; silently
+  # skipped when oarstat is unavailable (the checkpoint signal still stops the job).
+  if [[ -n "${OAR_JOB_WALLTIME_SECONDS:-}" ]]; then
+    LUF_JOB_DEADLINE_EPOCH=$(( $(date +%s) + OAR_JOB_WALLTIME_SECONDS )) || true
+  else
+    LUF_JOB_DEADLINE_EPOCH="$(oarstat -j "$OAR_JOB_ID" -J 2>/dev/null | "$venv/bin/python" -c \
+      'import sys, time; from landuse_filter.domain.stop import deadline_from_oarstat as d; print(d(sys.stdin.read(), time.time()) or "")' 2>/dev/null)" || true
+  fi
+  if [[ -n "${LUF_JOB_DEADLINE_EPOCH:-}" ]]; then export LUF_JOB_DEADLINE_EPOCH; else unset LUF_JOB_DEADLINE_EPOCH; fi
+fi
 if [[ "$MODE" != "run" ]]; then
   # Input shards and parts are large: keep them on node-local scratch, never on NFS.
   export HF_HOME="$LUF_SCRATCH/hf"
