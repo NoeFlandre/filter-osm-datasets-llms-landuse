@@ -13,3 +13,4 @@ site/
 work.noindex/
 .trash-work.noindex/
 state.noindex/
+.claude/worktrees/
