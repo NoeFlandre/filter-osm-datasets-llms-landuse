@@ -14,18 +14,17 @@ def slot(site="a", cluster="x", free=2):
     return Slot(site, cluster, "g", 1, free, timedelta(0), timedelta(hours=1), None, 1.0)
 
 
-def plan(items, pending, *, taken=(), max_total=99, max_per_site=99, total=0, per_site=None):
-    return plan_launches(
-        items,
-        pending,
-        set(taken),
-        capacity=lambda s: 10.0,
-        overflow=1.0,
-        max_total=max_total,
-        max_per_site=max_per_site,
-        total=total,
-        per_site=per_site or {},
-    )
+def plan(items, pending, taken=(), **options):
+    settings = {
+        "max_total": 99,
+        "max_per_site": 99,
+        "total": 0,
+        "per_site": {},
+        "capacity": lambda s: 10.0,
+        "overflow": 1.0,
+        **options,
+    }
+    return plan_launches(items, pending, set(taken), **settings)
 
 
 def test_one_launch_per_free_node_with_disjoint_chunks_in_ranking_order():
@@ -39,7 +38,7 @@ def test_one_launch_per_free_node_with_disjoint_chunks_in_ranking_order():
 
 def test_taken_chunks_are_skipped_and_not_modified():
     taken = {"c0"}
-    p = plan([(slot(free=1), None)], PENDING, taken=taken)
+    p = plan([(slot(free=1), None)], PENDING, taken)
     assert p[0].chunks == ("c1",)
     assert taken == {"c0"}
 
@@ -55,6 +54,30 @@ def test_per_site_cap_counts_existing_jobs_and_is_exact():
     items = [(slot("a", free=5), None), (slot("b", free=5), None)]
     p = plan(items, PENDING, max_per_site=2, per_site={"a": 1})
     assert [x.slot.site for x in p] == ["a", "b", "b"]
+
+
+def test_capacity_is_per_slot_and_scaled_by_the_overflow():
+    items = [(slot("a", "x", 1), None), (slot("b", "y", 1), None)]
+    p = plan(
+        items,
+        PENDING,
+        overflow=2.0,
+        capacity=lambda s: 10.0 if s.cluster == "x" else 30.0,
+    )
+    assert [len(x.chunks) for x in p] == [2, 6]  # budgets 20 and 60 for chunks of 10
+
+
+def test_a_site_without_jobs_gets_exactly_the_per_site_cap():
+    items = [(slot("a", free=5), None), (slot("b", free=5), None)]
+    for cap in (1, 2, 3):
+        p = plan(items, PENDING, max_per_site=cap)
+        assert [x.slot.site for x in p] == ["a"] * cap + ["b"] * cap
+
+
+def test_the_callers_counters_are_not_modified():
+    per_site = {"a": 1}
+    plan([(slot("a", free=2), None)], PENDING, per_site=per_site)
+    assert per_site == {"a": 1}
 
 
 def test_stops_when_no_chunk_is_left():
