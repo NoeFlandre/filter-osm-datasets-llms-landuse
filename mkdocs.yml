@@ -12,6 +12,7 @@ nav:
   - Speed tuning: tuning.md
   - Grid'5000: grid5000.md
   - Configuration: configuration.md
+  - Resume from another machine: resume.md
   - CLI reference: cli.md
   - Known weaknesses: debt.md
   - Decisions:
