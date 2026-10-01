@@ -1,9 +1,10 @@
 """What the controller has learned about clusters: back-offs and besteffort-only access."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from landuse_filter.adapters.store import WorkStore
 from landuse_filter.domain.capacity import Cluster
+from landuse_filter.domain.scheduling import long_attempt_tripped
 
 
 class ClusterMemory:
@@ -25,3 +26,28 @@ class ClusterMemory:
 
     def besteffort_only(self, cluster: Cluster) -> bool:
         return self.store.exists(f"access/{cluster.site}_{cluster.name}.json")
+
+    def record_long_attempt(
+        self, site: str, cluster: str, *, ok: bool, now: datetime, limit: int, pause: timedelta
+    ) -> bool:
+        """Count a long-walltime attempt; True when this failure trips the throttle.
+
+        A success, or a failure after an earlier pause has lapsed, restarts the count; the
+        ``limit``-th consecutive failure pauses long attempts for ``pause``.
+        """
+        path = f"longwall/{site}_{cluster}.json"
+        failures = self.store.read_json(path)["failures"] if self.store.exists(path) else 0
+        failures = 0 if ok else failures + 1
+        tripped = not ok and long_attempt_tripped(failures, limit)
+        until = (now + pause).isoformat() if tripped else None
+        if tripped:
+            failures = 0
+        self.store.write_json(path, {"failures": failures, "until": until})
+        return tripped
+
+    def long_throttled(self, cluster: Cluster, now: datetime) -> bool:
+        path = f"longwall/{cluster.site}_{cluster.name}.json"
+        if not self.store.exists(path):
+            return False
+        until = self.store.read_json(path)["until"]
+        return until is not None and datetime.fromisoformat(until) > now

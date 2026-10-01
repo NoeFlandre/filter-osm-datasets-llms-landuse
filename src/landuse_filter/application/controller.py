@@ -33,11 +33,14 @@ from landuse_filter.domain.gpu import Admission, gpu_key
 from landuse_filter.domain.policy import Window, allowed_window, is_daytime
 from landuse_filter.domain.prompting import PROMPT_SHA256
 from landuse_filter.domain.scheduling import (
+    LONG_FAILURES,
+    LONG_PAUSE,
     Slot,
     assign_chunks,
     rank_slots,
     slot_for,
     walltime_ladder,
+    without_long,
 )
 
 PARIS = ZoneInfo("Europe/Paris")
@@ -65,6 +68,8 @@ class Settings:
     walltime: timedelta = timedelta(hours=1)
     night_walltime: timedelta = timedelta(hours=2)
     night_fallback_walltime: timedelta = timedelta(minutes=30)
+    day_walltime: timedelta | None = None  # preferred day walltime; None: same as walltime
+    day_long_max_failures: int = LONG_FAILURES  # consecutive long failures before a pause
     besteffort: bool = False
     gpu_models: list[str] = field(default_factory=list)  # allow-list of gpu keys; empty = admitted
     window: int | None = None  # candidate concurrency (tuning, issue #17); None = GPU profile
@@ -285,7 +290,7 @@ class Controller:
         if self.memory.backed_off(c, now):
             return None
         window = allowed_window(now, starts_now=True) if not c.production else None
-        ladder, job_type = self.ladder_for(c, window)
+        ladder, job_type = self.ladder_for(c, window, now)
         wall = ladder[0] if ladder else None
         besteffort = self.memory.besteffort_only(c)
         free = free_gpus(
@@ -342,25 +347,38 @@ class Controller:
     def walltime_for(
         self, cluster: Cluster, window: Window | None
     ) -> tuple[timedelta | None, str | None]:
-        ladder, job_type = self.ladder_for(cluster, window)
+        ladder, job_type = self.ladder_for(cluster, window, self.now)
         return (ladder[0] if ladder else None), job_type
 
     def ladder_for(
-        self, cluster: Cluster, window: Window | None
+        self, cluster: Cluster, window: Window | None, now: datetime
     ) -> tuple[tuple[timedelta, ...], str | None]:
-        """Walltimes to try for a slot (preferred first) and the OAR job type."""
+        """Walltimes to try for a slot (preferred first) and the OAR job type.
+
+        By day the preferred walltime is ``day_walltime`` with ``walltime`` as the fallback;
+        a cluster whose long attempts keep failing is paused to the short one (ADR-0017).
+        """
+        daytime = is_daytime(now)
+        short = self.settings.walltime
+        day_long = self.settings.day_walltime or short
         if cluster.production:
-            return (self.settings.walltime,), None
-        if window is None:
+            ladder, job_type = ((day_long, short) if daytime else (short,)), None
+            ladder = tuple(w for i, w in enumerate(ladder) if w not in ladder[:i])
+        elif window is None:
             return (), None
-        ladder = walltime_ladder(
-            window_max=window.max_walltime,
-            night=window.job_type is not None,
-            day=self.settings.walltime,
-            preferred=self.settings.night_walltime,
-            fallback=self.settings.night_fallback_walltime,
-        )
-        return ladder, window.job_type
+        else:
+            ladder = walltime_ladder(
+                window_max=window.max_walltime,
+                night=window.job_type is not None,
+                day=day_long,
+                preferred=self.settings.night_walltime,
+                fallback=self.settings.night_fallback_walltime,
+                day_short=short,
+            )
+            job_type = window.job_type
+        if daytime and len(ladder) > 1 and self.memory.long_throttled(cluster, now):
+            ladder = without_long(ladder)
+        return ladder, job_type
 
     def submit(
         self, now: datetime, jobs: dict[str, list[g5k.Job]], pending: list[tuple[str, int]]
@@ -408,6 +426,7 @@ class Controller:
         """
         walltimes = (slot.walltime, *slot.fallbacks)
         chunks: list[str] = []
+        long_try = len(walltimes) > 1 and is_daytime(self.now)
         for i, wall in enumerate(walltimes):
             attempt = replace(slot, walltime=wall)
             chunks = assign_chunks(pending, taken, _capacity(attempt))
@@ -416,9 +435,32 @@ class Controller:
             job_id = self.launch(
                 attempt, cluster, chunks, code_commit, final=i == len(walltimes) - 1
             )
+            if i == 0 and long_try:
+                self._note_long(cluster, walltimes, ok=bool(job_id))
             if job_id:
                 return job_id, chunks
         return None, chunks
+
+    def _note_long(self, cluster: Cluster, walltimes: tuple[timedelta, ...], *, ok: bool) -> None:
+        """Count a day long attempt; log the fallback and any throttle (parseable lines)."""
+        name = f"{cluster.site}/{cluster.name}"
+        if not ok:
+            self.log(
+                f"long_walltime fallback {name} {_minutes(walltimes[0])}->{_minutes(walltimes[1])}"
+            )
+        tripped = self.memory.record_long_attempt(
+            cluster.site,
+            cluster.name,
+            ok=ok,
+            now=self.now,
+            limit=self.settings.day_long_max_failures,
+            pause=LONG_PAUSE,
+        )
+        if tripped:
+            self.log(
+                f"long_walltime throttle {name} {self.settings.day_long_max_failures} failures, "
+                f"short only until {(self.now + LONG_PAUSE).strftime('%H:%M')}"
+            )
 
     def _taken_chunks(self) -> set[str]:
         """Chunks held by a live work job of this namespace."""
@@ -539,6 +581,10 @@ class Controller:
                 g5k.cancel(site, job.job_id)
                 cancelled.append(f"{site}:{job.job_id}")
         return cancelled
+
+
+def _minutes(wall: timedelta) -> int:
+    return int(wall.total_seconds() // 60)
 
 
 def _capacity(slot: Slot) -> float:

@@ -59,6 +59,15 @@ def g5k_run(
     max_jobs: int = typer.Option(OPS.max_jobs),
     max_jobs_per_site: int = typer.Option(OPS.max_jobs_per_site),
     walltime_minutes: int = typer.Option(OPS.walltime_minutes),
+    day_walltime_minutes: int | None = typer.Option(
+        OPS.day_walltime_minutes,
+        help="Preferred (long) day walltime, retried with --walltime-minutes if it cannot "
+        "start (default: --walltime-minutes).",
+    ),
+    day_long_max_failures: int = typer.Option(
+        OPS.day_long_max_failures,
+        help="Consecutive failed long day attempts on a cluster before a 1 h pause.",
+    ),
     night_walltime_minutes: int = typer.Option(
         OPS.night_walltime_minutes, help="Preferred (long) walltime for night/weekend jobs."
     ),
@@ -93,6 +102,8 @@ def g5k_run(
         max_jobs_per_site=max_jobs_per_site,
         max_queued_per_site=max_queued_per_site,
         walltime=timedelta(minutes=walltime_minutes),
+        day_walltime=timedelta(minutes=day_walltime_minutes or walltime_minutes),
+        day_long_max_failures=day_long_max_failures,
         night_walltime=timedelta(minutes=night_walltime_minutes),
         night_fallback_walltime=timedelta(minutes=night_fallback_walltime_minutes),
         night_max_queued_per_site=night_max_queued_per_site,
@@ -116,6 +127,15 @@ def g5k_run_admission(
     max_jobs: int = typer.Option(5, help="Per GPU type."),
     max_jobs_per_site: int = typer.Option(3),
     walltime_minutes: int = typer.Option(OPS.walltime_minutes),
+    day_walltime_minutes: int | None = typer.Option(
+        OPS.day_walltime_minutes,
+        help="Preferred (long) day walltime, retried with --walltime-minutes if it cannot "
+        "start (default: --walltime-minutes).",
+    ),
+    day_long_max_failures: int = typer.Option(
+        OPS.day_long_max_failures,
+        help="Consecutive failed long day attempts on a cluster before a 1 h pause.",
+    ),
     night_walltime_minutes: int = typer.Option(
         OPS.night_walltime_minutes, help="Preferred (long) walltime for night/weekend jobs."
     ),
@@ -148,6 +168,8 @@ def g5k_run_admission(
                 max_jobs_per_site=max_jobs_per_site,
                 max_queued_per_site=max_queued_per_site,
                 walltime=timedelta(minutes=walltime_minutes),
+                day_walltime=timedelta(minutes=day_walltime_minutes or walltime_minutes),
+                day_long_max_failures=day_long_max_failures,
                 night_walltime=timedelta(minutes=night_walltime_minutes),
                 night_fallback_walltime=timedelta(minutes=night_fallback_walltime_minutes),
                 night_max_queued_per_site=night_max_queued_per_site,

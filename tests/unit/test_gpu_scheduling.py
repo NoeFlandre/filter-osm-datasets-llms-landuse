@@ -1,5 +1,8 @@
 from datetime import timedelta
 
+from hypothesis import given
+from hypothesis import strategies as st
+
 from landuse_filter.domain.gpu import GpuSpec, Profile, gpu_key, ineligibility
 from landuse_filter.domain.scheduling import Slot, assign_chunks, rank_slots, useful_sentences
 
@@ -192,3 +195,58 @@ def test_slot_for_carries_the_fallbacks():
         fallbacks=(timedelta(minutes=30),),
     )
     assert s.fallbacks == (timedelta(minutes=30),)
+
+
+def _day(window=600, day=60, short=30):
+    from landuse_filter.domain.scheduling import walltime_ladder
+
+    m = timedelta
+    return tuple(
+        int(w.total_seconds() // 60)
+        for w in walltime_ladder(
+            window_max=m(minutes=window),
+            night=False,
+            day=m(minutes=day),
+            preferred=m(minutes=120),
+            fallback=m(minutes=30),
+            day_short=m(minutes=short),
+        )
+    )
+
+
+def test_day_ladder_is_long_then_short():
+    assert _day() == (60, 30)
+
+
+def test_day_ladder_with_equal_values_is_the_single_current_rung():
+    assert _day(day=30, short=30) == (30,)
+
+
+def test_day_ladder_is_capped_by_the_window_and_short_never_exceeds_long():
+    assert _day(window=45) == (45, 30)
+    assert _day(window=20) == (20,)
+    assert _day(day=20, short=30) == (20,)
+    assert _day(window=0) == ()
+
+
+def test_without_long_keeps_only_the_shortest_rung():
+    from landuse_filter.domain.scheduling import long_attempt_tripped, without_long
+
+    m = timedelta
+    assert without_long((m(minutes=60), m(minutes=30))) == (m(minutes=30),)
+    assert without_long(()) == ()
+    assert not long_attempt_tripped(2, 3)
+    assert long_attempt_tripped(3, 3)
+
+
+@given(
+    window=st.integers(0, 1000),
+    day=st.integers(1, 200),
+    short=st.integers(1, 200),
+)
+def test_day_ladder_properties(window, day, short):
+    ladder = _day(window=window, day=day, short=short)
+    assert all(0 < w <= window for w in ladder)
+    assert all(w <= day for w in ladder)
+    assert list(ladder) == sorted(set(ladder), reverse=True)
+    assert len(ladder) <= 2

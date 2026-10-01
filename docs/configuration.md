@@ -27,10 +27,31 @@ or late), the same slot is retried once with `night_fallback_walltime_minutes`
 (`--night-fallback-walltime-minutes`, default 30), with chunks re-assigned for the shorter
 walltime. Only when the fallback also fails is the cluster backed off for 30 minutes. Both
 values are capped by the window (the next working-day 09:00) and the fallback never exceeds the
-preferred one. By day nothing changes: jobs keep `walltime_minutes` (at most 1 h).
+preferred one. By day jobs keep `walltime_minutes` (at most 1 h) unless
+`--day-walltime-minutes` is set (next section).
 
 `--night-max-queued-per-site` (`luf g5k run` and `run-admission`) is the number of waiting jobs
 allowed per site at night and on weekends. It defaults to `--max-queued-per-site`, so nothing
 changes unless it is set. Example for production:
 `--night-walltime-minutes 120 --night-fallback-walltime-minutes 30 --night-max-queued-per-site 15`.
 See [ADR-0016](adr/0016-night-walltime-fallback.md).
+
+## Day jobs: long walltime with a fallback and a self-throttle
+
+`--day-walltime-minutes` (`luf g5k run` and `run-admission`; `day_walltime_minutes` in luf.toml,
+`LUF_DAY_WALLTIME_MINUTES`) is the preferred walltime from 09:00 to 19:00. Unset, it equals
+`--walltime-minutes` and behaviour is exactly as before. When set (for example 60 with
+`--walltime-minutes 30`), a default-queue job first tries `min(day walltime, window maximum)`; if
+that is refused or would not start immediately, the same slot is retried once with
+`--walltime-minutes` before the cluster is backed off. Production-queue clusters (`abaca`) have
+no start-time restriction and use the day value directly, falling back to `--walltime-minutes`
+on refusal; at night they keep `--walltime-minutes`.
+
+Self-throttle: after `--day-long-max-failures` (`day_long_max_failures`, default 3) consecutive
+failed long attempts on a cluster, only the short walltime is used there for one hour, then long
+attempts resume. The controller log has one line per event:
+`long_walltime fallback <site>/<cluster> 60->30` and `long_walltime throttle <site>/<cluster> ...`.
+
+To revert, unset `--day-walltime-minutes` (or set it equal to `--walltime-minutes`). Production:
+`--walltime-minutes 30 --day-walltime-minutes 60`. See
+[ADR-0017](adr/0017-day-walltime-fallback.md).

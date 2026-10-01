@@ -41,3 +41,35 @@ def test_a_later_back_off_replaces_the_earlier_one(tmp_path):
     m.back_off("nancy", "gres", NOW + timedelta(hours=5))
     m.back_off("nancy", "gres", NOW + timedelta(minutes=5))
     assert not m.backed_off(cluster("nancy", "gres"), NOW + timedelta(minutes=10))
+
+
+def _record(m, ok, now=NOW):
+    return m.record_long_attempt("nancy", "gres", ok=ok, now=now, limit=3, pause=timedelta(hours=1))
+
+
+def test_long_attempts_trip_after_n_consecutive_failures_and_pause_an_hour(tmp_path):
+    m = ClusterMemory(WorkStore(tmp_path))
+    c = cluster("nancy", "gres")
+    assert [_record(m, False), _record(m, False)] == [False, False]
+    assert not m.long_throttled(c, NOW)
+    assert _record(m, False)
+    assert m.long_throttled(c, NOW + timedelta(minutes=59))
+    assert not m.long_throttled(c, NOW + timedelta(hours=1))
+
+
+def test_a_success_restarts_the_failure_count(tmp_path):
+    m = ClusterMemory(WorkStore(tmp_path))
+    _record(m, False)
+    _record(m, False)
+    assert not _record(m, True)
+    assert [_record(m, False), _record(m, False)] == [False, False]
+    assert _record(m, False)
+
+
+def test_after_a_pause_the_count_starts_again_and_is_per_cluster(tmp_path):
+    m = ClusterMemory(WorkStore(tmp_path))
+    for _ in range(3):
+        _record(m, False)
+    assert not _record(m, False, NOW + timedelta(hours=2))
+    assert not m.long_throttled(cluster("lyon", "gres"), NOW)
+    assert not m.long_throttled(cluster("nancy", "other"), NOW)

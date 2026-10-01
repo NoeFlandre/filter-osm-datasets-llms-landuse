@@ -25,6 +25,8 @@ class OpsSettings:
     max_jobs_per_site: int
     interval_seconds: int
     cuda_module: str
+    day_walltime_minutes: int | None = None  # None: same as walltime_minutes
+    day_long_max_failures: int = 3
 
     def output_repo(self, dataset: str) -> str:
         return f"{self.namespace}/{dataset}-landuse"
@@ -61,6 +63,9 @@ def _sites(g5k: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(sites)
 
 
+OPTIONAL_INT_FIELDS = ("day_walltime_minutes", "day_long_max_failures")
+
+
 def _positive(g5k: Mapping[str, Any], key: str) -> int:
     value = _need(g5k, key, int)
     if value < 1:
@@ -68,11 +73,19 @@ def _positive(g5k: Mapping[str, Any], key: str) -> int:
     return value
 
 
+def _optional(g5k: Mapping[str, Any], key: str, default: int | None) -> int | None:
+    return _positive(g5k, key) if key in g5k else default
+
+
 def parse_settings(raw: Mapping[str, Any]) -> OpsSettings:
     if raw.get("schema_version") != SCHEMA_VERSION:
         raise SettingsError(f"luf.toml: schema_version must be {SCHEMA_VERSION}")
     hub, g5k = _table(raw, "hub"), _table(raw, "grid5000")
     return OpsSettings(
+        day_walltime_minutes=_optional(g5k, "day_walltime_minutes", None),
+        day_long_max_failures=_positive(g5k, "day_long_max_failures")
+        if "day_long_max_failures" in g5k
+        else 3,
         namespace=_need(hub, "namespace", str),
         bucket=_need(hub, "bucket", str),
         sites=_sites(g5k),

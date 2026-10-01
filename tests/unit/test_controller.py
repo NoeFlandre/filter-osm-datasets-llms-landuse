@@ -762,3 +762,134 @@ def test_run_command_passes_the_fallback_and_night_queue_options(monkeypatch, tm
     s = seen["s"]
     assert s.night_fallback_walltime == timedelta(minutes=45)
     assert (s.night_walltime, s.night_max_queued_per_site) == (timedelta(minutes=120), 15)
+
+
+# --- long day jobs with a short fallback and a self-throttle (ADR-0017) ---------------
+
+DAY = datetime(2026, 9, 29, 10, 0, tzinfo=ZoneInfo("Europe/Paris"))
+
+
+def _day_world(world, day=60, production=False):
+    c, fake = world
+    queues = ["abaca"] if production else ["default"]
+    c.store.write_json("inventory.json", [{**GRES, "queues": queues}])
+    c.settings.walltime = timedelta(minutes=30)
+    c.settings.day_walltime = timedelta(minutes=day)
+    c.now = DAY
+    return c, fake
+
+
+def _late_when(fake, monkeypatch, long_wall="walltime=1:00"):
+    def start(site, job_id):
+        long = long_wall in " ".join(fake.submitted[int(job_id) - 101])
+        return ("Waiting", 4_000_000_000) if long else ("Running", None)
+
+    monkeypatch.setattr(g5k, "scheduled_start", start)
+
+
+def _attempt(c, fake, now):
+    """One cycle that makes at most one submission (the previous job is gone)."""
+    c.settings.max_jobs_total = 1
+    fake.jobs["nancy"] = []
+    c.now = now
+    c.cycle(now)
+
+
+def test_day_long_job_that_starts_in_time_stays_long(world):
+    c, fake = _day_world(world)
+    assert c.cycle(DAY).submitted
+    assert set(_minutes(fake)) == {60}
+
+
+def test_day_long_job_starting_late_falls_back_and_logs_it(world, monkeypatch):
+    c, fake = _day_world(world)
+    _late_when(fake, monkeypatch)
+    logs = []
+    c.log = logs.append
+    assert c.cycle(DAY).submitted
+    assert _minutes(fake)[:2] == [60, 30]
+    assert not _backed_off(c)
+    assert "long_walltime fallback nancy/gres 60->30" in logs
+
+
+def test_day_long_refused_then_short_is_submitted(world, monkeypatch):
+    c, fake = _day_world(world)
+    real, calls = fake.submit, []
+
+    def submit(site, args):
+        calls.append(args)
+        if len(calls) == 1:
+            raise g5k.RemoteError("refused")
+        return real(site, args)
+
+    monkeypatch.setattr(g5k, "submit", submit)
+    assert c.cycle(DAY).submitted
+    assert _minutes(fake)[0] == 30
+
+
+def test_three_failed_long_attempts_pause_long_walltimes_for_an_hour(world, monkeypatch):
+    c, fake = _day_world(world)
+    _late_when(fake, monkeypatch)
+    logs = []
+    c.log = logs.append
+    for _ in range(3):
+        _attempt(c, fake, DAY)
+    assert sum("long_walltime throttle nancy/gres" in m for m in logs) == 1
+    before = len(fake.submitted)
+    _attempt(c, fake, DAY + timedelta(minutes=30))
+    assert _minutes(fake)[before:] == [30]
+    before = len(fake.submitted)
+    _attempt(c, fake, DAY + timedelta(hours=1, minutes=1))
+    assert _minutes(fake)[before] == 60
+
+
+def test_a_successful_long_job_resets_the_failure_count(world, monkeypatch):
+    c, fake = _day_world(world)
+    _late_when(fake, monkeypatch)
+    _attempt(c, fake, DAY)
+    _attempt(c, fake, DAY)
+    monkeypatch.setattr(g5k, "scheduled_start", lambda site, job_id: ("Running", None))
+    _attempt(c, fake, DAY)
+    _late_when(fake, monkeypatch)
+    _attempt(c, fake, DAY)
+    _attempt(c, fake, DAY)
+    (cluster,) = ctl_mod.load_clusters(c.store)
+    assert not c.memory.long_throttled(cluster, DAY)
+
+
+def test_production_cluster_uses_the_day_long_walltime_directly(world):
+    c, fake = _day_world(world, production=True)
+    assert c.cycle(DAY).submitted
+    assert set(_minutes(fake)) == {60}
+
+
+@pytest.mark.parametrize("production", [False, True])
+@pytest.mark.parametrize("day", [None, 30])
+def test_day_walltime_unset_or_equal_changes_nothing(world, production, day):
+    c, fake = _day_world(world, production=production)
+    c.settings.day_walltime = None if day is None else timedelta(minutes=day)
+    fake.late = True
+    logs = []
+    c.log = logs.append
+    assert c.cycle(DAY).submitted == []
+    assert _minutes(fake) == [30]  # one short submission, then back-off, as before
+    assert not any("long_walltime" in m for m in logs)
+
+
+def test_day_options_reach_the_controller_settings(monkeypatch, tmp_path):
+    from typer.testing import CliRunner
+
+    from landuse_filter.cli import g5k as cli
+
+    seen = {}
+    monkeypatch.setattr(cli, "_controller", lambda work, s: seen.setdefault("s", s))
+    monkeypatch.setattr(ctl_mod, "run_loop", lambda *a, **k: None)
+    base = ["run", "--datasets", "d", "--work", str(tmp_path)]
+    args = [*base, "--walltime-minutes", "30", "--day-walltime-minutes", "60"]
+    args += ["--day-long-max-failures", "5"]
+    assert CliRunner().invoke(cli.g5k_app, args).exit_code == 0
+    assert seen["s"].day_walltime == timedelta(minutes=60)
+    assert seen["s"].day_long_max_failures == 5
+    seen.clear()
+    assert CliRunner().invoke(cli.g5k_app, [*base, "--walltime-minutes", "45"]).exit_code == 0
+    assert seen["s"].day_walltime == timedelta(minutes=45)  # unset: equals the short value

@@ -262,6 +262,14 @@ Usage: root g5k run [OPTIONS]
 │    --max-jobs                                            <int>   [default: 12]                   │
 │    --max-jobs-per-site                                   <int>   [default: 4]                    │
 │    --walltime-minutes                                    <int>   [default: 60]                   │
+│    --day-walltime-minutes                                <int>   Preferred (long) day walltime,  │
+│                                                                  retried with --walltime-minutes │
+│                                                                  if it cannot start (default:    │
+│                                                                  --walltime-minutes).            │
+│    --day-long-max-failures                               <int>   Consecutive failed long day     │
+│                                                                  attempts on a cluster before a  │
+│                                                                  1 h pause.                      │
+│                                                                  [default: 3]                    │
 │    --night-walltime-minutes                              <int>   Preferred (long) walltime for   │
 │                                                                  night/weekend jobs.             │
 │                                                                  [default: 120]                  │
@@ -311,6 +319,12 @@ Usage: root g5k run-admission [OPTIONS]
 │    --max-jobs                               <int>   Per GPU type. [default: 5]                   │
 │    --max-jobs-per-site                      <int>   [default: 3]                                 │
 │    --walltime-minutes                       <int>   [default: 60]                                │
+│    --day-walltime-minutes                   <int>   Preferred (long) day walltime, retried with  │
+│                                                     --walltime-minutes if it cannot start        │
+│                                                     (default: --walltime-minutes).               │
+│    --day-long-max-failures                  <int>   Consecutive failed long day attempts on a    │
+│                                                     cluster before a 1 h pause.                  │
+│                                                     [default: 3]                                 │
 │    --night-walltime-minutes                 <int>   Preferred (long) walltime for night/weekend  │
 │                                                     jobs.                                        │
 │                                                     [default: 120]                               │

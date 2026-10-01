@@ -112,13 +112,32 @@ def walltime_ladder(
     day: timedelta,
     preferred: timedelta,
     fallback: timedelta,
+    day_short: timedelta | None = None,
 ) -> tuple[timedelta, ...]:
     """Walltimes to try, in order, for one slot: the preferred one, then a shorter fallback.
 
-    By day (``night`` false) there is a single rung, ``day`` capped by the window. At night
-    the rungs are ``preferred`` then ``fallback``, each capped by the window maximum, the
-    fallback never longer than the preferred one, duplicates and non-positive values dropped.
+    By day (``night`` false) the rungs are ``day`` then ``day_short`` (omitted: ``day`` alone).
+    At night they are ``preferred`` then ``fallback``. Each is capped by the window maximum,
+    the fallback never longer than the preferred one, duplicates and non-positive values
+    dropped.
     """
-    caps = (day,) if not night else (preferred, min(fallback, preferred))
+    if night:
+        caps = (preferred, min(fallback, preferred))
+    else:
+        caps = (day,) if day_short is None else (day, min(day_short, day))
     rungs = [min(cap, window_max) for cap in caps]
     return tuple(w for i, w in enumerate(rungs) if w > timedelta(0) and w not in rungs[:i])
+
+
+LONG_FAILURES = 3
+LONG_PAUSE = timedelta(hours=1)
+
+
+def long_attempt_tripped(failures: int, limit: int = LONG_FAILURES) -> bool:
+    """True once ``failures`` consecutive long attempts reach ``limit``."""
+    return failures >= limit
+
+
+def without_long(ladder: tuple[timedelta, ...]) -> tuple[timedelta, ...]:
+    """The ladder with its long rung dropped: only the shortest walltime remains."""
+    return ladder[-1:]
