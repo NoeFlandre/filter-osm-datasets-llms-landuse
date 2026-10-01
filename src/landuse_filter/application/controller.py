@@ -13,7 +13,7 @@ import time
 import traceback
 import uuid
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -203,6 +203,7 @@ class Controller:
             f"cycle submitted {len(report.submitted)} jobs in "
             f"{time.monotonic() - started:.0f} s (sites {len(sites)})"
         )
+        self._ingest()  # keep the progress view current after a long submission phase
         return report
 
     def reconcile(self) -> dict[str, list[g5k.Job]]:
@@ -466,11 +467,15 @@ class Controller:
         done: dict[int, str] = {}
         if groups:
             workers = min(self.settings.submit_workers, len(groups))
-            with ThreadPoolExecutor(workers, thread_name_prefix="submit") as pool:
+            pool = ThreadPoolExecutor(workers, thread_name_prefix="submit")
+            try:
                 futures = {
                     site: pool.submit(self._run_site, site, items, pending, taken, code_commit)
                     for site, items in groups.items()
                 }
+                self._wait_ingesting(list(futures.values()))
+            finally:
+                pool.shutdown(wait=True)
             for site, future in futures.items():
                 try:
                     done.update(future.result())
@@ -478,6 +483,25 @@ class Controller:
                     log_failure(self.log, f"{site}: submission worker failed", exc)
         self.policy.finish_all()
         return [done[i] for i in sorted(done)]
+
+    def _wait_ingesting(self, futures: list[Future]) -> None:
+        """Wait for the site workers; every PULL_INTERVAL, ingest from this (main) thread.
+
+        The SQLite progress index belongs to the constructing thread, so pulling and
+        completing chunks never happens in a worker.
+        """
+        remaining = set(futures)
+        while remaining:
+            _, remaining = wait(remaining, timeout=PULL_INTERVAL)
+            if remaining:
+                self._ingest()
+
+    def _ingest(self) -> None:
+        try:
+            self.pull()
+            self.progress.pending()  # marks and forgets finished chunks
+        except Exception as exc:  # noqa: BLE001 - a failed ingest must not kill the cycle
+            log_failure(self.log, "ingest during submission failed", exc)
 
     def _run_site(
         self,
