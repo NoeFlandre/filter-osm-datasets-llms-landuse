@@ -967,3 +967,36 @@ def test_day_options_reach_the_controller_settings(monkeypatch, tmp_path):
     assert CliRunner().invoke(cli.g5k_app, [*base, "--walltime-minutes", "45"]).exit_code == 0
     assert seen["s"].day_walltime == timedelta(minutes=45)  # unset: equals the short value
     assert seen["s"].chunk_overflow == 1.2  # unset: previous behaviour
+
+
+def _age_besteffort(c, fake, *, queue, minutes):
+    c.cycle(NOW)
+    a = c.live()[0]
+    a.submitted_at = (NOW - timedelta(minutes=minutes)).isoformat()
+    c.save(a)
+    job = next(j for j in fake.jobs["nancy"] if j.name == a.name)
+    fake.jobs["nancy"][fake.jobs["nancy"].index(job)] = g5k.Job(
+        job.site, job.job_id, job.name, "Waiting", queue
+    )
+    c.now = NOW
+    return a, job
+
+
+def test_stale_besteffort_job_is_reaped_and_released(world):
+    c, fake = world
+    a, job = _age_besteffort(c, fake, queue="besteffort", minutes=25)
+    c.reconcile()
+    assert job.job_id in fake.cancelled
+    assert c.store.exists("backoff/nancy_gres.json")
+    assert a.name not in {x.name for x in c.live()}
+    assert next(x for x in c.ledger() if x.id == a.id).state == "cancelled_stale"
+
+
+def test_recent_besteffort_and_other_queues_are_left_alone(world):
+    c, fake = world
+    _age_besteffort(c, fake, queue="besteffort", minutes=5)
+    c.reconcile()
+    assert not fake.cancelled
+    _age_besteffort(c, fake, queue="night", minutes=600)
+    c.reconcile()
+    assert not fake.cancelled

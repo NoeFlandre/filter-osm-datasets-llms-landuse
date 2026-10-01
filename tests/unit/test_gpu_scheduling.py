@@ -1,5 +1,6 @@
 from datetime import timedelta
 
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -257,3 +258,30 @@ def test_day_ladder_properties(window, day, short):
 def test_default_overflow_is_twenty_percent():
     pending = [("a", 6), ("b", 6), ("c", 1)]
     assert assign_chunks(pending, set(), capacity=10) == ["a", "b"]  # budget 12, not 13
+
+
+def _stale(**kw):
+    from landuse_filter.domain.scheduling import is_stale_besteffort
+
+    base = {"queue": "besteffort", "state": "Waiting", "submitted_at": 0.0, "now": 1200.0}
+    return is_stale_besteffort(**{**base, **kw})
+
+
+def test_stale_besteffort_boundary_is_the_threshold():
+    assert _stale(now=1200.0)
+    assert not _stale(now=1199.9)
+    assert not _stale(now=1200.0, max_wait=timedelta(minutes=21))
+
+
+@pytest.mark.parametrize("queue", ["abaca", "default", "night", "exotic", ""])
+def test_stale_never_for_other_queues(queue):
+    assert not _stale(queue=queue, now=10**9)
+
+
+@pytest.mark.parametrize("state", ["Running", "Launching", "Hold", "Unknown"])
+def test_stale_never_when_not_waiting(state):
+    assert not _stale(state=state, now=10**9)
+
+
+def test_stale_never_without_submission_time():
+    assert not _stale(submitted_at=None, now=10**9)

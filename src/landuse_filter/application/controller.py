@@ -40,8 +40,10 @@ from landuse_filter.domain.prompting import PROMPT_SHA256
 from landuse_filter.domain.scheduling import (
     LONG_FAILURES,
     LONG_PAUSE,
+    STALE_BESTEFFORT_WAIT,
     Slot,
     assign_chunks,
+    is_stale_besteffort,
     rank_slots,
     slot_for,
     walltime_ladder,
@@ -54,6 +56,7 @@ BESTEFFORT_ONLY = "only access the required resources in besteffort"
 SETUP = timedelta(minutes=8)
 LATE_START = timedelta(minutes=15)
 BACKOFF = timedelta(minutes=30)
+STALE_BACKOFF = timedelta(minutes=10)
 POST_SUBMIT_WAIT = 20.0
 PULL_INTERVAL = 180.0  # seconds: ingest results again if a cycle of submissions runs longer
 # Bounded queue (#20): when nothing is free, a site may hold a few of our waiting jobs
@@ -77,6 +80,7 @@ class Settings:
     day_long_max_failures: int = LONG_FAILURES  # consecutive long failures before a pause
     chunk_overflow: float = 1.2  # a job gets capacity x this of work; the rest returns (ADR-0018)
     besteffort: bool = False
+    stale_besteffort_wait: timedelta = STALE_BESTEFFORT_WAIT  # ADR-0025
     gpu_models: list[str] = field(default_factory=list)  # allow-list of gpu keys; empty = admitted
     window: int | None = None  # candidate concurrency (tuning, issue #17); None = GPU profile
     namespace: str | None = None  # results of a candidate config live under <fp>-<namespace>
@@ -209,6 +213,7 @@ class Controller:
     def reconcile(self) -> dict[str, list[g5k.Job]]:
         jobs = {site: self._our_jobs(site) for site in self.settings.sites}
         self.drop_drifted(jobs)
+        self.reap_stale_besteffort(jobs)
         by_name = {j.name: j for js in jobs.values() for j in js}
         for a in self.live():
             job = by_name.get(a.name)
@@ -250,6 +255,38 @@ class Controller:
                 site_jobs.remove(job)
                 self.memory.back_off(site, a.cluster, self.now + BACKOFF)
                 self.log(f"{site}: job {job.job_id} start drifted; cancelled and backing off")
+
+    def reap_stale_besteffort(self, jobs: dict[str, list[g5k.Job]]) -> None:
+        """Cancel our besteffort jobs that kept waiting long after submission (ADR-0025)."""
+        mine = {a.name: a for a in self.live()}
+        for site, site_jobs in jobs.items():
+            for job in list(site_jobs):
+                a = mine.get(job.name)
+                if a is None or not self._stale(job, a):
+                    continue
+                try:
+                    g5k.cancel(site, job.job_id)
+                except g5k.RemoteError as exc:
+                    self.log(f"{site}: could not cancel stale job {job.job_id}: {exc}")
+                    continue
+                site_jobs.remove(job)
+                a.state = "cancelled_stale"
+                self.save(a)
+                self.memory.back_off(site, a.cluster, self.now + STALE_BACKOFF)
+                self.log(f"{site}: besteffort job {job.job_id} waited too long; cancelled")
+
+    def _stale(self, job: g5k.Job, a: Assignment) -> bool:
+        try:
+            at = datetime.fromisoformat(a.submitted_at) if a.submitted_at else None
+        except ValueError:
+            at = None
+        return is_stale_besteffort(
+            queue=job.queue,
+            state=job.state,
+            submitted_at=at.timestamp() if at else None,
+            now=self.now.timestamp(),
+            max_wait=self.settings.stale_besteffort_wait,
+        )
 
     def pull(self) -> None:
         self.transport.pull(self.progress)

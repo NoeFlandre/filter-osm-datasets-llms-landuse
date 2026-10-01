@@ -66,6 +66,14 @@ OAR checkpoint signal (5 minutes before the walltime ends), when the node flushe
 and exits; unfinished chunks return to the pool. Production: `--chunk-overflow 1.6`.
 To revert, leave the option unset (1.2). See [ADR-0018](adr/0018-over-assignment.md).
 
+## Stale besteffort jobs
+
+`--stale-besteffort-minutes` (`luf g5k run` and `run-admission`; default 20) cancels our
+besteffort jobs still Waiting that long after submission (their GPUs were taken), marks the
+assignment `cancelled_stale`, releases its chunks and backs the cluster off for 10 minutes.
+Jobs in other queues (night, exotic) are never reaped. See
+[ADR-0025](adr/0025-stale-besteffort-reaper.md).
+
 ## Usage-policy check cadence (`policy_check`)
 
 `--policy-check` (`luf g5k run` and `run-admission`; `policy_check` in luf.toml,
