@@ -12,7 +12,8 @@ Wikipedia datasets until late in each run.
 ## Decision
 
 Publish partial files. Sentences without a generation get `decision = pending`; a partial file is
-re-uploaded when it gained 10 % of its sentences (`PARTIAL_STEP`) and replaced when complete.
+re-uploaded when it gained 1 % of its sentences (`PARTIAL_STEP`; 10 % at first, lowered once the
+geographic order of ADR-0014 spread progress thinly over every file) and replaced when complete.
 Generations are still uploaded once, with the complete file that owns the text. Partial files live
 in their own ledger; the card counts pending rows and partial files.
 
@@ -22,5 +23,5 @@ in their own ledger; the card counts pending rows and partial files.
   "no answer yet", not as a label.
 * The "every sentence has a decision" guarantee holds only when `dataset_status: complete` and no
   `pending` row remains; the final verification checks exactly that.
-* Hub commit history grows with each refresh (bounded by the 10 % step per file).
+* Hub commit history grows with each refresh (bounded by the 1 % step per file).
 * Joins from partial labels to `generations/` may miss rows until the owning file completes.

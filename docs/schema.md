@@ -63,7 +63,7 @@ Until ADR-0014 chunks were cut in input-file order and, because repeated texts a
 once, a dataset at 20 % of its chunks had almost no input file with every sentence labelled. To publish early, a file with some but not all
 texts generated goes to the Hub as a *partial* file: `labels/` and `viewer/` hold every sentence,
 and a sentence whose text has no answer yet has `decision = pending` (no `generation_id`, no
-`failure_reason`). A partial file is refreshed when it gained 10 % of its sentences since its last
+`failure_reason`). A partial file is refreshed when it gained 1 % of its sentences since its last
 upload, and replaced by the final tables once it is complete. Its `generations/` rows ship with
 the complete file (the first file where a text appears owns the text's generation), so a partial
 file's labels can reference generations that are not published yet. Partial files are recorded in

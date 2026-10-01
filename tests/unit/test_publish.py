@@ -270,12 +270,13 @@ def test_a_partly_generated_file_is_published_with_pending_rows(tmp_path, monkey
 
 
 def test_partial_files_are_refreshed_only_after_enough_progress(tmp_path, monkeypatch):
+    monkeypatch.setattr(pub, "PARTIAL_STEP", 0.10)  # a 46-sentence file needs a large step
     hub = fake_hub(tmp_path)
     uploads = hub.uploads
     store = planned(tmp_path)
     generate_some(store, "p1", 0, 20)
     pub.publish(store, WEBSITE, "rev", hub=hub)
-    generate_some(store, "p2", 20, 22)  # +2 of 46: under the 10 % step
+    generate_some(store, "p2", 20, 22)  # +2 of 46: under the step
     pub.publish(store, WEBSITE, "rev", hub=hub)
     assert sum("labels/polygons/a.parquet" in batch for batch in uploads) == 1
     generate_some(store, "p3", 22, 30)  # +10 in total
