@@ -48,10 +48,24 @@ def test_done_needs_everything():
 def test_status_json_is_machine_readable():
     out = status(files_complete=2, files_partial=1).to_json()
     assert out["files"] == {"total": 3, "complete": 2, "partial": 1, "unscanned": 0}
-    assert out["done"] is False
-    assert out["mirrored"] is True
-    assert out["revision"] == "r"
+    assert out == {
+        "dataset": "d",
+        "revision": "r",
+        "files": {"total": 3, "complete": 2, "partial": 1, "unscanned": 0},
+        "mirrored": True,
+        "stopped": None,
+        "done": False,
+    }
     assert json.loads(json.dumps(out)) == out
+
+
+def test_pause_values():
+    assert pause(0, 10, 100) == 10
+    assert pause(1, 10, 100) == 20
+    assert pause(2, 10, 100) == 40
+    assert pause(9, 10, 100) == 100
+    assert pause(-4, 10, 100) == 10  # a negative count is no failure
+    assert pause(1000, 1, 1e12) == 2**30  # the exponent is bounded
 
 
 @given(
@@ -99,7 +113,7 @@ def test_never_submits_while_a_job_is_live_or_after_done(done, live):
     assert (action == SUBMIT) == (not done and not live)
 
 
-@given(st.integers(-5, 10**6), st.floats(1, 1e4), st.floats(1, 1e5))
+@given(st.integers(-5, 200), st.floats(1, 1e4), st.floats(1, 1e5))
 def test_pause_is_bounded_and_monotone(failures, interval, cap):
     p = pause(failures, interval, cap)
     assert 0 < p <= cap
