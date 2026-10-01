@@ -50,21 +50,25 @@ installed by publish jobs only.
 
 ## Viewer table
 
-`viewer/<input path>.parquet` mirrors `labels/` row for row but carries only what a reader of the
-dataset viewer needs: `sentence` (the text; the whole text for `skipped_unsplit`), `label`
-(`yes`, `no`, `failed`, `skipped_unsplit`), `language` and `region` (the input file's name). The
-card lists it as the first, default config (`sentences`), so the Hub viewer opens on it. Files
-labelled before this table existed get theirs on the next publish.
+`viewer/<input path>.parquet` carries only what a reader of the dataset viewer needs: `sentence`
+(the text; the whole text for `skipped_unsplit`), `label` (`yes`, `no`, `failed`,
+`skipped_unsplit`), `language` and `region` (the input file's name). It holds only sentences with
+a model answer or deliberately skipped, never `pending` ones (those stay in `labels/`, which
+keeps every row), so on a partial dataset it is a subset of `labels/`; for a complete file it
+mirrors `labels/` row for row. A file with no such row gets no viewer file (the Hub viewer fails
+on zero-row parquet files); this cannot go stale, because resolved sentences never revert to
+`pending`. The card lists it as the first, default config (`sentences`), so the Hub viewer opens
+on it. Files labelled before this table existed get theirs on the next publish.
 
 
 ## Partial publication
 
 Until ADR-0014 chunks were cut in input-file order and, because repeated texts are generated
 once, a dataset at 20 % of its chunks had almost no input file with every sentence labelled. To publish early, a file with some but not all
-texts generated goes to the Hub as a *partial* file: `labels/` and `viewer/` hold every sentence,
+texts generated goes to the Hub as a *partial* file: `labels/` holds every sentence (`viewer/` only the answered ones),
 and a sentence whose text has no answer yet has `decision = pending` (no `generation_id`, no
-`failure_reason`). A partial file is refreshed when it gained 1 % of its sentences since its last
-upload, and replaced by the final tables once it is complete. Its `generations/` rows ship with
+`failure_reason`). A file never published before is published as soon as one of its sentences is resolved; after
+that it is refreshed when it gained 1 % of its sentences since its last upload, and replaced by the final tables once it is complete. Its `generations/` rows ship with
 the complete file (the first file where a text appears owns the text's generation), so a partial
 file's labels can reference generations that are not published yet. Partial files are recorded in
 `published/<dataset>.partial.jsonl`, never in the main ledger, so they stay open; the card counts

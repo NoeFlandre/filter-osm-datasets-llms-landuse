@@ -81,6 +81,18 @@ class WorkStore:
             f.flush()
             os.fsync(f.fileno())
 
+    def compact_jsonl(self, relative: str, key: str = "path") -> list[dict]:
+        """Read a ledger; when superseded lines (same ``key``, last wins) pile up, rewrite it
+        with one line per key. Returns the surviving rows in first-seen order."""
+        rows = self.read_jsonl(relative)
+        latest = {r[key]: r for r in rows}
+        if len(rows) > 2 * len(latest) + 100:
+            write_atomic(
+                self.path(relative),
+                "".join(json.dumps(r, sort_keys=True) + "\n" for r in latest.values()).encode(),
+            )
+        return list(latest.values())
+
     def read_jsonl(self, relative: str) -> list[dict]:
         path = self.path(relative)
         if not path.exists():

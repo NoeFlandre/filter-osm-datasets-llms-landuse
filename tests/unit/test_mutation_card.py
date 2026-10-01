@@ -105,7 +105,8 @@ def test_failed_section_shares_count_failed_rows_and_defaults_to_zero():
 
 def test_tables_section_explains_pending_rows_only_for_partial_publications():
     note = (
-        "\n* `pending` rows belong to partly labelled files; their labels are refreshed as the "
+        "\n* `pending` rows belong to partly labelled files and are only in "
+        "`labels/`, never in the viewer; their labels are refreshed as the "
         "model works, and the `generations/` rows of a file are published "
         "once the file is complete."
     )

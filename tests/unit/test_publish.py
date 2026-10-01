@@ -369,3 +369,28 @@ def test_every_dataset_declares_its_location_capabilities():
     assert set(SPECS) == set(SOURCES)
     assert {d for d, s in SPECS.items() if s.planning_locator} == {WIKI, WEBSITE}
     assert {d for d, s in SPECS.items() if s.map_locator} == {DESCRIPTION, WIKI, WEBSITE}
+
+
+def test_a_never_published_file_appears_as_soon_as_one_sentence_is_resolved(tmp_path, monkeypatch):
+    monkeypatch.setattr(pub, "PARTIAL_STEP", 0.50)  # far above one sentence of 46
+    hub = fake_hub(tmp_path)
+    uploads = hub.uploads
+    store = planned(tmp_path)
+    generate_some(store, "p1", 0, 1)
+    report = pub.publish(store, WEBSITE, "rev", hub=hub)
+    assert report.partial_files == 1
+    assert sum("labels/polygons/a.parquet" in batch for batch in uploads) == 1
+    viewer = pq.read_table(store.path(f"publish/{WEBSITE}/viewer/polygons/a.parquet"))
+    assert "pending" not in viewer.column("label").to_pylist()
+    assert 0 < viewer.num_rows < 46
+    generate_some(store, "p2", 1, 3)  # published already: the step rule applies again
+    pub.publish(store, WEBSITE, "rev", hub=hub)
+    assert sum("labels/polygons/a.parquet" in batch for batch in uploads) == 1
+
+
+def test_a_file_with_nothing_resolved_is_not_published(tmp_path):
+    hub = fake_hub(tmp_path)
+    store = planned(tmp_path)
+    report = pub.publish(store, WEBSITE, "rev", hub=hub)
+    assert report.partial_files == 0
+    assert not any("labels/polygons/a.parquet" in batch for batch in hub.uploads)

@@ -182,7 +182,8 @@ def _tables_section(f: CardFacts) -> str:
     spec = SPECS[f.dataset]
     source, using, keys = spec.source.patterns, spec.card_using, spec.card_keys
     partial_note = (
-        "\n* `pending` rows belong to partly labelled files; their labels are refreshed as the "
+        "\n* `pending` rows belong to partly labelled files and are only in `labels/`, never in the "
+        "viewer; their labels are refreshed as the "
         "model works, and the `generations/` rows of a file are published once the file is complete."
         if f.partial_files
         else ""
@@ -190,7 +191,7 @@ def _tables_section(f: CardFacts) -> str:
     return f"""
 ## Tables
 
-* `viewer/<input path>.parquet` (the default view): `sentence`, `label`, `language` and `region` (the input file), nothing else.
+* `viewer/<input path>.parquet` (the default view): `sentence`, `label`, `language` and `region` (the input file), nothing else. It holds only sentences with a model answer (`yes`, `no`, `failed`) or skipped (`skipped_unsplit`).
 * `labels/<input path>.parquet`: one row per sentence. Join keys ({keys}), `text_sha256`, `decision`, `parse_mode`, `failure_reason`, `generation_id`.
 * `generations/<fingerprint>/*.parquet`: one row per **unique** text: raw output including the reasoning, token counts, finish reason, speculative-decoding statistics, GPU, site, job and code commit. Identical texts are generated once and share a `generation_id`.{partial_note}
 

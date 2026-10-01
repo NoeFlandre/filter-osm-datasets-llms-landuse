@@ -12,8 +12,9 @@ Wikipedia datasets until late in each run.
 ## Decision
 
 Publish partial files. Sentences without a generation get `decision = pending`; a partial file is
-re-uploaded when it gained 1 % of its sentences (`PARTIAL_STEP`; 10 % at first, lowered once the
+published as soon as one of its sentences is resolved (so a slowly progressing dataset such as the 761-file wiki shows every file at once, with the geographically uniform order of ADR-0014) and then re-uploaded when it gained 1 % of its sentences (`PARTIAL_STEP`; 10 % at first, lowered once the
 geographic order of ADR-0014 spread progress thinly over every file) and replaced when complete.
+The dataset viewer table holds only answered or skipped sentences, never `pending` ones.
 Generations are still uploaded once, with the complete file that owns the text. Partial files live
 in their own ledger; the card counts pending rows and partial files.
 

@@ -7,7 +7,8 @@
    every in-scope file is labelled.
 A file with some but not all texts generated is published as a *partial* file
 (sentences without an answer are ``pending``) once it gained :data:`PARTIAL_STEP` of its
-sentences since its last partial upload; it is replaced when it completes. Partial files
+sentences since its last partial upload (a file never published yet, as soon as one sentence is
+resolved); it is replaced when it completes. Partial files
 are recorded in ``published/<dataset>.partial.jsonl``, never in the main ledger, so they
 stay open; their ``generations/`` rows ship with the complete file.
 Published files are recorded in ``published/<dataset>.jsonl``, so re-running resumes.
@@ -102,8 +103,9 @@ class _PartialSink:
         self.resolved: dict[str, int] = {}  # labels path -> resolved sentences, this run
         self.uploaded: dict[str, Path] = {}
 
-    def add(self, labels: tuple[Path, str], viewer: tuple[Path, str], known: int) -> None:
-        self.pending += [labels, viewer]
+    def add(self, files: list[tuple[Path, str]], known: int) -> None:
+        self.pending += files
+        labels = files[0]
         self.resolved[labels[1]] = known
         if len(self.pending) >= PARTIAL_FLUSH:
             self.flush()
@@ -201,7 +203,7 @@ def _prepare(
         ctx=_Ctx(dataset, revision, fp, store.path(f"publish/{dataset}"), resolved),
         done=done,
         resolved_before={
-            r["path"]: r["resolved"] for r in store.read_jsonl(partial_ledger(dataset))
+            r["path"]: r["resolved"] for r in store.compact_jsonl(partial_ledger(dataset))
         },
         sink=_PartialSink(store, dataset, repo, hub, dry_run=dry_run, on_progress=on_progress),
         hub=hub,
@@ -236,12 +238,19 @@ def _build_files(run: _Run) -> tuple[list[tuple[Path, str]], set[str]]:
         except MissingGenerationError:
             known = _build_partial(ctx, path, local, last=run.resolved_before.get(target, 0))
             if known is not None:
-                labels, viewer = (out / target, target), (out / f"viewer/{path}", f"viewer/{path}")
-                run.sink.add(labels, viewer, known)
+                run.sink.add(_tables(out, path), known)
             continue
         new_shas |= _owned_generations(run.db, run.first_file[path], out / target)
-        new += [(out / target, target), (out / f"viewer/{path}", f"viewer/{path}")]
+        new += _tables(out, path)
     return new, new_shas
+
+
+def _tables(out: Path, path: str) -> list[tuple[Path, str]]:
+    """The labels table of a built file and its viewer table, when it has rows to show."""
+    files = [(out / "labels" / path, f"labels/{path}")]
+    if (out / "viewer" / path).exists():
+        files.append((out / "viewer" / path, f"viewer/{path}"))
+    return files
 
 
 def _generation_files(run: _Run, new_shas: set[str]) -> list[tuple[Path, str]]:
@@ -264,8 +273,10 @@ def _finish(run: _Run, new: list[tuple[Path, str]]) -> PublishReport:
     labelled = len([p for p in run.files if f"labels/{p}" in run.done]) + len(completed)
     run.sink.flush()
     partial_paths = (set(run.resolved_before) | set(run.sink.resolved)) - run.done - completed
-    decisions = _decision_counts(run.ctx.out)
-    if not run.dry_run:
+    decisions: dict[str, int] = {}
+    if run.dry_run:
+        decisions = _decision_counts(run.ctx.out)
+    else:
         decisions = _upload(
             run.store,
             run.hub,
@@ -273,6 +284,7 @@ def _finish(run: _Run, new: list[tuple[Path, str]]) -> PublishReport:
             new,
             partial=run.sink.uploaded,
             coverage=Coverage(labelled, len(run.files), sorted(partial_paths)),
+            on_progress=run.sink.on_progress,
         )
     return PublishReport(labelled, len(run.files), len(new), decisions, len(partial_paths))
 
@@ -285,6 +297,7 @@ def _upload(
     *,
     partial: dict[str, Path],
     coverage: Coverage,
+    on_progress: Callable[[], None] | None = None,
 ) -> dict[str, int]:
     """Upload the complete files, record them and refresh the card (partial files are
     already up and recorded)."""
@@ -300,6 +313,7 @@ def _upload(
         revision=revision,
         local={**partial, **{d: src for src, d in new}},
         coverage=coverage,
+        on_progress=on_progress,
     )
 
 
@@ -321,7 +335,8 @@ def _owned_generations(db: sqlite3.Connection, file_idx: int, labels: Path) -> s
 
 def _build_partial(ctx: _Ctx, path: str, local: Path, *, last: int) -> int | None:
     """Build the partial tables of a file; ``None`` (and nothing left in ``out``) if it has
-    not gained :data:`PARTIAL_STEP` of its sentences since the last partial upload."""
+    no answer yet, or (once published) has not gained :data:`PARTIAL_STEP` of its sentences
+    since its last partial upload."""
     build_labels(
         ctx.dataset,
         path,
@@ -335,10 +350,11 @@ def _build_partial(ctx: _Ctx, path: str, local: Path, *, last: int) -> int | Non
     decisions = decisions.to_pylist()
     known = sum(d not in (PENDING, "skipped_unsplit") for d in decisions)
     sendable = sum(d != "skipped_unsplit" for d in decisions)
-    if known - last >= max(1, math.ceil(PARTIAL_STEP * sendable)):
+    first = last == 0 and known >= 1  # every file shows up as soon as it has one answer
+    if first or known - last >= max(1, math.ceil(PARTIAL_STEP * sendable)):
         return known
     (ctx.out / "labels" / path).unlink()
-    (ctx.out / "viewer" / path).unlink()
+    (ctx.out / "viewer" / path).unlink(missing_ok=True)
     return None
 
 
@@ -353,7 +369,8 @@ def _missing_viewers(run: _Run, *, resolved: ResolutionIndex, out: Path) -> list
             run.hub.download_all(SPECS[run.dataset].source.repo_id, run.revision, [path])[0][0]
         )
         build_viewer(run.dataset, path, local, resolved=resolved, out=out)
-        made.append((out / target, target))
+        if (out / target).exists():
+            made.append((out / target, target))
     return made
 
 
@@ -390,7 +407,7 @@ def _decision_counts(out: Path) -> dict[str, int]:
     return dict(counts)
 
 
-def _refresh_card(
+def _refresh_card(  # noqa: PLR0913
     store: WorkStore,
     hub: Hub,
     dataset: str,
@@ -399,6 +416,7 @@ def _refresh_card(
     revision: str,
     local: dict[str, Path],
     coverage: Coverage,
+    on_progress: Callable[[], None] | None = None,
 ) -> dict[str, int]:
     """Recount the card's numbers from every published file, then update the card."""
     on_hub = {r["path"] for r in store.read_jsonl(f"published/{dataset}.jsonl")}
@@ -410,6 +428,7 @@ def _refresh_card(
             lambda p: local[p] if p in local else hub.open_file(repo, p),
             _map_locator(dataset, revision, hub),
             refresh=set(local),  # uploaded now: a partial record of the same path is stale
+            on_progress=on_progress,
         )
     )
     if stats.decisions:

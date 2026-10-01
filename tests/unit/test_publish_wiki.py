@@ -106,6 +106,12 @@ def test_partial_wiki_file_is_published_with_pending_rows_and_no_generations(wor
     card = hub.sources["README.md"].read_text()
     assert "0 of 1 input files fully labelled, 1 more partially" in card
     assert "| `pending` |" in card
+    assert "config_name: generations" not in card  # no generation file yet: no empty config
+    assert "0 unique texts" not in card
+    assert "generations are published with each completed input file" in card
+    viewer = pq.read_table(store.path(f"publish/{WIKI}/viewer/{SENTENCES}"))
+    assert "pending" not in viewer.column("label").to_pylist()
+    assert viewer.num_rows == 6 + 1  # six answers and the unsplit sentence
     assert "dataset_status: in_progress" in card
     done = {r["path"] for r in store.read_jsonl(f"published/{WIKI}.jsonl")}
     assert f"labels/{SENTENCES}" not in done  # stays open until the file is complete

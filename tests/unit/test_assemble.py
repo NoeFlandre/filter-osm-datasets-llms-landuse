@@ -99,10 +99,7 @@ def test_unresolved_texts_are_pending_when_the_file_is_published_partially():
     assert {r["decision"] for r in rows} == {"yes", "pending", "skipped_unsplit"}
 
 
-def test_partial_build_shows_pending_in_the_labels_and_the_viewer(tmp_path):
-    rs = refs()
-    shas = [r.text_sha256 for r in rs if not r.unsplit]
-    resolved = {sha: Resolved("no", "exact", None) for sha in shas[:5]}
+def _partial(tmp_path, resolved):
     build_labels(
         WEBSITE,
         "polygons/x.parquet",
@@ -112,6 +109,31 @@ def test_partial_build_shows_pending_in_the_labels_and_the_viewer(tmp_path):
         out=tmp_path,
         allow_pending=True,
     )
+
+
+def test_partial_build_keeps_pending_in_labels_but_not_in_the_viewer(tmp_path):
+    rs = refs()
+    shas = [r.text_sha256 for r in rs if not r.unsplit]
+    _partial(tmp_path, {sha: Resolved("no", "exact", None) for sha in shas[:5]})
+    labels = pq.read_table(tmp_path / "labels" / "polygons" / "x.parquet").to_pylist()
     viewer = pq.read_table(tmp_path / "viewer" / "polygons" / "x.parquet").to_pylist()
-    assert "pending" in {r["label"] for r in viewer}
+    assert "pending" in {r["decision"] for r in labels}
+    assert {r["label"] for r in viewer} <= {"no", "skipped_unsplit"}
     assert "no" in {r["label"] for r in viewer}
+    assert len(viewer) == sum(r["decision"] != "pending" for r in labels) < len(labels)
+
+
+def test_a_file_without_viewer_rows_gets_no_viewer_file_and_loses_a_stale_one(tmp_path):
+    rs = refs()
+    shas = [r.text_sha256 for r in rs if not r.unsplit]
+    viewer = tmp_path / "viewer" / "polygons" / "x.parquet"
+    _partial(tmp_path, {shas[0]: Resolved("no", "exact", None)})
+    assert viewer.exists()
+    # same file rebuilt with nothing resolved and nothing skipped: the stale viewer goes
+    only_split = [r for r in rs if not r.unsplit]
+    from landuse_filter.application.assemble import _write_viewer
+
+    rows = label_rows(only_split, {}, "fp", "rev", allow_pending=True)
+    _write_viewer(tmp_path, "polygons/x.parquet", only_split, rows)
+    assert not viewer.exists()
+    _write_viewer(tmp_path, "polygons/x.parquet", only_split, rows)  # idempotent
