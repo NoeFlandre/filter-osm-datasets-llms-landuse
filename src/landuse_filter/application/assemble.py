@@ -126,7 +126,12 @@ def labels_table(dataset: str, rows: list[dict]) -> pa.Table:
 
 
 def viewer_table(refs: list[SentenceRef], rows: list[dict], region: str) -> pa.Table:
-    """The sentence next to its label: a plain table for the dataset viewer."""
+    """The sentence next to its label: a plain table for the dataset viewer.
+
+    Only sentences with a model answer or deliberately skipped: ``pending`` rows stay in
+    ``labels/`` and never reach the viewer."""
+    kept = [i for i, row in enumerate(rows) if row["decision"] != PENDING]
+    refs, rows = [refs[i] for i in kept], [rows[i] for i in kept]
     return pa.table(
         {
             "sentence": pa.array([r.text for r in refs], pa.large_string()),
@@ -138,8 +143,14 @@ def viewer_table(refs: list[SentenceRef], rows: list[dict], region: str) -> pa.T
 
 
 def _write_viewer(out: Path, input_path: str, refs: list[SentenceRef], rows: list[dict]) -> None:
+    """Write the viewer table; a file with no row to show gets none (the Hub viewer fails on
+    zero-row files), and a stale one from an earlier build is removed."""
     table = viewer_table(refs, rows, Path(input_path).stem)
-    write_atomic(out / "viewer" / input_path, table_bytes(table))
+    target = out / "viewer" / input_path
+    if table.num_rows:
+        write_atomic(target, table_bytes(table))
+    else:
+        target.unlink(missing_ok=True)
 
 
 def build_labels(
@@ -166,7 +177,8 @@ def build_labels(
 
 
 def build_viewer(dataset: str, input_path: str, local: Path, *, resolved: Lookup, out: Path) -> int:
-    """Write only ``out/viewer/<input_path>`` (files whose labels are already published)."""
+    """Write only ``out/viewer/<input_path>`` (files whose labels are already published);
+    returns the number of input sentences, not of viewer rows."""
     refs = list(SPECS[dataset].source.read(local, input_path))
     rows = label_rows(refs, resolved, "", "")
     _write_viewer(out, input_path, refs, rows)

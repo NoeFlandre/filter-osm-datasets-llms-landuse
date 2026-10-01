@@ -1,3 +1,5 @@
+import contextlib
+
 import pyarrow as pa
 import pyarrow.parquet as pq
 
@@ -120,3 +122,33 @@ def test_totals_merge_cells_and_sum_located_rows():
     totals = ps.totals(records)
     assert totals.cells == {"c1": (3, 1), "c2": (0, 1)}
     assert (totals.labelled, totals.located) == (7, 5)
+
+
+def test_compact_jsonl_keeps_the_last_line_per_key_only_when_it_pays(tmp_path):
+    store = WorkStore(tmp_path)
+    store.append_jsonl("l.jsonl", [{"path": "a", "n": 1}, {"path": "a", "n": 2}])
+    assert store.compact_jsonl("l.jsonl") == [{"path": "a", "n": 2}]
+    assert len(store.read_jsonl("l.jsonl")) == 2  # not worth a rewrite yet
+    store.append_jsonl("l.jsonl", [{"path": "a", "n": i} for i in range(300)])
+    assert store.compact_jsonl("l.jsonl") == [{"path": "a", "n": 299}]
+    assert store.read_jsonl("l.jsonl") == [{"path": "a", "n": 299}]
+
+
+def test_records_are_appended_in_chunks_so_a_stopped_job_keeps_them(tmp_path, monkeypatch):
+    monkeypatch.setattr(ps, "RECORD_FLUSH", 2)
+    store = WorkStore(tmp_path / "w")
+    paths = []
+    for i in range(5):
+        labels_file(tmp_path, f"f{i}.parquet", [("yes", None)])
+        paths.append(f"labels/f{i}.parquet")
+    seen = []
+
+    def opener(p):
+        if p.endswith("f3.parquet"):
+            raise KeyboardInterrupt  # stopped while counting the fourth file
+        return tmp_path / p.split("/")[-1]
+
+    with contextlib.suppress(KeyboardInterrupt):
+        ps.complete(store, "d", set(paths), opener, on_progress=lambda: seen.append(1))
+    assert len(store.read_jsonl(ps.ledger("d"))) == 2  # the first chunk survived
+    assert seen == [1]

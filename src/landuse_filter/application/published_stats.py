@@ -25,6 +25,9 @@ Opener = Callable[[str], Source]  # repo path -> local file or Hub file object
 Locator = Callable[[str, Source], Located]  # labels path, its source -> where the rows are
 
 
+RECORD_FLUSH = 25  # files counted per ledger append
+
+
 @dataclass(frozen=True)
 class FileStats:
     """Counts of one published file; ``to_json``/``from_json`` are the ledger line format.
@@ -131,13 +134,16 @@ def complete(
     locate: Locator | None = None,
     *,
     refresh: set[str] | frozenset[str] = frozenset(),
+    on_progress: Callable[[], None] | None = None,
 ) -> list[FileStats]:
     """Records for every published labels/generations file, counting any that is missing.
 
     With ``locate``, a labels record without its map cells is counted again; paths in
-    ``refresh`` (just re-uploaded) are counted again whatever the ledger holds.
+    ``refresh`` (just re-uploaded) are counted again whatever the ledger holds. Records are
+    appended every :data:`RECORD_FLUSH` files (then ``on_progress`` runs), so a job stopped
+    midway keeps what it counted; superseded ledger lines are compacted away.
     """
-    have = {r["path"]: FileStats.from_json(r) for r in store.read_jsonl(ledger(dataset))}
+    have = {r["path"]: FileStats.from_json(r) for r in store.compact_jsonl(ledger(dataset))}
     wanted = sorted(p for p in published if p.startswith(("labels/", "generations/")))
     missing = [
         p
@@ -146,10 +152,12 @@ def complete(
         or p in refresh
         or (locate and p.startswith("labels/") and have[p].cells is None)
     ]
-    if missing:
-        fresh = [file_stats(p, opener(p), locate) for p in missing]
+    for start in range(0, len(missing), RECORD_FLUSH):
+        fresh = [file_stats(p, opener(p), locate) for p in missing[start : start + RECORD_FLUSH]]
         store.append_jsonl(ledger(dataset), [r.to_json() for r in fresh])
         have.update({r.path: r for r in fresh})
+        if on_progress:
+            on_progress()
     return [have[p] for p in wanted]
 
 

@@ -40,7 +40,7 @@ usable answer. Reasons:
 
 ## Tables
 
-* `viewer/<input path>.parquet` (the default view): `sentence`, `label`, `language` and `region` (the input file), nothing else.
+* `viewer/<input path>.parquet` (the default view): `sentence`, `label`, `language` and `region` (the input file), nothing else. It holds only sentences with a model answer (`yes`, `no`, `failed`) or skipped (`skipped_unsplit`).
 * `labels/<input path>.parquet`: one row per sentence. Join keys (description_identity, tag_key, sentence_index), `text_sha256`, `decision`, `parse_mode`, `failure_reason`, `generation_id`.
 * `generations/<fingerprint>/*.parquet`: one row per **unique** text: raw output including the reasoning, token counts, finish reason, speculative-decoding statistics, GPU, site, job and code commit. Identical texts are generated once and share a `generation_id`.
 
