@@ -118,3 +118,9 @@ def test_tables_section_explains_pending_rows_only_for_partial_publications():
     )
     assert note in card._tables_section(replace(BASE, partial_files=1))
     assert "pending" not in card._tables_section(BASE)
+
+
+def test_intro_passes_the_status_to_the_texts_clause():
+    base = replace(BASE, unique_texts=5)
+    assert "5 unique texts sent to the model." in card._intro(base, "complete", 1)
+    assert "published so far" in card._intro(base, "in_progress", 1)
