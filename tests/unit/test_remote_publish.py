@@ -29,7 +29,11 @@ def test_publish_job_restores_index_and_parts_from_the_bucket(tmp_path, monkeypa
         remote, WorkStore(tmp_path / "publish-node"), WEBSITE, "rev", config.GENERATION_FP, hub=hub
     )
     assert report.labelled_files == 1
-    assert "labels/polygons/a.parquet" in [p for batch in hub.uploads for p in batch]
+    uploaded = [p for batch in hub.uploads for p in batch]
+    assert "labels/polygons/a.parquet" in uploaded
+    # the parts were indexed and dropped, then fetched again for the generations that ship
+    assert any(p.startswith("generations/") for p in uploaded)
+    assert remote.ls(f"index/resolve-{config.GENERATION_FP}.sqlite")
     assert remote.ls(f"published/{WEBSITE}.jsonl")
 
 
@@ -184,7 +188,7 @@ def test_a_stopped_publish_job_still_saves_the_ledgers_to_the_bucket(tmp_path, m
     remote.put([(planning.path(f"index/{WEBSITE}.sqlite"), f"index/{WEBSITE}.sqlite")])
     for p in planning.part_paths(config.GENERATION_FP):
         remote.put([(p, str(p.relative_to(planning.root)))])
-    calls = iter([None, "signal SIGTERM"])  # one mirror batch, then the stop
+    calls = iter([None, None, "signal SIGTERM"])  # one restore batch, one mirror batch, the stop
     report = remote_publish.run_publish(
         remote,
         WorkStore(tmp_path / "publish-node"),

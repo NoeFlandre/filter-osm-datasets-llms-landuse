@@ -20,6 +20,7 @@ import hashlib
 import logging
 import math
 import sqlite3
+import time
 from collections import Counter
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -47,6 +48,7 @@ from landuse_filter.domain.sentences import SentenceRef
 
 PARTIAL_STEP = 0.01  # share of a file's sentences that must be newly labelled to refresh it
 PARTIAL_FLUSH = 100  # partial files uploaded (and recorded) per commit while building
+FLUSH_SECONDS = 600.0  # ... or whatever is ready once this long passed since the last commit
 MIRROR_WORKERS = 4  # parallel downloads while mirroring the input repo
 
 log = logging.getLogger(__name__)
@@ -128,12 +130,16 @@ class _PartialSink:
         self.uploaded: dict[str, Path] = {}
         self.unrefreshed: dict[str, Path] = {}  # uploaded, not yet counted into the card
         self.refresh_card: Callable[[dict[str, Path]], None] | None = None
+        self.last_flush = time.monotonic()
 
     def add(self, files: list[tuple[Path, str]], known: int) -> None:
         self.pending += files
         labels = files[0]
         self.resolved[labels[1]] = known
-        if len(self.pending) >= PARTIAL_FLUSH:
+        if (
+            len(self.pending) >= PARTIAL_FLUSH
+            or time.monotonic() - self.last_flush >= FLUSH_SECONDS
+        ):
             self.flush()
 
     def flush(self) -> None:
@@ -156,6 +162,7 @@ class _PartialSink:
                 self.on_progress()  # e.g. save the ledger off the node that may be stopped
             self._refresh()
         self.pending = []
+        self.last_flush = time.monotonic()
 
     def _refresh(self) -> None:
         """Bring the card up to date with what is on the Hub; a failure must not fail the job
@@ -191,7 +198,7 @@ class _Run:
     stop: _Stop
 
 
-def publish(
+def publish(  # noqa: PLR0913
     store: WorkStore,
     dataset: str,
     revision: str,
@@ -200,8 +207,12 @@ def publish(
     on_progress: Callable[[], None] | None = None,
     hub: Hub | None = None,
     should_stop: Callable[[], str | None] = lambda: None,
+    resolved: ResolutionIndex | None = None,
+    fetch_parts: Callable[[set[str]], None] | None = None,
 ) -> PublishReport:
-    """Publish what is new. ``should_stop`` returns a reason once the run must wind down
+    """Publish what is new. ``resolved`` is a ready resolution index (a bucket snapshot) whose
+    parts are not on the store: ``fetch_parts`` then brings the ones holding the generations that
+    ship with complete files. ``should_stop`` returns a reason once the run must wind down
     (signal, deadline): the current file is finished, then the partial sink is flushed, the card
     refreshed and the ledgers saved as in a normal end, and the report says why it stopped."""
     run = _prepare(
@@ -212,11 +223,14 @@ def publish(
         dry_run=dry_run,
         on_progress=on_progress,
         stop=_Stop(should_stop),
+        resolved=resolved,
     )
     _card_from_ledgers(run)
     new, new_shas = _build_files(run)
     new += _missing_viewers(run, resolved=run.ctx.resolved, out=run.ctx.out)
-    new += _generation_files(run, new_shas)  # ships with the complete files already built
+    new += _generation_files(
+        run, new_shas, fetch_parts
+    )  # ships with the complete files already built
     return _finish(run, new)
 
 
@@ -256,7 +270,7 @@ def refresh_card_only(
     return PublishReport(dataset, labelled, len(total), 0, decisions, len(partial))
 
 
-def _prepare(
+def _prepare(  # noqa: PLR0913
     store: WorkStore,
     dataset: str,
     revision: str,
@@ -265,6 +279,7 @@ def _prepare(
     dry_run: bool,
     on_progress: Callable[[], None] | None,
     stop: _Stop,
+    resolved: ResolutionIndex | None = None,
 ) -> _Run:
     repo = output_repo(dataset)
     fp = config.GENERATION_FP
@@ -282,8 +297,9 @@ def _prepare(
             on_progress=on_progress,
             should_stop=stop,
         )
-    resolved = ResolutionIndex(store.path(f"index/resolve-{fp}.sqlite"))
-    resolved.build(canonical_generations(store, fp))
+    if resolved is None:
+        resolved = ResolutionIndex(store.path(f"index/resolve-{fp}.sqlite"))
+        resolved.build(canonical_generations(store, fp))
     db = sqlite3.connect(store.path(f"index/{dataset}.sqlite"))
     indexed = db.execute("SELECT idx, path FROM files WHERE done = 1 ORDER BY idx").fetchall()
     files = [p for _, p in indexed]
@@ -362,10 +378,14 @@ def _tables(out: Path, path: str) -> list[tuple[Path, str]]:
     return files
 
 
-def _generation_files(run: _Run, new_shas: set[str]) -> list[tuple[Path, str]]:
+def _generation_files(
+    run: _Run, new_shas: set[str], fetch_parts: Callable[[set[str]], None] | None = None
+) -> list[tuple[Path, str]]:
     """The generations shipping with this run's complete files, as one numbered batch."""
     if not new_shas:
         return []
+    if fetch_parts is not None:
+        fetch_parts(set(run.ctx.resolved.parts_of(new_shas).values()))
     fp = run.ctx.fp
     batch = len(list(run.store.read_jsonl(f"published/{run.dataset}.jsonl")))
     gen_dir = run.store.path(f"publish/{run.dataset}-gen-{batch:05d}")

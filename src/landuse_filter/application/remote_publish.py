@@ -8,6 +8,7 @@ from landuse_filter.adapters.store import WorkStore
 from landuse_filter.application.publish import PublishReport, publish, refresh_card_only
 from landuse_filter.application.publish_loop import status_path
 from landuse_filter.application.remote_plan import restore_index
+from landuse_filter.application.resolution_sync import fetch_parts, restore_resolution
 from landuse_filter.application.sync import fetch
 from landuse_filter.domain.publish_loop import PublishStatus
 
@@ -22,14 +23,17 @@ def run_publish(
     hub: Hub | None = None,
     should_stop: Callable[[], str | None] = lambda: None,
 ) -> PublishReport:
-    """Restore the planner index and all result parts, then publish incrementally.
+    """Restore the planner index and the resolution snapshot (reading only the result parts it
+    has not seen, ADR-0026), then publish incrementally.
 
     ``published/<dataset>.jsonl`` is round-tripped through the bucket so a later job
     only uploads what is new.
     """
     if not restore_index(remote, scratch, dataset):
         raise FileNotFoundError(f"no planner index for {dataset} in the bucket; run planning first")
-    fetch(remote, scratch, [p for p in remote.ls(f"parts/{fp}/") if p.endswith(".parquet")])
+    resolved = restore_resolution(
+        remote, scratch, fp, should_stop=lambda: should_stop() is not None
+    )
     fetch(remote, scratch, [g for g in remote.ls("gates/admission/") if g.endswith(".json")])
     ledgers = [
         f"published/{dataset}.jsonl",
@@ -46,7 +50,14 @@ def run_publish(
 
     try:
         report = publish(
-            scratch, dataset, revision, on_progress=save, hub=hub, should_stop=should_stop
+            scratch,
+            dataset,
+            revision,
+            on_progress=save,
+            hub=hub,
+            should_stop=should_stop,
+            resolved=resolved,
+            fetch_parts=lambda keys: fetch_parts(remote, scratch, fp, keys),
         )
     finally:
         save()  # whatever happened, the ledgers and the card marker leave the node
