@@ -4,20 +4,19 @@ Status: accepted (2026-10-01)
 
 ## Context
 
-A job receives chunks sized to profile speed x (walltime - setup) x 1.2. The measured median
-useful fraction (generation time / walltime) is only about 0.5: jobs finish early, exit, and the
-GPU has to be re-acquired. Work is saved per text in manifests, and OAR sends SIGUSR2
+A job receives chunks with a size of profile speed x (walltime - setup) x 1.2. The measured median
+useful fraction (generation time / walltime) is only approximately 0.5. Jobs finish early and exit.
+Then the project must get the GPU again. The manifests save the work for each text. OAR sends SIGUSR2
 (`--checkpoint 300`) 5 minutes before the walltime ends.
 
-## Verified behaviour (tests)
+## Verified behavior (tests)
 
-- Node: `node_main.Stop` handles SIGTERM, SIGUSR2 and SIGINT; `Runner` then stops admitting,
-  cancels in-flight requests, flushes completed texts as a part, `on_part` uploads the part and
-  its manifest, the job summary is written and the process exits 0. A chunk is listed in
-  `chunks_done` only if every text has a part (`test_node.py`, with real signals). No node
-  change was needed.
-- Controller: a chunk is complete only when `done_count >= size`; a chunk stopped part way stays
-  in `pending()` and is assigned again (`test_controller_parts.py`).
+- Node: `node_main.Stop` handles SIGTERM, SIGUSR2 and SIGINT. Then `Runner` stops the admission of new work,
+  cancels the requests in progress and flushes the completed texts as a part. `on_part` uploads the part and
+  its manifest. The node writes the job summary and the process exits with code 0. A chunk is in
+  `chunks_done` only if each text has a part (`test_node.py`, with real signals). The node needed no change.
+- Controller: a chunk is complete only when `done_count >= size`. A chunk that stopped part way stays
+  in `pending()` and the controller assigns it again (`test_controller_parts.py`).
 
 ## Decision
 
@@ -26,10 +25,10 @@ GPU has to be re-acquired. Work is saved per text in manifests, and OAR sends SI
 
 ## Reverting
 
-Leave the option unset: 1.2, the previous behaviour.
+Do not set the option. The value is then 1.2, the previous behavior.
 
 ## Consequences
 
-Jobs hold more chunks than they finish, so a chunk can be reserved for a whole job although only
-partly processed; the job's stop returns it to the pool. Progress per job becomes walltime-bound
-instead of estimate-bound.
+Jobs hold more chunks than they finish. Thus a job can reserve a chunk for the whole job although it processes the chunk only in part.
+When the job stops, the chunk returns to the pool. The progress of each job depends on the walltime,
+not on the estimate.

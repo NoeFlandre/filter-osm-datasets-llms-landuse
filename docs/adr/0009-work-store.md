@@ -2,6 +2,15 @@
 
 **Status:** accepted · 2026-09-28 (revised: bucket mode replaces site spools)
 
-**Context.** The laptop SSD is scarce and site homes are quota-limited and not backed up; generations for the wiki and website datasets reach tens of GB.
-**Decision.** The private bucket `NoeFlandre/landuse-filter-work` holds chunk inputs, result parts (named by the sha256 of their bytes) plus a small manifest per part (its text hashes), planner index checkpoints, plan lines, job summaries, gates and profiles. Nodes download inputs to node-local scratch and upload each part and manifest as they flush, using a fine-grained token the owner placed at `~/luf/hf_token` (mode 600). The controller pulls only manifests and summaries; its local tree holds the ledger and small metadata. Planning and publishing run as CPU jobs on node scratch.
-**Consequences.** Nothing bulky lives on the laptop or in site homes; corruption is detected by re-hashing; duplicates are harmless. Site spools (`~/luf/work`) only carry assignment files and job summaries; the older spool transport (rsync of chunks and parts through site homes) was removed in #43. Gates download a namespace's parts to a temporary directory and delete it afterwards.
+**Context.** The laptop SSD is scarce. The site homes have quotas and no backup. The generations for the wiki and website datasets reach tens of GB.
+**Decision.** The private bucket `NoeFlandre/landuse-filter-work` holds these items:
+
+- chunk inputs
+- result parts (named by the sha256 of their bytes) and a small manifest for each part (its text hashes)
+- planner index checkpoints
+- plan lines
+- job summaries
+- gates and profiles
+
+The nodes download the inputs to node-local scratch. They upload each part and manifest when they flush. They use a fine-grained token that the owner put at `~/luf/hf_token` (mode 600). The controller pulls only the manifests and summaries. Its local tree holds the ledger and small metadata. Planning and publishing run as CPU jobs on node scratch.
+**Consequences.** No bulky data stays on the laptop or in the site homes. Re-hashing finds corruption. Duplicates do no harm. The site spools (`~/luf/work`) carry only assignment files and job summaries. The project removed the older spool transport (rsync of chunks and parts through site homes) in #43. The gates download the parts of a namespace to a temporary directory and delete it afterward.

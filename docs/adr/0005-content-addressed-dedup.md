@@ -2,5 +2,5 @@
 
 **Status:** accepted · 2026-09-28
 
-**Decision.** A unique sentence text (sha256 of its exact UTF-8 bytes) is generated once per `config_fingerprint` (model, draft, revisions, prompt, template kwargs, sampling, output-affecting engine args). Speed-only engine args are excluded so per-GPU profiles share results; the gate decides whether they are truly neutral (ADR-0006).
-**Consequences.** One canonical generation per text (smallest part id); a row's decision can come from a different GPU than a duplicate's would have (documented in debt).
+**Decision.** The project generates a unique sentence text (sha256 of its exact UTF-8 bytes) one time for each `config_fingerprint` (model, draft, revisions, prompt, template kwargs, sampling, engine arguments that change the output). The fingerprint excludes the engine arguments that change only the speed. Thus the GPU profiles share results. The gate decides if these arguments are really neutral (ADR-0006).
+**Consequences.** Each text has one canonical generation (the smallest part id). The decision of a row can come from a different GPU than the GPU that a duplicate would use. The [known weaknesses](../debt.md) page documents this.
