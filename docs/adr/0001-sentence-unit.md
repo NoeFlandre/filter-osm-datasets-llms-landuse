@@ -2,6 +2,6 @@
 
 **Status:** accepted · 2026-09-28
 
-**Context.** The benchmark classifies single sentences; the inputs ship sentences segmented upstream (SaT).
-**Decision.** Classify every upstream sentence as-is; never re-segment.
-**Consequences.** Results match the benchmark's task. Texts left unsplit upstream are handled by ADR-0003.
+**Context.** The benchmark classifies single sentences. The inputs contain sentences that an upstream tool (SaT) segmented.
+**Decision.** Classify each upstream sentence as it is. Never segment again.
+**Consequences.** The results match the task of the benchmark. ADR-0003 explains how the project handles texts that the upstream tool did not split.
