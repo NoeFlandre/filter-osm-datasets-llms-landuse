@@ -648,3 +648,16 @@ def test_publish_stopped_in_the_mirror_does_no_file_work(tmp_path, monkeypatch):
     assert report.stopped == "deadline"
     assert hub.uploads == []
     assert report.labelled_files == 0
+
+
+def test_ready_partial_files_are_committed_after_the_flush_interval(tmp_path, monkeypatch):
+    hub = fake_hub(tmp_path)
+    store = WorkStore(tmp_path / "work")
+    sink = pub._PartialSink(store, WEBSITE, "repo", hub, dry_run=False, on_progress=None)
+    labels = tmp_path / "labels.parquet"
+    labels.write_bytes(b"x")
+    sink.add([(labels, "labels/a.parquet")], 1)
+    assert hub.uploads == []  # far below PARTIAL_FLUSH, and just started
+    monkeypatch.setattr(pub, "FLUSH_SECONDS", 0.0)
+    sink.add([(labels, "labels/b.parquet")], 2)
+    assert hub.uploads == [["labels/a.parquet", "labels/b.parquet"]]

@@ -89,15 +89,27 @@ class ProgressIndex:
 
 
 class ResolutionIndex:
-    """Mapping-like: ``get(text_sha256)`` -> (decision, mode, failure) or None."""
+    """Mapping-like: ``get(text_sha256)`` -> (decision, mode, failure) or None.
+
+    Built either in one pass (:meth:`build`, first row per hash wins) or part by part
+    (:meth:`add_part`): each verdict then remembers the smallest part key that produced it, so the
+    outcome does not depend on the order parts are added in, and the index can travel through the
+    bucket as a snapshot that later jobs extend instead of re-reading every part.
+    """
 
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path)
         self.db.execute(
             "CREATE TABLE IF NOT EXISTS verdict "
-            "(sha TEXT PRIMARY KEY, decision TEXT, mode TEXT, failure TEXT)"
+            "(sha TEXT PRIMARY KEY, decision TEXT, mode TEXT, failure TEXT, part TEXT)"
         )
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(verdict)")}
+        if "part" not in columns:  # an index built before parts were tracked
+            self.db.execute("ALTER TABLE verdict ADD COLUMN part TEXT")
+        self.db.execute("CREATE TABLE IF NOT EXISTS parts (key TEXT PRIMARY KEY)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS meta (name TEXT PRIMARY KEY, value TEXT)")
+        self.db.commit()
 
     def build(self, rows: Iterator[dict]) -> int:
         """Insert canonical generations in order; the first row per hash wins."""
@@ -121,8 +133,43 @@ class ResolutionIndex:
 
     def _insert(self, batch: list[tuple]) -> int:
         return self.db.executemany(
-            "INSERT OR IGNORE INTO verdict VALUES (?, ?, ?, ?)", batch
+            "INSERT OR IGNORE INTO verdict (sha, decision, mode, failure) VALUES (?, ?, ?, ?)",
+            batch,
         ).rowcount
+
+    def add_part(
+        self, key: str, verdicts: Iterable[tuple[str, str, str | None, str | None]]
+    ) -> None:
+        """Record a part's ``(sha, decision, mode, failure)`` rows; the smallest part key wins."""
+        with self.db:
+            self.db.executemany(
+                "INSERT INTO verdict VALUES (?, ?, ?, ?, ?) ON CONFLICT(sha) DO UPDATE SET "
+                "decision = excluded.decision, mode = excluded.mode, failure = excluded.failure, "
+                "part = excluded.part WHERE excluded.part < verdict.part",
+                [(*v, key) for v in verdicts],
+            )
+            self.db.execute("INSERT OR IGNORE INTO parts VALUES (?)", (key,))
+
+    def parts(self) -> set[str]:
+        """Keys of the parts already added."""
+        return {k for (k,) in self.db.execute("SELECT key FROM parts")}
+
+    def parts_of(self, shas: Iterable[str]) -> dict[str, str]:
+        """sha -> key of the part holding its canonical generation (only parts-tracked rows)."""
+        found: dict[str, str] = {}
+        for sha in shas:
+            row = self.db.execute("SELECT part FROM verdict WHERE sha = ?", (sha,)).fetchone()
+            if row and row[0]:
+                found[sha] = row[0]
+        return found
+
+    def meta(self, name: str) -> str | None:
+        row = self.db.execute("SELECT value FROM meta WHERE name = ?", (name,)).fetchone()
+        return row[0] if row else None
+
+    def set_meta(self, name: str, value: str) -> None:
+        with self.db:
+            self.db.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (name, value))
 
     def get(self, sha: str) -> tuple[str, str | None, str | None] | None:
         return self.db.execute(
