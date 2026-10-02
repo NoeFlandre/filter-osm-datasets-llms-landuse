@@ -9,10 +9,11 @@
 | `landuse_filter.application` | Use cases: plan, run a node, controller cycle, gate, publish | domain, adapters |
 | `landuse_filter.cli` | `luf` commands: parse options, call a use case | everything |
 
-The layering is enforced by import-linter contracts and an AST test (`tests/architecture`).
+Import-linter contracts and an AST test (`tests/architecture`) enforce the layers.
 
-`adapters/frontend/` is not imported by the package: its stdlib-only scripts (the GPU inventory) are
-copied to a Grid'5000 frontend and run there, where the project is not installed.
+The package does not import `adapters/frontend/`. The project copies its scripts (the GPU inventory)
+to a Grid'5000 frontend and runs them there. The scripts use only stdlib
+because the project is not installed on the frontend.
 
 ## Data flow
 
@@ -46,25 +47,24 @@ flowchart LR
 
 | Name | Definition | Used for |
 |---|---|---|
-| `text_sha256` | sha256 of the exact sentence bytes | dedup: each unique text is generated once |
+| `text_sha256` | sha256 of the exact sentence bytes | dedup: the project generates each unique text one time |
 | `label_id` | sha256 of dataset + join keys | primary key of `labels/` |
 | `generation_id` | sha256 of `text_sha256` + fingerprint | primary key of `generations/` |
-| `config_fingerprint` | output-affecting config (model, draft, revisions, prompt, template kwargs, sampling, engine) | cache and namespace identity |
-| `serving_fingerprint` | full config, speed args included | what a gate approves |
+| `config_fingerprint` | the configuration that changes the output (model, draft, revisions, prompt, template kwargs, sampling, engine) | cache and namespace identity |
+| `serving_fingerprint` | the full configuration, with the speed arguments | what a gate approves |
 | namespace | `<fp>` (production), `<fp>-gpu-<key>` (admission), `<fp>-w<N>` (tuning) | keeps candidate results apart |
 
-A chunk id is the sha256 of the fingerprint plus its sorted text hashes. A part's
-name is the sha256 of its bytes.
+A chunk id is the sha256 of the fingerprint and its sorted text hashes. The name of a part is the sha256 of its bytes.
 
 ## Resumability
 
-| Failure | What happens |
+| Failure | Result |
 |---|---|
-| Job killed at walltime or preempted | Completed requests are already in flushed parts; the next job regenerates only the missing hashes. |
-| Controller killed mid-submission | The assignment is written before `oarsub`; the job is adopted by name on restart. |
-| Waiting job drifts late | The job is cancelled and the cluster backed off; its chunks return to the pool. |
-| Corrupt part | Detected by re-hashing and redone; a same-named rewrite repairs it. |
-| Planning job killed | It resumes from the index checkpoint in the bucket. |
+| The walltime ends a job, or the scheduler preempts a job. | Flushed parts already hold the completed requests. The next job generates only the missing hashes. |
+| The controller stops during a submission. | The controller writes the assignment before `oarsub`. After a restart, the controller adopts the job by name. |
+| A waiting job starts too late. | The controller cancels the job and backs off the cluster. The chunks of the job return to the pool. |
+| A part is corrupt. | The controller finds it when it hashes the part again and does the work again. A rewrite with the same name repairs the part. |
+| A planning job stops. | The job resumes from the index checkpoint in the bucket. |
 
-Each row is covered by tests in `tests/acceptance/features/resume.feature` and
+Tests cover each row in `tests/acceptance/features/resume.feature` and
 `tests/unit/test_controller.py`.

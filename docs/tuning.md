@@ -1,13 +1,13 @@
 # Speed tuning
 
-Goal: maximise sentences/s per GPU without degrading quality. Thinking stays on for every
-candidate. Every candidate configuration runs the full 25,500-item benchmark (namespace
-`<fp>-w<N>`) and is gated with `luf bench compare --namespace w<N>` against the published
-reference (margins: ADR-0006).
+Goal: get the maximum sentences/s for each GPU. Do not decrease the quality.
+Thinking stays on for each candidate. Each candidate configuration runs the full
+25,500-item benchmark (namespace `<fp>-w<N>`). Compare it with the published
+reference with `luf bench compare --namespace w<N>` (margins: ADR-0006).
 
 ## Concurrency (`max_running_requests`, "window")
 
-Calibration sweep on one A40 (Rennes abacus25, 300 sentences per level):
+Calibration sweep on one A40 (Rennes abacus25, 300 sentences for each level):
 
 | window | sentences/s |
 |---:|---:|
@@ -25,10 +25,10 @@ Gate results on the full benchmark (mixed A100-SXM4-40GB / A40 / L40S):
 | w128 | −0.0017 | −0.0047 (−0.0113) | −0.0021 | −0.09 pp | kn −0.050018 | **fail** |
 | w96 on H100 NVL / A100-PCIe / RTX A5000 / L4 (`w96b`) | −0.0019 | −0.0059 (−0.0126) | −0.0010 | −0.27 pp | tg −0.037 | pass |
 
-w128 fails only the per-language guard (limit 0.05), by 0.00002 on 300 items in one
-language. The guard is not loosened. **Production uses window 96** for the A100-SXM4-40GB,
-A40 and L40S profiles (measured: L40S 5.5 sentences/s at 96 against 3.7 at 16).
-Other GPU types stay at 16 until a gated run covers them.
+w128 fails only the per-language guard (limit 0.05). It fails by 0.00002 on 300 items in one
+language. The project does not loosen the guard. **Production uses window 96** for the
+A100-SXM4-40GB, A40 and L40S profiles (measured: L40S 5.5 sentences/s at 96 and 3.7 at 16).
+The other GPU types stay at 16 until a gated run covers them.
 
 ## Other candidates
 
@@ -37,9 +37,9 @@ Other GPU types stay at 16 until a gated run covers them.
 | Radix cache ON | not run |
 | `mem_fraction_static`, `cuda_graph_max_bs`, `chunked_prefill_size` | not run |
 | Length-aware ordering | not run |
-| `max_new_tokens` below 4096 | offline pre-screen: 3840 and 4000 pass, saving under 1 %; budget stays 4096 ([benchmark](benchmark.md)) |
+| `max_new_tokens` below 4096 | offline pre-screen: 3840 and 4000 pass and save less than 1 %. The budget stays 4096 ([benchmark](benchmark.md)) |
 | Multi-engine per node / data parallel | not run |
-| SGLang / FlashInfer bumps | not run (would need re-gating) |
+| SGLang / FlashInfer bumps | not run (they need a new gate run) |
 
 ## Reproduce
 

@@ -1,9 +1,9 @@
 # filter-osm-datasets-llms-landuse
 
-Labels **every sentence** of three OpenStreetMap polygon datasets as land-use
-relevant (`yes`) or not (`no`) with **LiquidAI LFM2.5-2.6B + its DSpark draft**
-(SGLang, BF16, greedy, thinking mode). It runs as short, resumable jobs across
-Grid'5000 and publishes the results on the Hugging Face Hub.
+This project labels **every sentence** of three OpenStreetMap polygon datasets. Each label is
+land-use relevant (`yes`) or not (`no`). The model is **LiquidAI LFM2.5-2.6B + its DSpark draft**
+(SGLang, BF16, greedy, thinking mode). The project runs short jobs that you can resume.
+The jobs run on Grid'5000. The project publishes the results on the Hugging Face Hub.
 
 | Input | Output |
 |---|---|
@@ -11,19 +11,22 @@ Grid'5000 and publishes the results on the Hugging Face Hub.
 | [`NoeFlandre/osm-polygon-wikidata-and-wikipedia`](https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-and-wikipedia) | [`…-wikidata-and-wikipedia-landuse`](https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-and-wikipedia-landuse) |
 | [`NoeFlandre/osm-polygon-website-tag`](https://huggingface.co/datasets/NoeFlandre/osm-polygon-website-tag) | [`…-website-tag-landuse`](https://huggingface.co/datasets/NoeFlandre/osm-polygon-website-tag-landuse) |
 
-Nothing is dropped. Each output mirrors its input and adds `labels/` (one row per
-sentence position: `yes`, `no`, `failed` or `skipped_unsplit`) and `generations/`
-(one row per unique sentence: the raw model output, token counts and provenance).
-Quality is tied to the [benchmark](https://huggingface.co/datasets/NoeFlandre/benchmark-llms-landuse-relevance)
-by a pre-registered non-inferiority gate, and each GPU type is admitted only after
-passing it. Plan and progress: [epic #1](https://github.com/NoeFlandre/filter-osm-datasets-llms-landuse/issues/1).
+The project removes no data. Each output copies its input and adds two tables:
+
+- `labels/` has one row for each sentence position. The decision is `yes`, `no`, `failed` or `skipped_unsplit`.
+- `generations/` has one row for each unique sentence. It has the raw model output, the token counts and the provenance.
+
+A pre-registered non-inferiority gate links the quality to the
+[benchmark](https://huggingface.co/datasets/NoeFlandre/benchmark-llms-landuse-relevance).
+The project admits a GPU type only after the GPU type passes the gate.
+For the plan and the progress, see [epic #1](https://github.com/NoeFlandre/filter-osm-datasets-llms-landuse/issues/1).
 
 ## Prerequisites
 
 - A Grid'5000 account, with SSH aliases for the sites (`ProxyJump access.grid5000.fr`).
 - A Hugging Face login on the controller machine (`hf auth login`).
-- On every site, a fine-grained HF token at `~/luf/hf_token` (mode 600), placed by the
-  owner, with write access to the three output repos and the private bucket
+- On each site, a fine-grained HF token at `~/luf/hf_token` (mode 600). The owner puts the token there.
+  The token has write access to the three output repositories and to the private bucket
   `NoeFlandre/landuse-filter-work`.
 - [uv](https://docs.astral.sh/uv/).
 
@@ -57,8 +60,8 @@ luf status                       # progress
 luf g5k pause [--cancel]         # stop submitting (optionally cancel our jobs)
 ```
 
-Every step can be interrupted and re-run: work is content-addressed, and completed
-results are never redone.
+You can stop each step and run it again. The work is content-addressed.
+The project does not repeat completed results.
 
 ## Development
 
@@ -67,5 +70,6 @@ make install    # env + pre-commit hook (ruff format/check on staged files)
 make gauntlet   # ruff, ty, unit/property/Gherkin/architecture tests, CRAP, mutation, docs
 ```
 
-Docs: https://noeflandre.github.io/filter-osm-datasets-llms-landuse/ (MkDocs sources in `docs/`): architecture, output schema, benchmark parity, sizing,
-Grid'5000 operations, ADRs, known weaknesses.
+Documentation: https://noeflandre.github.io/filter-osm-datasets-llms-landuse/ (the MkDocs sources are in `docs/`).
+It has the architecture, the output schema, the benchmark parity, the sizing, the
+Grid'5000 operations, the ADRs, the known weaknesses and the [glossary](docs/glossary.md).
