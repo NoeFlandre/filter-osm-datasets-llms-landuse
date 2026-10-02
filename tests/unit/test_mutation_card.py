@@ -82,10 +82,16 @@ def test_generations_config_only_exists_once_there_are_generations():
 
 
 def test_texts_clause_depends_on_published_generations():
-    assert card._texts_clause(BASE) == "generations are published with each completed input file"
-    assert card._texts_clause(replace(BASE, unique_texts=1234)) == (
-        "1,234 unique texts sent to the model"
-    )
+    zero = "generations are published with each completed input file"
+    assert card._texts_clause(BASE, "in_progress") == zero
+    assert card._texts_clause(BASE, "complete") == zero
+    many = replace(BASE, unique_texts=1234)
+    assert card._texts_clause(many, "complete") == "1,234 unique texts sent to the model"
+    partial = card._texts_clause(many, "in_progress")
+    assert partial.startswith("1,234 unique texts have their full model outputs published so far")
+    assert "first complete file" in partial
+    assert "`labels/`" in partial
+    assert "sent to the model" not in partial
 
 
 def test_intro_shows_a_seven_character_dataset_revision():

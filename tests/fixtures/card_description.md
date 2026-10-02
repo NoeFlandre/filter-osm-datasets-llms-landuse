@@ -18,7 +18,7 @@ configs:
 
 A land-use / land-cover relevance label for every sentence of [`NoeFlandre/osm-polygon-description-tag`](https://huggingface.co/datasets/NoeFlandre/osm-polygon-description-tag) (revision `b4706eb`). The input is mirrored here unchanged; labels and model outputs are separate tables that join back to it.
 
-**In progress: 3 of 386 input files labelled, 20 rows, 12 unique texts sent to the model.**
+**In progress: 3 of 386 input files labelled, 20 rows, 12 unique texts have their full model outputs published so far (outputs ship with the first complete file that contains the text; labels for the other sentences are in `labels/`).**
 
 | `decision` | Rows | Share | Meaning |
 |---|---:|---:|---|
