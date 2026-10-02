@@ -5,6 +5,7 @@ theme:
   name: material
 nav:
   - Overview: index.md
+  - Glossary: glossary.md
   - Architecture: architecture.md
   - Output schema: schema.md
   - Benchmark parity: benchmark.md
