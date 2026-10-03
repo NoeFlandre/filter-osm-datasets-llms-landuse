@@ -135,9 +135,15 @@ configs:
 """
 
 
-def _texts_clause(f: CardFacts) -> str:
-    if f.unique_texts:
+def _texts_clause(f: CardFacts, status: str) -> str:
+    if f.unique_texts and status == "complete":
         return f"{f.unique_texts:,} unique texts sent to the model"
+    if f.unique_texts:
+        return (
+            f"{f.unique_texts:,} unique texts have their full model outputs published so far "
+            "(outputs ship with the first complete file that contains the text; "
+            "labels for the other sentences are in `labels/`)"
+        )
     return "generations are published with each completed input file"
 
 
@@ -155,7 +161,7 @@ def _intro(f: CardFacts, status: str, total: int) -> str:
 
 A land-use / land-cover relevance label for every sentence of [`NoeFlandre/{f.dataset}`](https://huggingface.co/datasets/NoeFlandre/{f.dataset}) (revision `{f.revision[:7]}`). The input is mirrored here unchanged; labels and model outputs are separate tables that join back to it.
 
-**{status.replace("_", " ").capitalize()}: {_files_line(f)}, {total:,} rows, {_texts_clause(f)}.**
+**{status.replace("_", " ").capitalize()}: {_files_line(f)}, {total:,} rows, {_texts_clause(f, status)}.**
 
 | `decision` | Rows | Share | Meaning |
 |---|---:|---:|---|

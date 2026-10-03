@@ -71,7 +71,7 @@ def test_card_numbers_come_from_the_facts_and_percentages_are_exact():
     card = render_card(facts())
     assert "| `yes` | 10 | 50.0% |" in card
     assert "| **total** | **20** |" in card
-    assert "12 unique texts" in card
+    assert "12 unique texts have their full model outputs published so far" in card
 
 
 def test_card_lists_only_gpu_types_that_generated_rows():
