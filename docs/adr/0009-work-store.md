@@ -14,3 +14,9 @@
 
 The nodes download the inputs to node-local scratch. They upload each part and manifest when they flush. They use a fine-grained token that the owner put at `~/luf/hf_token` (mode 600). The controller pulls only the manifests and summaries. Its local tree holds the ledger and small metadata. Planning and publishing run as CPU jobs on node scratch.
 **Consequences.** No bulky data stays on the laptop or in the site homes. Re-hashing finds corruption. Duplicates do no harm. The site spools (`~/luf/work`) carry only assignment files and job summaries. The project removed the older spool transport (rsync of chunks and parts through site homes) in #43. The gates download the parts of a namespace to a temporary directory and delete it afterward.
+
+The small append-only JSONL ledgers are flushed and fsynced after each append. A torn final
+record is removed before the next append; a complete final record without a newline is kept
+and separated from the new record. Readers and appenders fail closed on malformed complete
+records, reporting the path, line, and byte offset. Only a malformed unterminated final fragment
+is treated as an interrupted write; valid complete records before it remain readable.

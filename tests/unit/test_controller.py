@@ -7,7 +7,7 @@ import pytest
 from landuse_filter.adapters import g5k
 from landuse_filter.adapters.remote import DirRemote
 from landuse_filter.adapters.schema import CHUNK
-from landuse_filter.adapters.store import WorkStore
+from landuse_filter.adapters.store import CorruptJSONLError, WorkStore
 from landuse_filter.application import controller as ctl_mod
 from landuse_filter.application.assignment import CycleReport
 from landuse_filter.application.controller import Controller, Settings
@@ -187,6 +187,20 @@ def test_second_cycle_does_not_duplicate(world):
     assert all(len(a.chunks) for a in c.live())
     taken = [ch for a in c.live() for ch in a.chunks]
     assert len(taken) == len(set(taken))
+
+
+def test_cycle_fails_closed_when_a_corrupt_plan_row_hides_unfinished_work(world):
+    c, fake = world
+    c.store.append_jsonl(c.complete_log, [{"chunk_id": "c0"}, {"chunk_id": "c2"}])
+    plan = c.store.path(f"plans/benchmark/{c.fp}/chunks.jsonl")
+    content = plan.read_bytes()
+    marker = b'"chunk_id": "c1"'
+    plan.write_bytes(content.replace(marker, b'"chunk_id": "\xff1"', 1))
+
+    with pytest.raises(CorruptJSONLError, match="line 2"):
+        c.cycle(NOW)
+
+    assert fake.submitted == []
 
 
 def test_ended_jobs_release_their_chunks(world):
