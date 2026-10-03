@@ -86,6 +86,17 @@ def test_completed_chunks_are_forgotten_so_the_index_stays_bounded(tmp_path):
     assert store.read_jsonl("complete.jsonl") == [{"chunk_id": "c1"}]
 
 
+def test_completion_appended_after_a_torn_tail_does_not_get_retried(tmp_path):
+    store = WorkStore(tmp_path)
+    store.append_jsonl("plans/a/fp/chunks.jsonl", [{"chunk_id": "completed", "size": 1}])
+    store.path("complete.jsonl").write_bytes(b'{"chunk_id":')
+
+    store.append_jsonl("complete.jsonl", [{"chunk_id": "completed"}])
+
+    assert progress_for(store).pending() == []
+    assert store.read_jsonl("complete.jsonl") == [{"chunk_id": "completed"}]
+
+
 def test_a_corrupt_manifest_is_dropped_and_never_marked_seen(tmp_path):
     """Regression: an empty manifest left by an interrupted download made every controller cycle
     raise JSONDecodeError at ingest, so nothing was counted or submitted for an hour."""

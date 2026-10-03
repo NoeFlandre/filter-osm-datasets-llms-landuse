@@ -20,7 +20,7 @@ import os
 import threading
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -44,6 +44,42 @@ def table_bytes(table: pa.Table) -> bytes:
     sink = pa.BufferOutputStream()
     pq.write_table(table, sink, compression="zstd")
     return sink.getvalue().to_pybytes()
+
+
+def _last_line_start(file: BinaryIO, end: int) -> int:
+    """Find the byte offset after the last newline without reading the full ledger."""
+    position = end
+    while position:
+        start = max(0, position - 8192)
+        file.seek(start)
+        newline = file.read(position - start).rfind(b"\n")
+        if newline >= 0:
+            return start + newline + 1
+        position = start
+    return 0
+
+
+def _prepare_jsonl_append(file: BinaryIO) -> None:
+    """Drop a torn final record or separate a valid final record from the next append."""
+    file.seek(0, os.SEEK_END)
+    end = file.tell()
+    if end == 0:
+        return
+    file.seek(end - 1)
+    if file.read(1) == b"\n":
+        return
+
+    start = _last_line_start(file, end)
+    file.seek(start)
+    tail = file.read()
+    try:
+        json.loads(tail.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        file.seek(start)
+        file.truncate()
+    else:
+        file.seek(0, os.SEEK_END)
+        file.write(b"\n")
 
 
 class WorkStore:
@@ -76,9 +112,11 @@ class WorkStore:
     def append_jsonl(self, relative: str, rows: list[dict]) -> None:
         path = self.path(relative)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as f:
-            for row in rows:
-                f.write(json.dumps(row, sort_keys=True) + "\n")
+        payload = b"".join((json.dumps(row, sort_keys=True) + "\n").encode("utf-8") for row in rows)
+        with path.open("r+b" if path.exists() else "w+b") as f:
+            _prepare_jsonl_append(f)
+            f.seek(0, os.SEEK_END)
+            f.write(payload)
             f.flush()
             os.fsync(f.fileno())
 
@@ -99,11 +137,11 @@ class WorkStore:
         if not path.exists():
             return []
         rows = []
-        for line in path.read_text(encoding="utf-8").splitlines():
+        for line in path.read_bytes().split(b"\n"):
             try:
-                rows.append(json.loads(line))
-            except json.JSONDecodeError:
-                break  # a torn final line from a crash: everything before it is valid
+                rows.append(json.loads(line.decode("utf-8")))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue  # keep later complete records visible after a torn or corrupt line
         return rows
 
     # --- chunk inputs -------------------------------------------------------------
