@@ -34,7 +34,7 @@ from landuse_filter.domain.capacity import Cluster, free_gpus, oarsub_arguments
 from landuse_filter.domain.fingerprint import config_fingerprint, serving_fingerprint
 from landuse_filter.domain.gpu import Admission, gpu_key
 from landuse_filter.domain.launch_plan import Planned, by_site, plan_launches
-from landuse_filter.domain.policy import Window, allowed_window, is_daytime
+from landuse_filter.domain.policy import Window, allowed_window, immediate_window, is_daytime
 from landuse_filter.domain.policy_check import PER_JOB
 from landuse_filter.domain.prompting import PROMPT_SHA256
 from landuse_filter.domain.scheduling import (
@@ -87,6 +87,7 @@ class Settings:
     bucket: str = "NoeFlandre/landuse-filter-work"  # private HF Bucket: chunks, parts (ADR-0009)
     paused: bool = False
     submit_workers: int = 1  # sites submitted to in parallel (ADR-0020); 1 = in turn
+    immediate_in_night: bool = True  # also submit immediate-start jobs at night (ADR-0027)
     policy_check: str = PER_JOB  # "per-batch": one usage-policy check per site and cycle (ADR-0019)
 
 
@@ -327,8 +328,9 @@ class Controller:
         nodes = self._site_nodes(site)
         if nodes is None:
             return []
-        slots = ((self._cluster_slot(c, nodes, now, jobs), c) for c in usable)
-        return [(slot, c) for slot, c in slots if slot]
+        return [
+            (slot, c) for c in usable for slot in self._cluster_slots(c, nodes, now, jobs) if slot
+        ]
 
     def _site_nodes(self, site: str) -> dict | None:
         """The site's live node states, or ``None`` (logged) when they cannot be read."""
@@ -339,12 +341,28 @@ class Controller:
             self.log(f"{site}: status failed: {exc}")
             return None
 
-    def _cluster_slot(
+    def _cluster_slots(
         self, c: Cluster, nodes: dict, now: datetime, jobs: dict[str, list[g5k.Job]]
-    ) -> Slot | None:
+    ) -> list[Slot | None]:
+        """Night/weekend: an immediate-start slot (ADR-0027), then the queued night one."""
         if self.memory.backed_off(c, now):
-            return None
+            return []
         window = allowed_window(now, starts_now=True) if not c.production else None
+        quick = immediate_window(window) if self.settings.immediate_in_night else None
+        first = self._slot(c, nodes, now, jobs, quick) if quick else None
+        # With free GPUs taken by the immediate slot, the night slot may only queue.
+        return [first, self._slot(c, nodes, now, jobs, window, queue_only=first is not None)]
+
+    def _slot(
+        self,
+        c: Cluster,
+        nodes: dict,
+        now: datetime,
+        jobs: dict[str, list[g5k.Job]],
+        window: Window | None,
+        *,
+        queue_only: bool = False,
+    ) -> Slot | None:
         ladder, job_type = self.ladder_for(c, window, now)
         wall = ladder[0] if ladder else None
         besteffort = self.memory.besteffort_only(c)
@@ -356,11 +374,13 @@ class Controller:
             now=now.timestamp(),
             walltime_s=wall.total_seconds() if wall else 0.0,
         )
+        if window is not None and window.job_type is None and not is_daytime(now) and free <= 0:
+            return None  # an immediate-start night job never queues
         return slot_for(
             site=c.site,
             cluster=c.name,
             gpu=c.gpu,
-            free=free,
+            free=0 if queue_only else free,
             walltime=wall,
             job_type=job_type,
             sentences_per_second=profile_for(self.store, c.gpu).sentences_per_second,

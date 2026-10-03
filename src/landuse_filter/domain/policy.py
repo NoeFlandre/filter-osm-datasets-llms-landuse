@@ -78,3 +78,15 @@ def allowed_window(now: datetime, *, starts_now: bool) -> Window | None:
         # after 17:00 may cross 19:00. Either way 1 h never breaks the 19:00 rule.
         return Window(DAY_EXEMPT_MAX, None)
     return Window(next_day_start(now) - now, "night")
+
+
+def immediate_window(window: Window | None) -> Window | None:
+    """The quota-free immediate-start window inside a night/weekend ``window`` (ADR-0027).
+
+    A job without the ``night`` type and of <= 1 h that ends before the next working-day
+    09:00 breaks no rule outside daytime. ``None`` for a daytime or missing window (the
+    daytime window already is immediate-start).
+    """
+    if window is None or window.job_type is None:
+        return None
+    return Window(min(window.max_walltime, DAY_EXEMPT_MAX), None)

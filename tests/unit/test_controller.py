@@ -708,6 +708,7 @@ def _night_world(world, long=120):
     c, fake = world
     c.store.write_json("inventory.json", [{**GRES, "queues": ["default"]}])
     c.settings.night_walltime = timedelta(minutes=long)
+    c.settings.immediate_in_night = False
     c.settings.night_fallback_walltime = timedelta(minutes=30)
     return c, fake
 
@@ -1000,3 +1001,57 @@ def test_recent_besteffort_and_other_queues_are_left_alone(world):
     _age_besteffort(c, fake, queue="night", minutes=600)
     c.reconcile()
     assert not fake.cancelled
+
+
+# --- immediate-start jobs in the night window (ADR-0027) ------------------------------
+
+
+def _types(fake):
+    return ["night" if "night" in args else "now" for args in fake.submitted]
+
+
+def test_night_window_submits_immediate_jobs_on_free_gpus_without_night_type(world):
+    c, fake = _night_world(world)
+    c.settings.immediate_in_night = True
+    c.cycle(NOW)
+    assert fake.submitted
+    assert set(_types(fake)) == {"now"}
+    assert set(_minutes(fake)) <= {30, 60}
+    assert fake.policy_checks >= 2  # usagepolicycheck still runs for these jobs
+
+
+def test_night_window_flag_off_keeps_queued_night_jobs_only(world):
+    c, fake = _night_world(world)
+    c.settings.immediate_in_night = False
+    c.cycle(NOW)
+    assert set(_types(fake)) == {"night"}
+
+
+def test_night_window_without_free_gpu_has_no_immediate_slot(world):
+    c, _ = _night_world(world)
+    c.settings.immediate_in_night = True
+    (cluster,) = ctl_mod.load_clusters(c.store)
+    slots = c._cluster_slots(cluster, {}, NOW, {})
+    assert [s for s in slots if s and not s.queued] == []
+
+
+def test_day_window_has_no_extra_immediate_slot(world):
+    c, _ = _night_world(world)
+    c.settings.immediate_in_night = True
+    (cluster,) = ctl_mod.load_clusters(c.store)
+    slots = c._cluster_slots(cluster, {}, DAY, {})
+    assert slots[0] is None
+
+
+def test_run_command_immediate_in_night_defaults_on_and_can_be_disabled(monkeypatch, tmp_path):
+    from typer.testing import CliRunner
+
+    from landuse_filter.cli import g5k as cli
+
+    seen = []
+    monkeypatch.setattr(cli, "_controller", lambda work, s: seen.append(s))
+    monkeypatch.setattr(ctl_mod, "run_loop", lambda *a, **k: None)
+    base = ["run", "--datasets", "d", "--work", str(tmp_path)]
+    for extra in ([], ["--no-immediate-in-night"]):
+        assert CliRunner().invoke(cli.g5k_app, base + extra).exit_code == 0
+    assert [s.immediate_in_night for s in seen] == [True, False]

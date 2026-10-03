@@ -107,6 +107,11 @@ def g5k_run(
     night_max_queued_per_site: int | None = typer.Option(
         None, help="Waiting jobs per site at night/weekend (default: --max-queued-per-site)."
     ),
+    immediate_in_night: bool = typer.Option(
+        True,
+        help="At night/weekend also submit immediate-start jobs (no -t night, <= 1 h) "
+        "where GPUs are free now, besides the queued night jobs. See ADR-0027.",
+    ),
     window: int | None = typer.Option(
         None, help="Candidate concurrency (tuning); default: GPU profile."
     ),
@@ -135,6 +140,7 @@ def g5k_run(
         night_walltime=timedelta(minutes=night_walltime_minutes),
         night_fallback_walltime=timedelta(minutes=night_fallback_walltime_minutes),
         night_max_queued_per_site=night_max_queued_per_site,
+        immediate_in_night=immediate_in_night,
         besteffort=besteffort,
         stale_besteffort_wait=timedelta(minutes=stale_besteffort_minutes),
         gpu_models=[g for g in gpu_models.split(",") if g],
