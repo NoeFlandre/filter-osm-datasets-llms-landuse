@@ -46,6 +46,50 @@ def table_bytes(table: pa.Table) -> bytes:
     return sink.getvalue().to_pybytes()
 
 
+class CorruptJSONLError(ValueError):
+    """A newline-terminated JSONL record could not be decoded safely."""
+
+    def __init__(self, path: Path, line_number: int, byte_offset: int, detail: str) -> None:
+        self.path = path
+        self.line_number = line_number
+        self.byte_offset = byte_offset
+        super().__init__(f"{path}: {detail} at line {line_number}, byte offset {byte_offset}")
+
+
+def _jsonl_signature(path: Path) -> tuple[int, int, int, int, int]:
+    stat = path.stat()
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+
+
+def _iter_jsonl_records(file: BinaryIO, path: Path) -> Iterator[dict]:
+    """Read complete records; only a malformed final fragment without LF may be torn."""
+    line_number = 1
+    byte_offset = 0
+    while raw := file.readline():
+        terminated = raw.endswith(b"\n")
+        content = raw[:-1] if terminated else raw
+        try:
+            line = content.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            if not terminated:
+                break
+            raise CorruptJSONLError(
+                path, line_number, byte_offset + exc.start, "invalid UTF-8"
+            ) from exc
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            if not terminated:
+                break
+            error_offset = byte_offset + len(line[: exc.pos].encode("utf-8"))
+            raise CorruptJSONLError(
+                path, line_number, error_offset, f"invalid JSON ({exc.msg})"
+            ) from exc
+        yield row
+        byte_offset += len(raw)
+        line_number += 1
+
+
 def _last_line_start(file: BinaryIO, end: int) -> int:
     """Find the byte offset after the last newline without reading the full ledger."""
     position = end
@@ -87,6 +131,7 @@ class WorkStore:
 
     def __init__(self, root: Path) -> None:
         self.root = root
+        self._validated_jsonl: dict[str, tuple[int, int, int, int, int]] = {}
 
     def path(self, relative: str) -> Path:
         return self.root / relative
@@ -113,12 +158,17 @@ class WorkStore:
         path = self.path(relative)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = b"".join((json.dumps(row, sort_keys=True) + "\n").encode("utf-8") for row in rows)
-        with path.open("r+b" if path.exists() else "w+b") as f:
+        existed = path.exists()
+        with path.open("r+b" if existed else "w+b") as f:
+            if existed and self._validated_jsonl.get(relative) != _jsonl_signature(path):
+                for _ in _iter_jsonl_records(f, path):
+                    pass
             _prepare_jsonl_append(f)
             f.seek(0, os.SEEK_END)
             f.write(payload)
             f.flush()
             os.fsync(f.fileno())
+        self._validated_jsonl[relative] = _jsonl_signature(path)
 
     def compact_jsonl(self, relative: str, key: str = "path") -> list[dict]:
         """Read a ledger; when superseded lines (same ``key``, last wins) pile up, rewrite it
@@ -136,12 +186,9 @@ class WorkStore:
         path = self.path(relative)
         if not path.exists():
             return []
-        rows = []
-        for line in path.read_bytes().split(b"\n"):
-            try:
-                rows.append(json.loads(line.decode("utf-8")))
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                continue  # keep later complete records visible after a torn or corrupt line
+        with path.open("rb") as f:
+            rows = list(_iter_jsonl_records(f, path))
+        self._validated_jsonl[relative] = _jsonl_signature(path)
         return rows
 
     # --- chunk inputs -------------------------------------------------------------

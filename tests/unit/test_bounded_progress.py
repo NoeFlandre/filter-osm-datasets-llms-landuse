@@ -1,9 +1,11 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from landuse_filter.adapters.indexes import ProgressIndex
 from landuse_filter.adapters.remote import DirRemote
-from landuse_filter.adapters.store import WorkStore
+from landuse_filter.adapters.store import CorruptJSONLError, WorkStore
 from landuse_filter.application.staging import Transport
 from landuse_filter.application.sync import fetch_manifests
 from landuse_filter.application.work_progress import WorkProgress
@@ -95,6 +97,27 @@ def test_completion_appended_after_a_torn_tail_does_not_get_retried(tmp_path):
 
     assert progress_for(store).pending() == []
     assert store.read_jsonl("complete.jsonl") == [{"chunk_id": "completed"}]
+
+
+def test_pending_fails_closed_when_a_corrupt_plan_row_hides_unfinished_work(tmp_path):
+    store = WorkStore(tmp_path)
+    plan = store.path("plans/a/fp/chunks.jsonl")
+    plan.parent.mkdir(parents=True)
+    plan.write_bytes(
+        b'{"chunk_id": "a", "size": 1}\n'
+        b'{"chunk_id": "b", "size": 1}\n'
+        b'{"chunk_id": "c", "size": 1}\n'
+    )
+    store.append_jsonl("complete.jsonl", [{"chunk_id": "a"}, {"chunk_id": "c"}])
+    content = plan.read_bytes()
+    plan.write_bytes(content.replace(b'"b"', b'"\xff"', 1))
+
+    with pytest.raises(CorruptJSONLError) as error:
+        progress_for(store).pending()
+
+    invalid_offset = content.index(b'"b"') + 1
+    assert str(error.value).startswith(f"{plan}:")
+    assert f"line 2, byte offset {invalid_offset}" in str(error.value)
 
 
 def test_a_corrupt_manifest_is_dropped_and_never_marked_seen(tmp_path):

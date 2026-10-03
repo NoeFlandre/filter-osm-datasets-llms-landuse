@@ -17,5 +17,6 @@ The nodes download the inputs to node-local scratch. They upload each part and m
 
 The small append-only JSONL ledgers are flushed and fsynced after each append. A torn final
 record is removed before the next append; a complete final record without a newline is kept
-and separated from the new record. Readers skip malformed records line by line so a damaged
-line cannot hide later complete records that were already fsynced.
+and separated from the new record. Readers and appenders fail closed on malformed complete
+records, reporting the path, line, and byte offset. Only a malformed unterminated final fragment
+is treated as an interrupted write; valid complete records before it remain readable.
