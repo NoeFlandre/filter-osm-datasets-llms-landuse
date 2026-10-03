@@ -13,6 +13,7 @@ import hashlib
 import sqlite3
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
+from itertools import groupby
 from pathlib import Path
 
 import pyarrow as pa
@@ -20,7 +21,7 @@ import pyarrow as pa
 from landuse_filter.adapters.readers import DATASET_RANK, SOURCES, Source
 from landuse_filter.adapters.schema import CHUNK
 from landuse_filter.adapters.store import WorkStore
-from landuse_filter.domain.planning import Chunk, UniqueText, plan_chunks
+from landuse_filter.domain.planning import Chunk, UniqueText, chunk_id, plan_chunks
 from landuse_filter.domain.prompting import render_prompt
 
 # Batch tokeniser: prompts -> token ids, same order (fast path, see adapters.tokenizer).
@@ -31,6 +32,7 @@ CREATE TABLE IF NOT EXISTS files (idx INTEGER PRIMARY KEY, path TEXT UNIQUE, don
     sentences INTEGER, unsplit INTEGER, new_unique INTEGER);
 CREATE TABLE IF NOT EXISTS texts (sha TEXT PRIMARY KEY, text TEXT, file_idx INTEGER, chunk_id TEXT);
 CREATE INDEX IF NOT EXISTS texts_pending ON texts (chunk_id, file_idx, sha);
+CREATE TABLE IF NOT EXISTS planner_meta (name TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 # Geographic re-planning (ADR-0014) adds these columns to indexes created before it.
 MIGRATIONS = {
@@ -42,6 +44,42 @@ MIGRATIONS = {
 def _cell_key(cell: str | None) -> str:
     """Deterministic tie-break between cells of one round (spreads them, not alphabetical)."""
     return hashlib.sha256((cell or "").encode()).hexdigest()[:16]
+
+
+def _legacy_has_unassigned_completions(db: sqlite3.Connection) -> bool:
+    columns = {row[1] for row in db.execute("PRAGMA table_info(texts)")}
+    return "done" in columns and bool(
+        db.execute("SELECT 1 FROM texts WHERE done = 1 AND chunk_id IS NULL LIMIT 1").fetchone()
+    )
+
+
+def _legacy_chunks_match(db: sqlite3.Connection, config_fp: str) -> bool:
+    rows = db.execute(
+        "SELECT chunk_id, sha FROM texts WHERE chunk_id IS NOT NULL ORDER BY chunk_id, sha"
+    )
+    for old_chunk, chunk_rows in groupby(rows, lambda row: row[0]):
+        if chunk_id(config_fp, (row[1] for row in chunk_rows)) != old_chunk:
+            return False
+    return True
+
+
+def _bind_fingerprint(db: sqlite3.Connection, config_fp: str) -> None:
+    """Bind this index to one generation config, validating any legacy chunk ids first."""
+    bound = db.execute("SELECT value FROM planner_meta WHERE name = 'config_fp'").fetchone()
+    if bound:
+        if bound[0] != config_fp:
+            raise ValueError(f"Planner index is bound to fingerprint {bound[0]}, not {config_fp}")
+        return
+
+    if _legacy_has_unassigned_completions(db):
+        raise ValueError("Cannot bind legacy planner index with unassigned completed texts")
+    if not _legacy_chunks_match(db, config_fp):
+        raise ValueError(
+            f"Cannot bind legacy planner index: stored chunks do not match fingerprint {config_fp}"
+        )
+
+    with db:
+        db.execute("INSERT INTO planner_meta (name, value) VALUES ('config_fp', ?)", (config_fp,))
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,12 +134,17 @@ class Planner:
         db = store.path(f"index/{dataset}.sqlite")
         db.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(db)
-        self.db.executescript(SCHEMA)
-        have = {row[1] for row in self.db.execute("PRAGMA table_info(texts)")}
-        for column, statement in MIGRATIONS.items():
-            if column not in have:
-                self.db.execute(statement)
-        self.db.commit()
+        try:
+            self.db.executescript(SCHEMA)
+            have = {row[1] for row in self.db.execute("PRAGMA table_info(texts)")}
+            for column, statement in MIGRATIONS.items():
+                if column not in have:
+                    self.db.execute(statement)
+            self.db.commit()
+            _bind_fingerprint(self.db, self.fp)
+        except Exception:
+            self.db.close()
+            raise
 
     def register(self, files: Sequence[str]) -> None:
         with self.db:

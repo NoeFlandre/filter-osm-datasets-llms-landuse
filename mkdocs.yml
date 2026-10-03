@@ -43,6 +43,7 @@ nav:
       - adr/0024-letterless-sentences-are-no.md
       - adr/0025-stale-besteffort-reaper.md
       - adr/0026-resolution-snapshot.md
+      - adr/0027-planner-fingerprint-binding.md
 markdown_extensions:
   - pymdownx.superfences:
       custom_fences:
