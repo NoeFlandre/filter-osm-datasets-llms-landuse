@@ -74,3 +74,11 @@ landuse_filter.application.plan.xǁPlannerǁreport__mutmut_4: SQL keywords, iden
 landuse_filter.application.plan.xǁPlannerǁreport__mutmut_5: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
 landuse_filter.application.plan.xǁPlannerǁreport__mutmut_9: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
 landuse_filter.application.plan.xǁPlannerǁreport__mutmut_10: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.x__bind_fingerprint__mutmut_4: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.x__bind_fingerprint__mutmut_26: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.x__legacy_chunks_match__mutmut_4: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.x__legacy_chunks_match__mutmut_5: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.x__legacy_has_unassigned_completions__mutmut_5: SQLite PRAGMA keywords and identifiers are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.x__legacy_has_unassigned_completions__mutmut_6: SQLite PRAGMA keywords and identifiers are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.x__legacy_has_unassigned_completions__mutmut_14: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent
+landuse_filter.application.plan.x__legacy_has_unassigned_completions__mutmut_15: SQL keywords, identifiers and function names are case-insensitive, so the case change is equivalent

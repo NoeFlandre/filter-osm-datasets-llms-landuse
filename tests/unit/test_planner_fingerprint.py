@@ -58,8 +58,14 @@ def test_new_fingerprint_cannot_recover_a_legacy_chunk_with_old_input_ids(
 
     assert old_fp != new_fp
     assert old_ids != new_ids
-    with pytest.raises(ValueError, match="fingerprint"):
+    with pytest.raises(
+        ValueError,
+        match=r"^Cannot bind legacy planner index: stored chunks do not match fingerprint",
+    ) as error:
         Planner(store, WEBSITE, new_fp)
+    assert str(error.value) == (
+        f"Cannot bind legacy planner index: stored chunks do not match fingerprint {new_fp}"
+    )
 
     assert store.read_chunk(old_chunk).column("input_ids").to_pylist() == [old_ids]
     assert not store.exists(f"plans/{WEBSITE}/{new_fp}/chunks.jsonl")
@@ -109,8 +115,12 @@ def test_legacy_completed_text_without_a_chunk_is_not_bound(tmp_path):
             (text_sha("A shop"), "A shop", 0),
         )
 
-    with pytest.raises(ValueError, match="completed texts"):
+    with pytest.raises(
+        ValueError,
+        match=r"^Cannot bind legacy planner index with unassigned completed texts$",
+    ) as error:
         Planner(store, WEBSITE, "prompt-v1|tokenizer-v1")
+    assert str(error.value) == ("Cannot bind legacy planner index with unassigned completed texts")
 
     with sqlite3.connect(path) as db:
         assert db.execute("SELECT 1 FROM planner_meta WHERE name = 'config_fp'").fetchone() is None
