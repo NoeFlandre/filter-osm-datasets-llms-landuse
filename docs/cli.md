@@ -274,100 +274,112 @@ Usage: root g5k run [OPTIONS]
  The controller loop: reconcile, pull results, submit where GPUs are free now.                      
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --datasets                                    <str>                   Comma-separated, in     │
-│                                                                          priority order          │
-│                                                                          (benchmark first for    │
-│                                                                          parity).                │
-│                                                                          [required]              │
-│    --work                                        <path>                  Local work tree.        │
-│                                                                          [default: work]         │
-│    --sites                                       <str>                   [default:               │
-│                                                                          grenoble,lille,lyon,na… │
-│    --gpu-models                                  <str>                   Comma-separated gpu     │
-│                                                                          keys to allow (default: │
-│                                                                          admitted models).       │
-│    --max-jobs                                    <int>                   [default: 12]           │
-│    --max-jobs-per-site                           <int>                   [default: 4]            │
-│    --walltime-minutes                            <int>                   [default: 60]           │
-│    --day-walltime-minutes                        <int>                   Preferred (long) day    │
-│                                                                          walltime, retried with  │
-│                                                                          --walltime-minutes if   │
-│                                                                          it cannot start         │
-│                                                                          (default:               │
-│                                                                          --walltime-minutes).    │
-│    --day-long-max-failures                       <int>                   Consecutive failed long │
-│                                                                          day attempts on a       │
-│                                                                          cluster before a 1 h    │
-│                                                                          pause.                  │
-│                                                                          [default: 3]            │
-│    --chunk-overflow                              <float range> [x>=1.0]  Work given to a job =   │
-│                                                                          expected capacity x     │
-│                                                                          this (>= 1.0);          │
-│                                                                          unfinished chunks       │
-│                                                                          return to the pool at   │
-│                                                                          the checkpoint signal.  │
-│                                                                          [default: 1.2]          │
-│    --submit-workers                              <int range> [x>=1]      Sites submitted to in   │
-│                                                                          parallel (one worker    │
-│                                                                          per site; 1 = one job   │
-│                                                                          after another). See     │
-│                                                                          ADR-0020.               │
-│                                                                          [default: 1]            │
-│    --policy-check                                <per-job|per-batch>     usagepolicycheck        │
-│                                                                          cadence: per-job        │
-│                                                                          (before and after every │
-│                                                                          submission) or          │
-│                                                                          per-batch (once per     │
-│                                                                          site before its first   │
-│                                                                          submission of a cycle   │
-│                                                                          and once after its      │
-│                                                                          last; see ADR-0019).    │
-│                                                                          [default: per-job]      │
-│    --night-walltime-minut…                       <int>                   Preferred (long)        │
-│                                                                          walltime for            │
-│                                                                          night/weekend jobs.     │
-│                                                                          [default: 120]          │
-│    --night-fallback-wallt…                       <int>                   Shorter night walltime  │
-│                                                                          retried in the same     │
-│                                                                          slot if the long job    │
-│                                                                          cannot start.           │
-│                                                                          [default: 30]           │
-│    --besteffort               --no-besteffort                            [default:               │
-│                                                                          no-besteffort]          │
-│    --stale-besteffort-min…                       <int range> [x>=1]      Cancel our besteffort   │
-│                                                                          jobs still waiting this │
-│                                                                          long after submission   │
-│                                                                          (their GPUs were        │
-│                                                                          taken); night/exotic    │
-│                                                                          jobs are never reaped.  │
-│                                                                          See ADR-0025.           │
-│                                                                          [default: 20]           │
-│    --max-queued-per-site                         <int>                   Waiting jobs allowed    │
-│                                                                          per site when nothing   │
-│                                                                          is free (start          │
-│                                                                          predicted < 2 h).       │
-│                                                                          [default: 1]            │
-│    --night-max-queued-per…                       <int>                   Waiting jobs per site   │
-│                                                                          at night/weekend        │
-│                                                                          (default:               │
-│                                                                          --max-queued-per-site). │
-│    --window                                      <int>                   Candidate concurrency   │
-│                                                                          (tuning); default: GPU  │
-│                                                                          profile.                │
-│    --namespace                                   <str>                   Store a candidate       │
-│                                                                          config's results under  │
-│                                                                          <fp>-<namespace>.       │
-│    --bucket                                      <str>                   Private HF Bucket for   │
-│                                                                          chunks and parts.       │
-│                                                                          [default:               │
-│                                                                          NoeFlandre/landuse-fil… │
-│    --interval                                    <int>                   Seconds between cycles. │
-│                                                                          [default: 300]          │
-│    --once                     --no-once                                  Run a single cycle and  │
-│                                                                          exit.                   │
-│                                                                          [default: no-once]      │
-│    --help                                                                Show this message and   │
-│                                                                          exit.                   │
+│ *  --datasets                                       <str>                 Comma-separated, in    │
+│                                                                           priority order         │
+│                                                                           (benchmark first for   │
+│                                                                           parity).               │
+│                                                                           [required]             │
+│    --work                                           <path>                Local work tree.       │
+│                                                                           [default: work]        │
+│    --sites                                          <str>                 [default:              │
+│                                                                           grenoble,lille,lyon,n… │
+│    --gpu-models                                     <str>                 Comma-separated gpu    │
+│                                                                           keys to allow          │
+│                                                                           (default: admitted     │
+│                                                                           models).               │
+│    --max-jobs                                       <int>                 [default: 12]          │
+│    --max-jobs-per-site                              <int>                 [default: 4]           │
+│    --walltime-minutes                               <int>                 [default: 60]          │
+│    --day-walltime-minu…                             <int>                 Preferred (long) day   │
+│                                                                           walltime, retried with │
+│                                                                           --walltime-minutes if  │
+│                                                                           it cannot start        │
+│                                                                           (default:              │
+│                                                                           --walltime-minutes).   │
+│    --day-long-max-fail…                             <int>                 Consecutive failed     │
+│                                                                           long day attempts on a │
+│                                                                           cluster before a 1 h   │
+│                                                                           pause.                 │
+│                                                                           [default: 3]           │
+│    --chunk-overflow                                 <float range>         Work given to a job =  │
+│                                                     [x>=1.0]              expected capacity x    │
+│                                                                           this (>= 1.0);         │
+│                                                                           unfinished chunks      │
+│                                                                           return to the pool at  │
+│                                                                           the checkpoint signal. │
+│                                                                           [default: 1.2]         │
+│    --submit-workers                                 <int range> [x>=1]    Sites submitted to in  │
+│                                                                           parallel (one worker   │
+│                                                                           per site; 1 = one job  │
+│                                                                           after another). See    │
+│                                                                           ADR-0020.              │
+│                                                                           [default: 1]           │
+│    --policy-check                                   <per-job|per-batch>   usagepolicycheck       │
+│                                                                           cadence: per-job       │
+│                                                                           (before and after      │
+│                                                                           every submission) or   │
+│                                                                           per-batch (once per    │
+│                                                                           site before its first  │
+│                                                                           submission of a cycle  │
+│                                                                           and once after its     │
+│                                                                           last; see ADR-0019).   │
+│                                                                           [default: per-job]     │
+│    --night-walltime-mi…                             <int>                 Preferred (long)       │
+│                                                                           walltime for           │
+│                                                                           night/weekend jobs.    │
+│                                                                           [default: 120]         │
+│    --night-fallback-wa…                             <int>                 Shorter night walltime │
+│                                                                           retried in the same    │
+│                                                                           slot if the long job   │
+│                                                                           cannot start.          │
+│                                                                           [default: 30]          │
+│    --besteffort            --no-besteffort                                [default:              │
+│                                                                           no-besteffort]         │
+│    --stale-besteffort-…                             <int range> [x>=1]    Cancel our besteffort  │
+│                                                                           jobs still waiting     │
+│                                                                           this long after        │
+│                                                                           submission (their GPUs │
+│                                                                           were taken);           │
+│                                                                           night/exotic jobs are  │
+│                                                                           never reaped. See      │
+│                                                                           ADR-0025.              │
+│                                                                           [default: 20]          │
+│    --max-queued-per-si…                             <int>                 Waiting jobs allowed   │
+│                                                                           per site when nothing  │
+│                                                                           is free (start         │
+│                                                                           predicted < 2 h).      │
+│                                                                           [default: 1]           │
+│    --night-max-queued-…                             <int>                 Waiting jobs per site  │
+│                                                                           at night/weekend       │
+│                                                                           (default:              │
+│                                                                           --max-queued-per-site… │
+│    --immediate-in-night    --no-immediate-in-ni…                          At night/weekend also  │
+│                                                                           submit immediate-start │
+│                                                                           jobs (no -t night, <=  │
+│                                                                           1 h) where GPUs are    │
+│                                                                           free now, besides the  │
+│                                                                           queued night jobs. See │
+│                                                                           ADR-0027.              │
+│                                                                           [default:              │
+│                                                                           immediate-in-night]    │
+│    --window                                         <int>                 Candidate concurrency  │
+│                                                                           (tuning); default: GPU │
+│                                                                           profile.               │
+│    --namespace                                      <str>                 Store a candidate      │
+│                                                                           config's results under │
+│                                                                           <fp>-<namespace>.      │
+│    --bucket                                         <str>                 Private HF Bucket for  │
+│                                                                           chunks and parts.      │
+│                                                                           [default:              │
+│                                                                           NoeFlandre/landuse-fi… │
+│    --interval                                       <int>                 Seconds between        │
+│                                                                           cycles.                │
+│                                                                           [default: 300]         │
+│    --once                  --no-once                                      Run a single cycle and │
+│                                                                           exit.                  │
+│                                                                           [default: no-once]     │
+│    --help                                                                 Show this message and  │
+│                                                                           exit.                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 

@@ -228,6 +228,7 @@ def night(c):
     from datetime import timedelta
 
     c.settings.night_walltime = timedelta(minutes=120)
+    c.settings.immediate_in_night = False
     c.settings.night_fallback_walltime = timedelta(minutes=30)
 
 

@@ -39,6 +39,11 @@ Thus nothing changes unless you set it. Example for production:
 `--night-walltime-minutes 120 --night-fallback-walltime-minutes 30 --night-max-queued-per-site 15`.
 See [ADR-0016](adr/0016-night-walltime-fallback.md).
 
+`--immediate-in-night / --no-immediate-in-night` (`luf g5k run`; default on) makes the controller
+also submit immediate-start jobs (no `-t night`, at most 1 h, only where GPUs are free now) at night
+and on weekends, in addition to the queued night jobs. See
+[ADR-0027](adr/0027-immediate-jobs-in-the-night-window.md).
+
 ## Day jobs: long walltime with a fallback and a self-throttle
 
 `--day-walltime-minutes` (`luf g5k run` and `run-admission`; `day_walltime_minutes` in luf.toml,

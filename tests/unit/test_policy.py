@@ -9,6 +9,7 @@ from landuse_filter.domain.policy import (
     allowed_window,
     easter,
     french_holidays,
+    immediate_window,
     is_daytime,
     next_day_start,
 )
@@ -118,3 +119,31 @@ def knuth_easter(year):
 
 def test_easter_matches_independent_algorithm():
     assert all(easter(y) == knuth_easter(y) for y in range(1583, 4100))
+
+
+# --- immediate-start window inside nights and weekends (ADR-0027) ---
+
+PARIS = ZoneInfo("Europe/Paris")
+
+
+def test_immediate_window_is_absent_by_day_and_without_a_window():
+    day = allowed_window(datetime(2026, 9, 29, 10, 0, tzinfo=PARIS), starts_now=True)
+    assert immediate_window(day) is None
+    assert immediate_window(None) is None
+
+
+def test_immediate_window_is_one_hour_without_type_at_night_and_weekend():
+    for moment in (
+        datetime(2026, 9, 28, 22, 0, tzinfo=PARIS),
+        datetime(2026, 10, 3, 14, 0, tzinfo=PARIS),
+    ):
+        window = immediate_window(allowed_window(moment, starts_now=True))
+        assert window is not None
+        assert (window.max_walltime, window.job_type) == (timedelta(hours=1), None)
+
+
+def test_immediate_window_ends_before_the_next_working_day_start():
+    early = datetime(2026, 9, 29, 8, 30, tzinfo=PARIS)
+    window = immediate_window(allowed_window(early, starts_now=True))
+    assert window is not None
+    assert window.max_walltime == timedelta(minutes=30)
