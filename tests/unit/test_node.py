@@ -5,6 +5,7 @@ import pyarrow as pa
 from landuse_filter.adapters.schema import CHUNK, PROVENANCE
 from landuse_filter.adapters.store import WorkStore
 from landuse_filter.application.node import Runner
+from landuse_filter.application.results import decisions_by_sha
 
 PROV = {name: "x" for name, _ in PROVENANCE if name != "created_at"}
 
@@ -23,6 +24,31 @@ class FakeEngine:
         }
 
 
+class MappedEngine:
+    """Deterministic responses whose completion order differs from input order."""
+
+    responses = {
+        101: ("analysis alpha</think>yes", 7, 0.12),
+        202: ("analysis beta</think>no", 4, 0.06),
+        303: ("analysis gamma</think>yes", 9, 0.01),
+    }
+
+    def __init__(self):
+        self.calls = 0
+        self.completion_order = []
+
+    async def generate(self, input_ids):
+        prompt_id = input_ids[0]
+        raw_output, token_count, delay = self.responses[prompt_id]
+        await asyncio.sleep(delay)
+        self.calls += 1
+        self.completion_order.append(prompt_id)
+        return {
+            "text": raw_output,
+            "meta_info": {"completion_tokens": token_count, "finish_reason": {"type": "stop"}},
+        }
+
+
 def chunk(store, n=10):
     shas = [f"s{i:02d}" for i in range(n)]
     store.write_chunk(
@@ -35,8 +61,43 @@ def chunk(store, n=10):
     return shas
 
 
+def mapped_chunk(store):
+    store.write_chunk(
+        "mapped",
+        pa.table(
+            {
+                "text_sha256": ["sha-alpha", "sha-beta", "sha-gamma"],
+                "text": ["prompt alpha", "prompt beta", "prompt gamma"],
+                "input_ids": [[101, 11], [202, 22], [303, 33]],
+            },
+            schema=CHUNK,
+        ),
+    )
+
+
+def stored_result_map(store):
+    rows = {}
+    for path in store.part_paths("fp", "mapped"):
+        for row in store.read_part(path).to_pylist():
+            rows[row["text_sha256"]] = row
+    decisions = decisions_by_sha(store, "fp")
+    return {
+        sha: (decisions[sha], row["raw_output"], row["generated_tokens"])
+        for sha, row in rows.items()
+    }
+
+
 def runner(store, engine, **kw):
-    return Runner(store, engine, "fp", PROV, window=4, flush_every=3, flush_seconds=999, **kw)
+    return Runner(
+        store,
+        engine,
+        "fp",
+        PROV,
+        window=kw.pop("window", 4),
+        flush_every=kw.pop("flush_every", 3),
+        flush_seconds=kw.pop("flush_seconds", 999),
+        **kw,
+    )
 
 
 def test_runs_chunk_to_completion_in_parts(tmp_path):
@@ -68,12 +129,47 @@ def test_stop_then_resume_redoes_only_missing(tmp_path):
 
 
 def test_decisions_from_parts(tmp_path):
-    from landuse_filter.application.results import decisions_by_sha
-
     store = WorkStore(tmp_path)
     chunk(store, n=3)
     asyncio.run(runner(store, FakeEngine()).run(["c1"]))
     assert set(decisions_by_sha(store, "fp").values()) == {"yes"}
+
+
+def test_prompt_results_match_literal_map_after_out_of_order_and_resume(tmp_path):
+    expected = {
+        "sha-alpha": ("yes", "analysis alpha</think>yes", 7),
+        "sha-beta": ("no", "analysis beta</think>no", 4),
+        "sha-gamma": ("yes", "analysis gamma</think>yes", 9),
+    }
+
+    uninterrupted_store = WorkStore(tmp_path / "uninterrupted")
+    mapped_chunk(uninterrupted_store)
+    uninterrupted_engine = MappedEngine()
+    asyncio.run(runner(uninterrupted_store, uninterrupted_engine).run(["mapped"]))
+
+    assert uninterrupted_engine.completion_order == [303, 202, 101]
+    assert stored_result_map(uninterrupted_store) == expected
+
+    resumed_store = WorkStore(tmp_path / "resumed")
+    mapped_chunk(resumed_store)
+    first_engine = MappedEngine()
+    first = asyncio.run(
+        runner(
+            resumed_store,
+            first_engine,
+            window=1,
+            flush_every=10,
+            should_stop=lambda: len(first_engine.completion_order) >= 2,
+        ).run(["mapped"])
+    )
+    assert first.completed == 2
+    assert first.chunks_done == []
+
+    resume_engine = MappedEngine()
+    resumed = asyncio.run(runner(resumed_store, resume_engine).run(["mapped"]))
+    assert resume_engine.calls == 1
+    assert resumed.chunks_done == ["mapped"]
+    assert stored_result_map(resumed_store) == expected
 
 
 def test_identical_part_repairs_a_corrupt_copy(tmp_path):

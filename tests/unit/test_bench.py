@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from landuse_filter.adapters.benchmark import read_items, read_reference
+from landuse_filter.adapters.benchmark import ReferencePrediction, read_items, read_reference
 from landuse_filter.adapters.store import WorkStore
 from landuse_filter.application.bench import compare, macro_scores, simulate_budgets
 from landuse_filter.application.bench_plan import plan_benchmark
@@ -33,17 +33,46 @@ def test_compare_requires_every_item():
     assert same.passed
 
 
-def test_macro_scores_average_languages():
-    scores = macro_scores(list(read_reference(ROOT)))
-    assert 0 <= scores["f1"] <= 1
+def test_macro_scores_use_equal_language_weight_with_uneven_counts():
+    rows = [
+        ReferencePrediction("a-yes", "A", "yes", "yes", 1, False, "yes"),
+        ReferencePrediction("a-no", "A", "no", "no", 1, False, "no"),
+        ReferencePrediction("b-yes-1", "B", "yes", "no", 1, False, "no"),
+        ReferencePrediction("b-yes-2", "B", "yes", "no", 1, False, "no"),
+        ReferencePrediction("b-no-1", "B", "no", "yes", 1, False, "yes"),
+        ReferencePrediction("b-no-2", "B", "no", "yes", 1, False, "yes"),
+    ]
+    expected = {
+        "accuracy": 0.5,
+        "precision": 0.5,
+        "recall": 0.5,
+        "f1": 0.5,
+        "balanced_accuracy": 0.5,
+        "mcc": 0.0,
+        "failed_rate": 0.0,
+    }
+
+    assert dict(macro_scores(rows)) == expected
+    assert dict(macro_scores(rows + [row for row in rows if row.language == "B"])) == expected
 
 
 def test_plan_benchmark_is_idempotent_and_tracked_by_status(tmp_path):
     store = WorkStore(tmp_path)
     items = read_items(ROOT)
-    kw = {"template": "S: {}", "fp": "fp", "chunk_size": 5}
-    n = plan_benchmark(store, items, lambda ps: [[len(p)] for p in ps], **kw)
-    assert plan_benchmark(store, items, lambda ps: [[len(p)] for p in ps], **kw) == n
+    n = plan_benchmark(
+        store, items, lambda ps: [[len(p)] for p in ps], template="S: {}", fp="fp", chunk_size=5
+    )
+    assert (
+        plan_benchmark(
+            store,
+            items,
+            lambda ps: [[len(p)] for p in ps],
+            template="S: {}",
+            fp="fp",
+            chunk_size=5,
+        )
+        == n
+    )
     lines = store.read_jsonl("plans/benchmark/fp/chunks.jsonl")
     assert len(lines) == n
     assert sum(r["size"] for r in lines) == len({i.sentence for i in items})
