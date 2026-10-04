@@ -35,7 +35,7 @@ def g5k_inventory(
     from landuse_filter.adapters import g5k
     from landuse_filter.application.inventory import admission, eligible, load_clusters
 
-    script = Path(__file__).parent / "adapters" / "frontend" / "inventory.py"
+    script = Path(__file__).parents[1] / "adapters" / "frontend" / "inventory.py"
     store = _store(work)
     store.write_json("inventory.json", g5k.inventory(site, script))
     for c in load_clusters(store):
