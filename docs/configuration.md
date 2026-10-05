@@ -107,6 +107,14 @@ The cycle logs `cycle submitted N jobs in S s (sites K)`. Production:
 `--submit-workers 8`. To revert, use `--submit-workers 1`. See
 [ADR-0020](adr/0020-parallel-submission.md).
 
+## Incremental ingest
+
+The controller no longer lists all of `parts/<fp>/` on every pull. It lists the chunk prefix of
+each assignment that ended since the previous pull (and `jobs/` then), the chunks of live
+assignments every 900 s (`LIVE_INTERVAL`), and everything on the first pull after a start and
+every 3600 s (`RECONCILE_INTERVAL`). Both constants are in `application/staging.py`. Restart the
+controller to apply. See [ADR-0029](adr/0029-incremental-ingest.md).
+
 ## Hub rate limit (HTTP 429)
 
 The Hub allows 1000 API calls per 5 minutes per account. The bucket adapter
