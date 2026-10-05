@@ -8,6 +8,7 @@ from landuse_filter.adapters.remote import BucketRemote, DirRemote
 
 
 class FakeApi:
+    endpoint = "https://hub.test"
     commits: list = []
     batches: list = []
 
@@ -65,6 +66,14 @@ def test_bucket_remote_put_get_ls_delete(monkeypatch, tmp_path):
     src.write_text("x")
     b.put([(src, "a"), (src, "b")])
     assert len([x for x in FakeApi.batches if isinstance(x, dict) and "add" in x]) == 2
+    monkeypatch.setattr(
+        BucketRemote,
+        "_page",
+        lambda self, url, params: (
+            [{"type": "file", "path": "parts/x.json"}, {"type": "directory", "path": "parts"}],
+            None,
+        ),
+    )
     assert b.ls("parts/") == ["parts/x.json"]  # directories are skipped
     b.get([("parts/x.json", tmp_path / "out.json")])
     assert (tmp_path / "out.json").read_text() == "{}"
