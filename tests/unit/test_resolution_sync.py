@@ -1,4 +1,5 @@
 import pyarrow as pa
+import pytest
 
 from landuse_filter import config
 from landuse_filter.adapters.indexes import ResolutionIndex
@@ -130,3 +131,100 @@ def test_part_key_round_trips():
     path = f"parts/{FP}/c1/abc.parquet"
     assert rs.part_key(path) == "c1/abc"
     assert rs.part_path(FP, "c1/abc") == path
+
+
+class PutLog(CountingRemote):
+    def __init__(self, root) -> None:
+        super().__init__(root)
+        self.puts: list[str] = []
+
+    def put(self, files) -> None:
+        self.puts += [dst for _, dst in files]
+        super().put(files)
+
+
+def _five_parts(tmp_path, remote):
+    src = WorkStore(tmp_path / "src")
+    return [_part(src, remote, f"c{i}", [(f"s{i}", "x</think>yes")]) for i in range(5)]
+
+
+def test_catch_up_reads_every_part_across_several_batches(tmp_path, monkeypatch):
+    monkeypatch.setattr(rs, "BATCH", 2)
+    remote = CountingRemote(tmp_path / "bucket")
+    keys = _five_parts(tmp_path, remote)
+    remote.fetched.clear()
+    index = rs.restore_resolution(remote, WorkStore(tmp_path / "n"), FP, workers=1)
+    assert index.parts() == set(keys)
+    assert sorted(_parts_fetched(remote)) == sorted(f"parts/{FP}/{k}.parquet" for k in keys)
+
+
+def test_a_stop_after_the_first_batch_keeps_that_batch_and_uploads_the_snapshot(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(rs, "BATCH", 2)
+    remote = PutLog(tmp_path / "bucket")
+    keys = _five_parts(tmp_path, remote)
+    remote.puts.clear()
+    calls = []
+
+    def stop():
+        calls.append(1)
+        return len(calls) > 1  # let exactly one batch through
+
+    index = rs.restore_resolution(
+        remote, WorkStore(tmp_path / "n"), FP, should_stop=stop, workers=1
+    )
+    assert len(index.parts()) == 2
+    assert index.parts() < set(keys)
+    assert remote.puts == [rs.snapshot_path(FP)]
+
+
+def test_a_zero_checkpoint_interval_uploads_after_every_batch_and_not_again_at_the_end(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(rs, "BATCH", 2)
+    remote = PutLog(tmp_path / "bucket")
+    _five_parts(tmp_path, remote)
+    remote.puts.clear()
+    rs.restore_resolution(remote, WorkStore(tmp_path / "n"), FP, workers=1, checkpoint_seconds=0.0)
+    assert remote.puts == [rs.snapshot_path(FP)] * 3  # one per batch (2 + 2 + 1 parts)
+
+
+def test_a_long_checkpoint_interval_uploads_once_at_the_end(tmp_path, monkeypatch):
+    monkeypatch.setattr(rs, "BATCH", 2)
+    remote = PutLog(tmp_path / "bucket")
+    _five_parts(tmp_path, remote)
+    remote.puts.clear()
+    rs.restore_resolution(
+        remote, WorkStore(tmp_path / "n"), FP, workers=1, checkpoint_seconds=10**9
+    )
+    assert remote.puts == [rs.snapshot_path(FP)]
+
+
+def test_an_up_to_date_snapshot_is_not_uploaded_again(tmp_path):
+    remote = PutLog(tmp_path / "bucket")
+    _part(WorkStore(tmp_path / "src"), remote, "c1", [("a", "x</think>yes")])
+    rs.restore_resolution(remote, WorkStore(tmp_path / "n1"), FP, workers=1)
+    remote.puts.clear()
+    rs.restore_resolution(remote, WorkStore(tmp_path / "n2"), FP, workers=1)
+    assert remote.puts == []
+
+
+def test_a_failing_download_still_uploads_the_snapshot_and_propagates(tmp_path, monkeypatch):
+    monkeypatch.setattr(rs, "BATCH", 1)
+    remote = PutLog(tmp_path / "bucket")
+    _five_parts(tmp_path, remote)
+    remote.puts.clear()
+    real = rs._download
+    n = []
+
+    def flaky(*a):
+        n.append(1)
+        if len(n) == 2:
+            raise OSError("boom")
+        return real(*a)
+
+    monkeypatch.setattr(rs, "_download", flaky)
+    with pytest.raises(OSError, match="boom"):
+        rs.restore_resolution(remote, WorkStore(tmp_path / "n"), FP, workers=1)
+    assert remote.puts == [rs.snapshot_path(FP)]
