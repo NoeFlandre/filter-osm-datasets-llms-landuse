@@ -356,7 +356,7 @@ def test_node_publish_passes_dataset_revision_bucket(monkeypatch, tmp_path):
     monkeypatch.setattr(remote_mod, "BucketRemote", lambda bucket: ("remote", bucket))
     seen = {}
 
-    def fake(rem, scratch, dataset, revision, fp, *, should_stop):
+    def fake(rem, scratch, dataset, revision, fp, *, should_stop, progress):
         seen.update(rem=rem, dataset=dataset, revision=revision, fp=fp)
         assert should_stop() is None
         return results_report
@@ -557,7 +557,7 @@ def test_node_publish_card_only_runs_the_card_job(monkeypatch, tmp_path):
     monkeypatch.setattr(remote_mod, "BucketRemote", lambda bucket: ("remote", bucket))
     seen = {}
 
-    def fake(rem, scratch, dataset, revision):
+    def fake(rem, scratch, dataset, revision, *, progress):
         seen.update(rem=rem, dataset=dataset, revision=revision)
         return SimpleNamespace(new_files=0)
 

@@ -404,6 +404,29 @@ def g5k_publish_loop(
     typer.echo(result)
 
 
+@g5k_app.command("publish-status")
+def g5k_publish_status(
+    dataset: str = typer.Option(...),
+    bucket: str = typer.Option(OPS.bucket),
+) -> None:
+    """Print the live phase of the running publish/card job (one small bucket download)."""
+    import time
+
+    from landuse_filter.adapters.remote import BucketRemote
+    from landuse_filter.application.progress import read_progress
+
+    state = read_progress(BucketRemote(bucket), dataset)
+    if state is None:
+        typer.echo(f"no progress marker for {dataset} (no job yet, or the bucket is unreachable)")
+        raise typer.Exit(1)
+    age = round(time.time() - state["updated_epoch"])
+    counters = " ".join(f"{k}={v}" for k, v in state["counters"].items())
+    typer.echo(
+        f"job {state['job_id'] or '-'}  phase {state['phase']}  "
+        f"elapsed {state['elapsed_seconds']}s  updated {age}s ago\n{counters}"
+    )
+
+
 @g5k_app.command("calibrate-job")
 def g5k_calibrate_job(
     site: str = typer.Option(...),

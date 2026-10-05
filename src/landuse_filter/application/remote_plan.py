@@ -15,6 +15,7 @@ from pathlib import Path
 from landuse_filter.adapters.remote import Remote
 from landuse_filter.adapters.store import WorkStore
 from landuse_filter.application.plan import Encode, Planner
+from landuse_filter.application.progress import NULL, Progress
 
 CHECKPOINT_SECONDS = 900.0
 
@@ -23,7 +24,9 @@ def _index(dataset: str) -> str:
     return f"index/{dataset}.sqlite"
 
 
-def restore_index(remote: Remote, scratch: WorkStore, dataset: str) -> bool:
+def restore_index(
+    remote: Remote, scratch: WorkStore, dataset: str, progress: Progress = NULL
+) -> bool:
     """Download the index checkpoint as a fresh, writable file.
 
     The bucket download can be read-only (linked from a cache), which made every
@@ -32,9 +35,14 @@ def restore_index(remote: Remote, scratch: WorkStore, dataset: str) -> bool:
     """
     if _index(dataset) not in remote.ls("index/"):
         return False
+    progress.event("restore_index_start", file=_index(dataset))
+    t0 = time.monotonic()
     target = scratch.path(_index(dataset))
     staged = target.with_name(target.name + ".download")
     remote.get([(_index(dataset), staged)])
+    progress.event(
+        "restore_index_done", bytes=staged.stat().st_size, seconds=round(time.monotonic() - t0)
+    )
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(staged, target)
     target.chmod(0o644)

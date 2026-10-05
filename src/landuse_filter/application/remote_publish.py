@@ -5,6 +5,7 @@ from collections.abc import Callable
 from landuse_filter.adapters.hub import Hub
 from landuse_filter.adapters.remote import Remote
 from landuse_filter.adapters.store import WorkStore
+from landuse_filter.application.progress import NULL, Progress
 from landuse_filter.application.publish import PublishReport, publish, refresh_card_only
 from landuse_filter.application.publish_loop import status_path
 from landuse_filter.application.remote_plan import restore_index
@@ -13,7 +14,7 @@ from landuse_filter.application.sync import fetch
 from landuse_filter.domain.publish_loop import PublishStatus
 
 
-def run_publish(
+def run_publish(  # noqa: PLR0913
     remote: Remote,
     scratch: WorkStore,
     dataset: str,
@@ -22,6 +23,7 @@ def run_publish(
     *,
     hub: Hub | None = None,
     should_stop: Callable[[], str | None] = lambda: None,
+    progress: Progress = NULL,
 ) -> PublishReport:
     """Restore the planner index and the resolution snapshot (reading only the result parts it
     has not seen, ADR-0026), then publish incrementally.
@@ -29,11 +31,13 @@ def run_publish(
     ``published/<dataset>.jsonl`` is round-tripped through the bucket so a later job
     only uploads what is new.
     """
-    if not restore_index(remote, scratch, dataset):
+    progress.event("publish_start", dataset=dataset, revision=revision[:10])
+    if not restore_index(remote, scratch, dataset, progress):
         raise FileNotFoundError(f"no planner index for {dataset} in the bucket; run planning first")
     resolved = restore_resolution(
-        remote, scratch, fp, should_stop=lambda: should_stop() is not None
+        remote, scratch, fp, should_stop=lambda: should_stop() is not None, progress=progress
     )
+    progress.event("fetch_ledgers")
     fetch(remote, scratch, [g for g in remote.ls("gates/admission/") if g.endswith(".json")])
     ledgers = [
         f"published/{dataset}.jsonl",
@@ -58,10 +62,15 @@ def run_publish(
             should_stop=should_stop,
             resolved=resolved,
             fetch_parts=lambda keys: fetch_parts(remote, scratch, fp, keys),
+            progress=progress,
         )
+    except BaseException as error:
+        progress.finish(f"error: {type(error).__name__}: {error}"[:300])
+        raise
     finally:
         save()  # whatever happened, the ledgers and the card marker leave the node
     _save_status(remote, scratch, revision, report)
+    progress.finish(report.stopped, labelled=report.labelled_files, total=report.total_files)
     return report
 
 
@@ -104,11 +113,13 @@ def run_card_only(
     revision: str,
     *,
     hub: Hub | None = None,
+    progress: Progress = NULL,
 ) -> PublishReport:
     """Refresh the dataset card from the bucket's ledgers and gates alone (minutes, not hours).
 
     Skips the planner index, the result parts and the resolution index; counts any missing
     per-file stats from the Hub and saves the ledgers back as it goes."""
+    progress.event("card_job_start", dataset=dataset)
     fetch(remote, scratch, [g for g in remote.ls("gates/admission/") if g.endswith(".json")])
     ledgers = [
         f"published/{dataset}{suffix}"
@@ -120,6 +131,9 @@ def run_card_only(
     def save() -> None:
         remote.put([(scratch.path(p), p) for p in ledgers if scratch.exists(p)])
 
-    report = refresh_card_only(scratch, dataset, revision, on_progress=save, hub=hub)
+    report = refresh_card_only(
+        scratch, dataset, revision, on_progress=save, hub=hub, progress=progress
+    )
     save()
+    progress.finish(None, labelled=report.labelled_files, total=report.total_files)
     return report

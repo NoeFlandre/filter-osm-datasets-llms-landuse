@@ -20,6 +20,7 @@ class FakeApi:
 
     def create_commit(self, repo_id, ops, **kw):
         self.commits.append(("commit", repo_id, len(ops)))
+        return SimpleNamespace(oid=f"sha{len(self.commits)}")
 
     def create_bucket(self, bucket_id, **kw):
         self.batches.append(("create", kw))

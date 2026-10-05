@@ -23,6 +23,7 @@ import pyarrow.parquet as pq
 from landuse_filter.adapters.indexes import ResolutionIndex
 from landuse_filter.adapters.remote import Remote
 from landuse_filter.adapters.store import WorkStore
+from landuse_filter.application.progress import NULL, Progress
 from landuse_filter.domain.parsing import PARSER_VERSION, parse_generation
 
 BATCH = 1000  # parts downloaded (and parsed) at a time
@@ -67,13 +68,22 @@ def read_verdicts(path: str) -> Verdicts | None:
     return out
 
 
-def _restore_snapshot(remote: Remote, scratch: WorkStore, fp: str) -> ResolutionIndex:
+def _restore_snapshot(
+    remote: Remote, scratch: WorkStore, fp: str, progress: Progress = NULL
+) -> ResolutionIndex:
     """The bucket's snapshot when it was made by the same parser, else an empty index."""
     target = scratch.path(snapshot_path(fp))
     target.parent.mkdir(parents=True, exist_ok=True)
     if snapshot_path(fp) in remote.ls("index/"):
         staged = target.with_name(target.name + ".download")
+        progress.event("snapshot_download_start", file=snapshot_path(fp))
+        t0 = time.monotonic()
         remote.get([(snapshot_path(fp), staged)])
+        progress.event(
+            "snapshot_download_done",
+            bytes=staged.stat().st_size,
+            seconds=round(time.monotonic() - t0),
+        )
         shutil.copyfile(staged, target)  # a writable copy: the download may be a cache link
         target.chmod(0o644)
         staged.unlink()
@@ -86,9 +96,13 @@ def _restore_snapshot(remote: Remote, scratch: WorkStore, fp: str) -> Resolution
     return index
 
 
-def _save(remote: Remote, scratch: WorkStore, index: ResolutionIndex, fp: str) -> None:
+def _save(
+    remote: Remote, scratch: WorkStore, index: ResolutionIndex, fp: str, progress: Progress = NULL
+) -> None:
     index.db.commit()
+    size, t0 = scratch.path(snapshot_path(fp)).stat().st_size, time.monotonic()
     remote.put([(scratch.path(snapshot_path(fp)), snapshot_path(fp))])
+    progress.event("snapshot_upload", bytes=size, seconds=round(time.monotonic() - t0))
 
 
 def _download(remote: Remote, scratch: WorkStore, fp: str, keys: list[str]) -> list[Path]:
@@ -154,16 +168,21 @@ def restore_resolution(
     should_stop: Callable[[], bool] = lambda: False,
     workers: int | None = None,
     checkpoint_seconds: float = CHECKPOINT_SECONDS,
+    progress: Progress = NULL,
 ) -> ResolutionIndex:
     """The resolution index of every part on the bucket, reading only parts not seen before.
 
     The snapshot is uploaded every ``checkpoint_seconds`` and at the end, so a job stopped
     midway still moved the next one forward. A stop request ends the catch-up early; the index
     then holds fewer verdicts, which only delays publications."""
-    index = _restore_snapshot(remote, scratch, fp)
+    index = _restore_snapshot(remote, scratch, fp, progress)
     new = _new_part_keys(remote, index, fp)
+    progress.event("parts_listed", seen=len(index.parts()), new=len(new))
+    t0, rows, done = time.monotonic(), 0, 0
     batches = [new[i : i + BATCH] for i in range(0, len(new), BATCH)]
-    checkpoint = _Checkpointer(lambda: _save(remote, scratch, index, fp), checkpoint_seconds)
+    checkpoint = _Checkpointer(
+        lambda: _save(remote, scratch, index, fp, progress), checkpoint_seconds
+    )
     try:
         with (
             ProcessPoolExecutor(
@@ -176,11 +195,19 @@ def restore_resolution(
             ) as downloaded,
         ):
             for keys, paths in downloaded:
-                _index_batch(index, keys, paths, procs)
+                rows += _index_batch(index, keys, paths, procs)
+                done += len(keys)
+                progress.tick(
+                    "parts_read",
+                    read=done,
+                    total=len(new),
+                    rows_per_s=round(rows / max(time.monotonic() - t0, 1e-9)),
+                )
                 checkpoint.batch_indexed()
     finally:
         if checkpoint.dirty or not _on_bucket(remote, fp):
             checkpoint.flush()
+    progress.event("resolution_ready", parts_read=done, rows=rows)
     return index
 
 
@@ -190,13 +217,17 @@ def _on_bucket(remote: Remote, fp: str) -> bool:
 
 def _index_batch(
     index: ResolutionIndex, keys: Iterable[str], paths: list[Path], procs: ProcessPoolExecutor
-) -> None:
+) -> int:
+    """Index a batch; the number of verdict rows it added."""
+    rows = 0
     for key, path, verdicts in zip(
         keys, paths, procs.map(read_verdicts, map(str, paths), chunksize=8), strict=True
     ):
         if verdicts is not None:  # a corrupt part is skipped, as the canonical reader does
             index.add_part(key, verdicts)
+            rows += len(verdicts)
         path.unlink(missing_ok=True)
+    return rows
 
 
 def fetch_parts(remote: Remote, scratch: WorkStore, fp: str, keys: Iterable[str]) -> None:
