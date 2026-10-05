@@ -147,6 +147,7 @@ def g5k_run(
         window=window,
         namespace=namespace,
         bucket=bucket,
+        background_ingest=True,
     )
     ctl = _controller(work, settings)
     from landuse_filter.application.controller import run_loop
@@ -237,6 +238,7 @@ def g5k_run_admission(
                 gpu_models=[g],
                 namespace=f"gpu-{g}",
                 bucket=OPS.bucket,
+                background_ingest=True,
             ),
             log=lambda m: typer.echo(m, err=True),
             sites=cache,

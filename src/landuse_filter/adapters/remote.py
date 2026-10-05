@@ -13,7 +13,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Protocol, TypeVar
 
-from landuse_filter.domain.retry import give_up, next_delay, parse_retry_after
+from landuse_filter.domain.retry import LONG, RetryBudget, give_up, next_delay, parse_retry_after
 
 log = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -31,6 +31,7 @@ def with_retry(
     call: Callable[[], T],
     *,
     what: str = "hub call",
+    budget: RetryBudget = LONG,
     sleep: Callable[[float], None] = time.sleep,
     jitter: Callable[[], float] = random.random,
 ) -> T:
@@ -48,8 +49,8 @@ def with_retry(
             headers = rate_limit_headers(exc)
             if headers is None:
                 raise
-            delay = next_delay(attempt, parse_retry_after(headers), jitter())
-            if give_up(attempt, waited, delay):
+            delay = next_delay(attempt, parse_retry_after(headers), jitter(), budget)
+            if give_up(attempt, waited, delay, budget):
                 raise
             log.warning("%s rate-limited (429); waiting %.0f s (attempt %d)", what, delay, attempt)
             sleep(delay)
@@ -100,8 +101,9 @@ class BucketRemote:
 
     BATCH = 500
 
-    def __init__(self, bucket_id: str) -> None:
+    def __init__(self, bucket_id: str, budget: RetryBudget = LONG) -> None:
         self.bucket_id = bucket_id
+        self.budget = budget  # SHORT for ingest: give up fast, the next pull retries (ADR-0031)
 
     def _api(self):  # noqa: ANN202 - huggingface_hub.HfApi, imported lazily
         from huggingface_hub import HfApi
@@ -112,13 +114,18 @@ class BucketRemote:
         with_retry(
             lambda: self._api().create_bucket(self.bucket_id, private=True, exist_ok=True),
             what="create_bucket",
+            budget=self.budget,
         )
 
     def put(self, files: Sequence[tuple[Path, str]]) -> None:
         api = self._api()
         for start in range(0, len(files), self.BATCH):
             batch = [(str(src), dst) for src, dst in files[start : start + self.BATCH]]
-            with_retry(lambda b=batch: api.batch_bucket_files(self.bucket_id, add=b), what="put")
+            with_retry(
+                lambda b=batch: api.batch_bucket_files(self.bucket_id, add=b),
+                what="put",
+                budget=self.budget,
+            )
 
     def get(self, files: Sequence[tuple[str, Path]]) -> None:
         if files:
@@ -128,6 +135,7 @@ class BucketRemote:
                     self.bucket_id, pairs, raise_on_missing_files=True
                 ),
                 what="get",
+                budget=self.budget,
             )
 
     def _page(self, url: str, params: dict | None) -> tuple[list[dict], str | None]:
@@ -149,7 +157,9 @@ class BucketRemote:
         params: dict | None = {"recursive": True}
         paths: list[str] = []
         while url is not None:
-            items, nxt = with_retry(lambda u=url, p=params: self._page(u, p), what=f"ls {prefix}")
+            items, nxt = with_retry(
+                lambda u=url, p=params: self._page(u, p), what=f"ls {prefix}", budget=self.budget
+            )
             paths += [i["path"] for i in items if i.get("type") == "file"]
             url, params = nxt, None  # the next link already carries its query
         return sorted(paths)
@@ -159,5 +169,7 @@ class BucketRemote:
         for start in range(0, len(paths), self.BATCH):
             chunk = list(paths[start : start + self.BATCH])
             with_retry(
-                lambda c=chunk: api.batch_bucket_files(self.bucket_id, delete=c), what="delete"
+                lambda c=chunk: api.batch_bucket_files(self.bucket_id, delete=c),
+                what="delete",
+                budget=self.budget,
             )

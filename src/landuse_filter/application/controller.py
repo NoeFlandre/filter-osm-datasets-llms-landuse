@@ -24,6 +24,7 @@ from landuse_filter.adapters import g5k
 from landuse_filter.adapters.remote import BucketRemote, Remote
 from landuse_filter.adapters.store import WorkStore
 from landuse_filter.application.assignment import Assignment, CycleReport
+from landuse_filter.application.ingest_worker import BackgroundIngest
 from landuse_filter.application.inventory import admission, eligible, load_clusters, profile_for
 from landuse_filter.application.memory import ClusterMemory
 from landuse_filter.application.policy_gate import PolicyGate
@@ -37,6 +38,7 @@ from landuse_filter.domain.launch_plan import Planned, by_site, plan_launches
 from landuse_filter.domain.policy import Window, allowed_window, immediate_window, is_daytime
 from landuse_filter.domain.policy_check import PER_JOB
 from landuse_filter.domain.prompting import PROMPT_SHA256
+from landuse_filter.domain.retry import SHORT
 from landuse_filter.domain.scheduling import (
     LONG_FAILURES,
     LONG_PAUSE,
@@ -88,6 +90,7 @@ class Settings:
     paused: bool = False
     submit_workers: int = 1  # sites submitted to in parallel (ADR-0020); 1 = in turn
     immediate_in_night: bool = True  # also submit immediate-start jobs at night (ADR-0027)
+    background_ingest: bool = False  # ingest in its own thread, never in the cycle (ADR-0031)
     policy_check: str = PER_JOB  # "per-batch": one usage-policy check per site and cycle (ADR-0019)
 
 
@@ -140,7 +143,21 @@ class Controller:
         self.memory = ClusterMemory(store)
         self.policy = PolicyGate(settings.policy_check, log)
         self.transport = Transport(
-            store, remote or BucketRemote(settings.bucket), settings.bucket, log
+            store,
+            remote or BucketRemote(settings.bucket),
+            settings.bucket,
+            log,
+        )
+        if remote is None:  # ingest gives up fast on a rate limit; uploads keep the long budget
+            self.transport.ingest_remote = BucketRemote(settings.bucket, budget=SHORT)
+        self._live_lock = threading.Lock()
+        self._live_chunks: set[str] = set()  # chunks of live assignments, for the ingest thread
+        self._ingest_progress: WorkProgress | None = None  # the ingest thread's own index
+        self.ingest = BackgroundIngest(
+            self._ingest_pull,
+            interval=PULL_INTERVAL,
+            log=log,
+            on_error=lambda exc: log_failure(log, "ingest pull failed", exc),
         )
         self.progress = WorkProgress(
             store,
@@ -196,7 +213,7 @@ class Controller:
         now = now or datetime.now(PARIS)
         self.now = now
         jobs = self.reconcile()
-        self.pull()
+        self._start_ingest()
         pending = self.progress.pending()
         report = CycleReport(len(pending), sum(len(v) for v in jobs.values()))
         if self.settings.paused or not pending:
@@ -290,7 +307,35 @@ class Controller:
         )
 
     def pull(self) -> None:
-        self.transport.pull(self.progress, {c for a in self.live() for c in a.chunks})
+        self.transport.pull(self.progress, self._live_snapshot())
+
+    def _live_snapshot(self) -> set[str]:
+        return {c for a in self.live() for c in a.chunks}
+
+    def _start_ingest(self) -> None:
+        """Hand the live chunks to ingest; in the background, never wait for it (ADR-0031)."""
+        if not self.settings.background_ingest:
+            self.pull()
+            return
+        with self._live_lock:
+            self._live_chunks = self._live_snapshot()
+        self.progress.index(self.work_fp)  # the cycle's connection exists before the thread's
+        self.ingest.start()
+
+    def _ingest_pull(self) -> str:
+        """One pull, in the ingest thread (own SQLite connection; the cycle's is not shared)."""
+        if self._ingest_progress is None:
+            self._ingest_progress = WorkProgress(
+                self.store,
+                plan_fp=self.fp,
+                work_fp=self.work_fp,
+                datasets=self.settings.datasets,
+                complete_log=self.complete_log,
+                log=self.log,
+            )
+        with self._live_lock:
+            live = set(self._live_chunks)
+        return self.transport.pull(self._ingest_progress, live).line()
 
     # --- submission -----------------------------------------------------------------
 
@@ -472,7 +517,10 @@ class Controller:
                 for _ in range(slot.free_nodes):
                     if not self._room(slot.site, total, per_site):
                         break
-                    if time.monotonic() - last_pull >= PULL_INTERVAL:
+                    if (
+                        not self.settings.background_ingest
+                        and time.monotonic() - last_pull >= PULL_INTERVAL
+                    ):
                         self.pull()  # each submission waits ~20 s: do not let results pile up
                         last_pull = time.monotonic()
                     job_id, chunks = self.launch_ladder(slot, cluster, pending, taken, code_commit)
@@ -555,7 +603,8 @@ class Controller:
 
     def _ingest(self) -> None:
         try:
-            self.pull()
+            if not self.settings.background_ingest:
+                self.pull()
             self.progress.pending()  # marks and forgets finished chunks
         except Exception as exc:  # noqa: BLE001 - a failed ingest must not kill the cycle
             log_failure(self.log, "ingest during submission failed", exc)
@@ -754,6 +803,8 @@ class Controller:
         try:
             code = g5k.deploy_code(site, code_commit, git_archive(code_commit))
             self.transport.stage(site, a)
+            with self._live_lock:
+                self._live_chunks.update(chunks)  # ingest lists them once the job ends
             self.policy.before(site)
             self.save(a)  # before oarsub: crash-safe
             command = f"{code}/scripts/node_job.sh {code} {a.id}"
