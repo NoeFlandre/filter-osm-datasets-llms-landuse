@@ -152,3 +152,103 @@ def test_records_are_appended_in_chunks_so_a_stopped_job_keeps_them(tmp_path, mo
         ps.complete(store, "d", set(paths), opener, on_progress=lambda: seen.append(1))
     assert len(store.read_jsonl(ps.ledger("d"))) == 2  # the first chunk survived
     assert seen == [1]
+
+
+def test_refreshed_paths_are_counted_again_whatever_the_ledger_holds(tmp_path):
+    store = WorkStore(tmp_path / "w")
+    path = labels_file(tmp_path, "a.parquet", [("yes", None)])
+    ps.complete(store, "d", {"labels/a.parquet"}, lambda p: path)
+    labels_file(tmp_path, "a.parquet", [("no", None), ("no", None)])
+    again = ps.complete(store, "d", {"labels/a.parquet"}, lambda p: path)
+    assert again[0].decisions == {"yes": 1}  # cached
+    fresh = ps.complete(
+        store, "d", {"labels/a.parquet"}, lambda p: path, refresh={"labels/a.parquet"}
+    )
+    assert fresh[0].decisions == {"no": 2}
+    assert ps.complete(store, "d", {"labels/a.parquet"}, lambda p: path)[0].decisions == {"no": 2}
+
+
+def test_a_locator_does_not_recount_generation_records(tmp_path):
+    store = WorkStore(tmp_path / "w")
+    path = tmp_path / "g.parquet"
+    pq.write_table(pa.table({"gpu": ["A100-SXM4-40GB"]}), path)
+    opened = []
+
+    def opener(p):
+        opened.append(p)
+        return path
+
+    ps.complete(store, "d", {"generations/fp/b.parquet"}, opener)
+    ps.complete(store, "d", {"generations/fp/b.parquet"}, opener, lambda p, s: where())
+    assert opened == ["generations/fp/b.parquet"]
+
+
+def test_a_failing_file_is_skipped_unrecorded_and_counted_again_next_run(tmp_path):
+    store = WorkStore(tmp_path / "w")
+    good = labels_file(tmp_path, "a.parquet", [("yes", None)])
+    broken = True
+
+    def opener(p):
+        if p.endswith("b.parquet") and broken:
+            raise OSError("hub down")
+        return tmp_path / p.split("/")[-1]
+
+    labels_file(tmp_path, "b.parquet", [("no", None)])
+    published = {"labels/a.parquet", "labels/b.parquet"}
+    first = ps.complete(store, "d", published, opener)
+    assert [r.path for r in first] == ["labels/a.parquet"]
+    assert [r["path"] for r in store.read_jsonl(ps.ledger("d"))] == ["labels/a.parquet"]
+    broken = False
+    second = ps.complete(store, "d", published, opener)
+    assert [r.path for r in second] == ["labels/a.parquet", "labels/b.parquet"]
+    assert good.exists()
+
+
+def test_records_follow_the_sorted_published_paths_and_ignore_other_ledger_entries(tmp_path):
+    store = WorkStore(tmp_path / "w")
+    for name in ("a", "b", "c"):
+        labels_file(tmp_path, f"{name}.parquet", [("yes", None)])
+    opener = lambda p: tmp_path / p.split("/")[-1]  # noqa: E731
+    ps.complete(store, "d", {"labels/c.parquet"}, opener)
+    records = ps.complete(store, "d", {"labels/b.parquet", "labels/a.parquet"}, opener)
+    assert [r.path for r in records] == ["labels/a.parquet", "labels/b.parquet"]
+
+
+class _Stream:
+    """A Hub-style stream: reads like a file, must be closed once counted."""
+
+    def __init__(self, path, close=True):
+        self.f = path.open("rb")
+        self.closed_by_us = False
+        if close:
+            self.close = self._close
+
+    def _close(self):
+        self.closed_by_us = True
+        self.f.close()
+
+    def __getattr__(self, name):
+        if name == "close":
+            raise AttributeError(name)  # only defined when asked for
+        return getattr(self.f, name)
+
+
+def test_a_non_path_source_is_closed_after_counting_even_when_counting_fails(tmp_path):
+    path = labels_file(tmp_path, "a.parquet", [("yes", None)])
+    ok = _Stream(path)
+    stats = ps._count(lambda p: ok, "labels/a.parquet", None)
+    assert stats is not None
+    assert stats.decisions == {"yes": 1}
+    assert ok.closed_by_us
+    bad_file = tmp_path / "bad.parquet"
+    bad_file.write_bytes(b"not parquet")
+    bad = _Stream(bad_file)
+    assert ps._count(lambda p: bad, "labels/bad.parquet", None) is None
+    assert bad.closed_by_us
+
+
+def test_a_non_path_source_without_close_is_accepted(tmp_path):
+    path = labels_file(tmp_path, "a.parquet", [("yes", None)])
+    stats = ps._count(lambda p: _Stream(path, close=False), "labels/a.parquet", None)
+    assert stats is not None
+    assert stats.decisions == {"yes": 1}

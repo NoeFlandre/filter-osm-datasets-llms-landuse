@@ -1068,3 +1068,53 @@ def test_run_command_immediate_in_night_defaults_on_and_can_be_disabled(monkeypa
     for extra in ([], ["--no-immediate-in-night"]):
         assert CliRunner().invoke(cli.g5k_app, base + extra).exit_code == 0
     assert [s.immediate_in_night for s in seen] == [True, False]
+
+
+# --- serial submission caps and ingest cadence (characterization) -------------------
+
+
+def test_serial_total_cap_limits_submissions(world):
+    c, fake = world
+    c.settings.max_jobs_total = 1
+    assert len(c.cycle(NOW).submitted) == 1
+    assert len(fake.submitted) == 1
+
+
+def test_serial_per_site_cap_limits_submissions(world):
+    c, fake = world
+    c.settings.max_jobs_per_site = 1
+    assert len(c.cycle(NOW).submitted) == 1
+
+
+def test_serial_caps_count_the_jobs_already_running(world):
+    c, fake = world
+    fake.jobs["nancy"] = [g5k.Job("nancy", "9", "other", "Running", "abaca")]
+    c.settings.max_jobs_total = 2
+    assert len(c.cycle(NOW).submitted) == 1  # 1 existing + 1 new = the total cap
+
+
+def test_serial_submission_stops_when_the_site_policy_check_failed_earlier(world):
+    c, fake = world
+    fake.fail_checks = {1}
+    assert c.cycle(NOW).submitted == []
+    assert fake.submitted == []
+
+
+def test_serial_submission_pulls_between_submissions_when_ingest_is_inline(world, monkeypatch):
+    c, fake = world
+    pulls = []
+    monkeypatch.setattr(c, "pull", lambda: pulls.append(1))
+    monkeypatch.setattr(ctl_mod, "PULL_INTERVAL", 0.0)
+    c.settings.background_ingest = False
+    assert len(c.cycle(NOW).submitted) == 2
+    assert len(pulls) >= 2
+
+
+def test_serial_submission_never_pulls_when_ingest_runs_in_the_background(world, monkeypatch):
+    c, fake = world
+    pulls = []
+    monkeypatch.setattr(c, "pull", lambda: pulls.append(1))
+    monkeypatch.setattr(ctl_mod, "PULL_INTERVAL", 0.0)
+    c.settings.background_ingest = True
+    assert len(c.cycle(NOW).submitted) == 2
+    assert pulls == []

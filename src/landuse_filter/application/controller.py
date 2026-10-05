@@ -74,6 +74,25 @@ QUEUED_WAIT = timedelta(hours=1)
 
 
 @dataclass
+class _Caps:
+    """Jobs per site and in total (existing plus submitted this cycle) against the caps."""
+
+    total: int
+    per_site: dict[str, int]
+
+    @classmethod
+    def of(cls, jobs: dict[str, list[g5k.Job]]) -> "_Caps":
+        return cls(sum(len(v) for v in jobs.values()), {s: len(v) for s, v in jobs.items()})
+
+    def room(self, site: str, max_total: int, max_per_site: int) -> bool:
+        return self.total < max_total and self.per_site.get(site, 0) < max_per_site
+
+    def add(self, site: str) -> None:
+        self.total += 1
+        self.per_site[site] = self.per_site.get(site, 0) + 1
+
+
+@dataclass
 class Settings:
     datasets: list[str]
     sites: list[str]
@@ -399,7 +418,7 @@ class Controller:
         allow: Callable[[str], bool],
     ) -> list[tuple[Slot, Cluster]]:
         """The slots of one site's usable clusters (none when it is full or unreadable)."""
-        usable = [c for c in clusters if c.site == site and allow(c.gpu) and self.accessible(c)]
+        usable = self._usable_clusters(site, clusters, allow)
         if not usable or len(jobs.get(site, [])) >= self.settings.max_jobs_per_site:
             return []
         nodes = self._site_nodes(site)
@@ -408,6 +427,11 @@ class Controller:
         return [
             (slot, c) for c in usable for slot in self._cluster_slots(c, nodes, now, jobs) if slot
         ]
+
+    def _usable_clusters(
+        self, site: str, clusters: list[Cluster], allow: Callable[[str], bool]
+    ) -> list[Cluster]:
+        return [c for c in clusters if c.site == site and allow(c.gpu) and self.accessible(c)]
 
     def _site_nodes(self, site: str) -> dict | None:
         """The site's live node states, or ``None`` (logged) when they cannot be read."""
@@ -539,42 +563,40 @@ class Controller:
             return self._submit_parallel(now, jobs, pending)
         submitted: list[str] = []
         taken = self._taken_chunks()
-        total = sum(len(v) for v in jobs.values())
-        per_site = {s: len(v) for s, v in jobs.items()}
+        caps = _Caps.of(jobs)
         code_commit = commit()
         self.policy.begin_cycle()
         last_pull = time.monotonic()
         try:
             for slot, cluster in self.candidate_slots(now, jobs):
                 for _ in range(slot.free_nodes):
-                    if not self._room(slot.site, total, per_site):
+                    if not self._room(slot.site, caps):
                         break
-                    if (
-                        not self.settings.background_ingest
-                        and time.monotonic() - last_pull >= PULL_INTERVAL
-                    ):
-                        self.pull()  # each submission waits ~20 s: do not let results pile up
-                        last_pull = time.monotonic()
+                    last_pull = self._pull_if_due(last_pull)
                     job_id, chunks = self.launch_ladder(slot, cluster, pending, taken, code_commit)
                     if not chunks:
                         return submitted
                     if not job_id:
                         break  # this slot refused us; try the next cluster
                     taken.update(chunks)
-                    total += 1
-                    per_site[slot.site] = per_site.get(slot.site, 0) + 1
+                    caps.add(slot.site)
                     submitted.append(f"{slot.site}/{cluster.name}:{job_id}")
         finally:
             self.policy.finish_all()
         return submitted
 
-    def _room(self, site: str, total: int, per_site: dict[str, int]) -> bool:
+    def _pull_if_due(self, last_pull: float) -> float:
+        """Ingest inline when PULL_INTERVAL passed (each submission waits ~20 s); new instant."""
+        if self.settings.background_ingest or time.monotonic() - last_pull < PULL_INTERVAL:
+            return last_pull
+        self.pull()  # do not let results pile up
+        return time.monotonic()
+
+    def _room(self, site: str, caps: "_Caps") -> bool:
         """Whether another job may be submitted on ``site`` (caps, policy check not failed)."""
-        return (
-            total < self.settings.max_jobs_total
-            and per_site.get(site, 0) < self.settings.max_jobs_per_site
-            and not self.policy.blocked(site)
-        )
+        return caps.room(
+            site, self.settings.max_jobs_total, self.settings.max_jobs_per_site
+        ) and not self.policy.blocked(site)
 
     def _submit_parallel(
         self, now: datetime, jobs: dict[str, list[g5k.Job]], pending: list[tuple[str, int]]
@@ -586,6 +608,7 @@ class Controller:
         Results come back in plan order, whatever order the threads finished in.
         """
         taken = self._taken_chunks()
+        caps = _Caps.of(jobs)
         code_commit = commit()
         self.policy.begin_cycle()
         plan = plan_launches(
@@ -596,8 +619,8 @@ class Controller:
             overflow=self.settings.chunk_overflow,
             max_total=self.settings.max_jobs_total,
             max_per_site=self.settings.max_jobs_per_site,
-            total=sum(len(v) for v in jobs.values()),
-            per_site={s: len(v) for s, v in jobs.items()},
+            total=caps.total,
+            per_site=caps.per_site,
         )
         taken.update(c for p in plan for c in p.chunks)
         groups = by_site(plan)

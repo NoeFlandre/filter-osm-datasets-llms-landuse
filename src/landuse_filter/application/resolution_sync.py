@@ -12,8 +12,9 @@ import multiprocessing
 import os
 import shutil
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Generator, Iterable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
 
 import pyarrow as pa
@@ -99,6 +100,52 @@ def _download(remote: Remote, scratch: WorkStore, fp: str, keys: list[str]) -> l
     return [scratch.path(p) for p in paths]
 
 
+def _new_part_keys(remote: Remote, index: ResolutionIndex, fp: str) -> list[str]:
+    """Keys of the bucket's parts the index has not read yet, sorted."""
+    seen = index.parts()
+    on_bucket = {part_key(p) for p in remote.ls(f"parts/{fp}/") if p.endswith(".parquet")}
+    return sorted(k for k in on_bucket if k not in seen)
+
+
+def _prefetched(
+    batches: list[list[str]],
+    download: Callable[[list[str]], list[Path]],
+    io: ThreadPoolExecutor,
+    should_stop: Callable[[], bool],
+) -> Generator[tuple[list[str], list[Path]]]:
+    """``(keys, paths)`` per batch, the next batch downloading while the caller indexes.
+
+    Ends before the next batch on a stop request; closing it cancels the pending download."""
+    inflight = [io.submit(download, b) for b in batches[:1]]
+    try:
+        for i, keys in enumerate(batches):
+            if should_stop():
+                return
+            paths = inflight.pop().result()
+            inflight += [io.submit(download, b) for b in batches[i + 1 : i + 2]]
+            yield keys, paths
+    finally:
+        for future in inflight:
+            future.cancel()
+
+
+class _Checkpointer:
+    """Uploads the snapshot every ``seconds`` of catch-up, and once more if anything is unsaved."""
+
+    def __init__(self, save: Callable[[], None], seconds: float) -> None:
+        self.save, self.seconds = save, seconds
+        self.last, self.dirty = time.monotonic(), False
+
+    def batch_indexed(self) -> None:
+        self.dirty = True
+        if time.monotonic() - self.last >= self.seconds:
+            self.flush()
+
+    def flush(self) -> None:
+        self.save()
+        self.last, self.dirty = time.monotonic(), False
+
+
 def restore_resolution(
     remote: Remote,
     scratch: WorkStore,
@@ -114,14 +161,9 @@ def restore_resolution(
     midway still moved the next one forward. A stop request ends the catch-up early; the index
     then holds fewer verdicts, which only delays publications."""
     index = _restore_snapshot(remote, scratch, fp)
-    seen = index.parts()
-    new = sorted(
-        k
-        for k in {part_key(p) for p in remote.ls(f"parts/{fp}/") if p.endswith(".parquet")}
-        if k not in seen
-    )
+    new = _new_part_keys(remote, index, fp)
     batches = [new[i : i + BATCH] for i in range(0, len(new), BATCH)]
-    last, dirty = time.monotonic(), False
+    checkpoint = _Checkpointer(lambda: _save(remote, scratch, index, fp), checkpoint_seconds)
     try:
         with (
             ProcessPoolExecutor(
@@ -129,28 +171,16 @@ def restore_resolution(
                 mp_context=multiprocessing.get_context("spawn"),
             ) as procs,
             ThreadPoolExecutor(1) as io,
+            closing(
+                _prefetched(batches, lambda ks: _download(remote, scratch, fp, ks), io, should_stop)
+            ) as downloaded,
         ):
-            pending = io.submit(_download, remote, scratch, fp, batches[0]) if batches else None
-            for i, keys in enumerate(batches):
-                if should_stop():
-                    break
-                assert pending is not None  # noqa: S101 - a batch implies a download
-                paths = pending.result()
-                pending = (
-                    io.submit(_download, remote, scratch, fp, batches[i + 1])
-                    if i + 1 < len(batches)
-                    else None
-                )
+            for keys, paths in downloaded:
                 _index_batch(index, keys, paths, procs)
-                dirty = True
-                if time.monotonic() - last >= checkpoint_seconds:
-                    _save(remote, scratch, index, fp)
-                    last, dirty = time.monotonic(), False
-            if pending is not None:
-                pending.cancel()
+                checkpoint.batch_indexed()
     finally:
-        if dirty or not _on_bucket(remote, fp):
-            _save(remote, scratch, index, fp)
+        if checkpoint.dirty or not _on_bucket(remote, fp):
+            checkpoint.flush()
     return index
 
 
