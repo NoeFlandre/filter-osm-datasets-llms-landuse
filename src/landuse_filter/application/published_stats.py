@@ -9,8 +9,9 @@ from the Hub, so the card is always a function of the published data.
 
 import logging
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Any
@@ -150,36 +151,66 @@ def complete(
     """
     have = {r["path"]: FileStats.from_json(r) for r in store.compact_jsonl(ledger(dataset))}
     wanted = sorted(p for p in published if p.startswith(("labels/", "generations/")))
-    missing = [
-        p
-        for p in wanted
-        if p not in have
-        or p in refresh
-        or (locate and p.startswith("labels/") and have[p].cells is None)
-    ]
+    missing = [p for p in wanted if _needs_count(p, have, refresh, locate)]
+    _count_missing(
+        missing,
+        lambda p: _count(opener, p, locate),
+        lambda fresh: _record(store, dataset, have, fresh),
+        on_progress,
+    )
+    return [have[p] for p in wanted if p in have]
+
+
+def _count_missing(
+    missing: list[str],
+    count: Callable[[str], FileStats | None],
+    record: Callable[[list[FileStats]], None],
+    on_progress: Callable[[], None] | None,
+) -> None:
     with ThreadPoolExecutor(COUNT_WORKERS) as pool:
         for start in range(0, len(missing), RECORD_FLUSH):
-            batch = missing[start : start + RECORD_FLUSH]
-            fresh = [r for r in pool.map(lambda p: _count(opener, p, locate), batch) if r]
-            if fresh:
-                store.append_jsonl(ledger(dataset), [r.to_json() for r in fresh])
-                have.update({r.path: r for r in fresh})
+            fresh = [r for r in pool.map(count, missing[start : start + RECORD_FLUSH]) if r]
+            record(fresh)
             if on_progress:
                 on_progress()  # ledger appends stay in this thread
-    return [have[p] for p in wanted if p in have]
+
+
+def _needs_count(
+    path: str,
+    have: dict[str, FileStats],
+    refresh: set[str] | frozenset[str],
+    locate: Locator | None,
+) -> bool:
+    """Not in the ledger, just re-uploaded, or a labels record still lacking its map cells."""
+    if path not in have or path in refresh:
+        return True
+    return bool(locate) and path.startswith("labels/") and have[path].cells is None
+
+
+def _record(
+    store: WorkStore, dataset: str, have: dict[str, FileStats], fresh: list[FileStats]
+) -> None:
+    if fresh:
+        store.append_jsonl(ledger(dataset), [r.to_json() for r in fresh])
+        have.update({r.path: r for r in fresh})
+
+
+@contextmanager
+def _opened(opener: Opener, path: str) -> Iterator[Source]:
+    """The opened source, closed afterwards when it is a stream (a Path has nothing to close)."""
+    source = opener(path)
+    try:
+        yield source
+    finally:
+        if not isinstance(source, Path) and (close := getattr(source, "close", None)):
+            close()
 
 
 def _count(opener: Opener, path: str, locate: Locator | None) -> FileStats | None:
     """Count one file; a failure is logged and skipped (the next run counts it again)."""
     try:
-        source = opener(path)
-        try:
+        with _opened(opener, path) as source:
             return file_stats(path, source, locate)
-        finally:
-            if not isinstance(source, Path):
-                close = getattr(source, "close", None)
-                if close:
-                    close()
     except Exception:
         log.exception("counting %s failed; skipped until the next run", path)
         return None
