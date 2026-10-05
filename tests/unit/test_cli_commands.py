@@ -1,5 +1,6 @@
 """Typer CliRunner tests: option parsing, defaults, exit codes; use cases are stubbed."""
 
+import dataclasses
 import json
 from datetime import timedelta
 from pathlib import Path
@@ -168,6 +169,64 @@ def test_g5k_run_admission_builds_one_controller_per_gpu(monkeypatch, tmp_path):
     assert all(s.bucket == OPS.bucket for s in built)
     assert len(ran["ctls"]) == 2
     assert ran["interval"] == OPS.interval_seconds
+
+
+# Captured before the settings builder was shared: both commands' full default Settings.
+_COMMON_DEFAULTS = {
+    "night_max_queued_per_site": None,
+    "walltime": timedelta(hours=1),
+    "night_walltime": timedelta(hours=2),
+    "night_fallback_walltime": timedelta(minutes=30),
+    "day_walltime": timedelta(hours=1),
+    "day_long_max_failures": 3,
+    "chunk_overflow": 1.2,
+    "stale_besteffort_wait": timedelta(minutes=20),
+    "window": None,
+    "bucket": "NoeFlandre/landuse-filter-work",
+    "paused": False,
+    "submit_workers": 1,
+    "immediate_in_night": True,
+    "background_ingest": True,
+    "policy_check": "per-job",
+}
+_RUN_DEFAULTS = {
+    "datasets": ["benchmark"],
+    "max_jobs_total": 12,
+    "max_jobs_per_site": 4,
+    "max_queued_per_site": 1,
+    "besteffort": False,
+    "gpu_models": [],
+    "namespace": None,
+}
+_ADMISSION_DEFAULTS = {
+    "datasets": ["benchmark"],
+    "max_jobs_total": 5,
+    "max_jobs_per_site": 3,
+    "max_queued_per_site": 2,
+    "besteffort": True,
+    "gpu_models": ["l40s"],
+    "namespace": "gpu-l40s",
+}
+
+
+def test_g5k_run_default_settings_are_pinned(loop, tmp_path):
+    invoke("g5k", "run", "--datasets", "benchmark", "--work", tmp_path)
+    expected = {**_COMMON_DEFAULTS, **_RUN_DEFAULTS, "sites": list(OPS.sites)}
+    assert dataclasses.asdict(loop["ctl"][1]) == expected
+
+
+def test_g5k_run_admission_default_settings_are_pinned(monkeypatch, tmp_path):
+    built = []
+
+    class FakeController:
+        def __init__(self, store, settings, log, sites):
+            built.append(settings)
+
+    monkeypatch.setattr(ctl_mod, "Controller", FakeController)
+    monkeypatch.setattr(ctl_mod, "run_many", lambda *a, **kw: None)
+    invoke("g5k", "run-admission", "--gpus", "l40s", "--work", tmp_path)
+    expected = {**_COMMON_DEFAULTS, **_ADMISSION_DEFAULTS, "sites": list(OPS.sites)}
+    assert dataclasses.asdict(built[0]) == expected
 
 
 # --- g5k cpu-job ---------------------------------------------------------------------
