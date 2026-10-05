@@ -1,21 +1,64 @@
 """Part-upload economy (ADR-0030): large flush thresholds, one commit per part."""
 
 import asyncio
+from types import SimpleNamespace
 
 import pyarrow as pa
 
 from landuse_filter.adapters.store import WorkStore
+from landuse_filter.application import node
 from landuse_filter.application.node import Runner
 from landuse_filter.application.sync import upload_part
 from tests.unit.test_node import PROV, FakeEngine, chunk, runner
 
 
-def test_default_thresholds_give_one_part_for_a_whole_chunk(tmp_path):
+def _default_runner(store, engine=None):
+    return Runner(store, engine or FakeEngine(), "fp", PROV, window=1)
+
+
+def test_a_run_of_exactly_the_default_count_threshold_gives_one_part(tmp_path):
     store = WorkStore(tmp_path)
-    chunk(store)
-    r = Runner(store, FakeEngine(), "fp", PROV, window=4)
-    stats = asyncio.run(r.run(["c1"]))
-    assert (stats.parts, stats.completed) == (1, 10)
+    chunk(store, n=2048)
+    stats = asyncio.run(_default_runner(store).run(["c1"]))
+    assert (stats.parts, stats.completed) == (1, 2048)
+
+
+def test_the_default_count_threshold_flushes_exactly_at_2048(tmp_path):
+    store = WorkStore(tmp_path)
+    chunk(store, n=2049)
+    stats = asyncio.run(_default_runner(store).run(["c1"]))
+    assert (stats.parts, stats.completed) == (2, 2049)
+
+
+class ClockedEngine(FakeEngine):
+    """Each generation advances a fake clock by ``step`` seconds."""
+
+    def __init__(self, clock, step):
+        super().__init__()
+        self.clock, self.step = clock, step
+
+    async def generate(self, input_ids):
+        self.clock[0] += self.step
+        return await super().generate(input_ids)
+
+
+def _parts_with_clock(tmp_path, monkeypatch, step, n):
+    clock = [0.0]
+    # Only the runner's clock is faked; asyncio keeps the real one.
+    monkeypatch.setattr(node, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    store = WorkStore(tmp_path)
+    chunk(store, n=n)
+    r = Runner(store, ClockedEngine(clock, step), "fp", PROV, window=1)
+    return asyncio.run(r.run(["c1"])).parts
+
+
+def test_default_time_threshold_does_not_flush_just_under_300_seconds(tmp_path, monkeypatch):
+    assert _parts_with_clock(tmp_path, monkeypatch, step=29.0, n=10) == 1  # 290 s in total
+
+
+def test_default_time_threshold_flushes_at_300_seconds(tmp_path, monkeypatch):
+    # 20 results at 30 s: a flush after the 10th (300 s) and after the 20th (300 s again)
+    assert _parts_with_clock(tmp_path, monkeypatch, step=30.0, n=20) == 2
 
 
 def test_large_threshold_gives_one_part(tmp_path):
