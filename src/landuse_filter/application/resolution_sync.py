@@ -12,7 +12,7 @@ import multiprocessing
 import os
 import shutil
 import time
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Generator, Iterable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
@@ -112,7 +112,7 @@ def _prefetched(
     download: Callable[[list[str]], list[Path]],
     io: ThreadPoolExecutor,
     should_stop: Callable[[], bool],
-) -> Iterator[tuple[list[str], list[Path]]]:
+) -> Generator[tuple[list[str], list[Path]]]:
     """``(keys, paths)`` per batch, the next batch downloading while the caller indexes.
 
     Ends before the next batch on a stop request; closing it cancels the pending download."""
