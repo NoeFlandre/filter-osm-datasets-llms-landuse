@@ -3,7 +3,7 @@
 import hashlib
 from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 
@@ -25,6 +25,116 @@ def _controller(work: Path, settings: "Settings") -> "Controller":
     from landuse_filter.application.controller import Controller
 
     return Controller(_store(work), settings, log=lambda m: typer.echo(m, err=True))
+
+
+RUN_MAX_QUEUED_PER_SITE = 1
+ADMISSION_MAX_JOBS = 5
+ADMISSION_MAX_JOBS_PER_SITE = 3
+ADMISSION_MAX_QUEUED_PER_SITE = 2
+STALE_BESTEFFORT_MINUTES = 20
+
+WalltimeMinutes = Annotated[int, typer.Option()]
+DayWalltimeMinutes = Annotated[
+    int | None,
+    typer.Option(
+        help="Preferred (long) day walltime, retried with --walltime-minutes if it cannot "
+        "start (default: --walltime-minutes).",
+    ),
+]
+DayLongMaxFailures = Annotated[
+    int,
+    typer.Option(help="Consecutive failed long day attempts on a cluster before a 1 h pause."),
+]
+ChunkOverflow = Annotated[
+    float,
+    typer.Option(
+        min=1.0,
+        help="Work given to a job = expected capacity x this (>= 1.0); unfinished chunks "
+        "return to the pool at the checkpoint signal.",
+    ),
+]
+SubmitWorkers = Annotated[
+    int,
+    typer.Option(
+        min=1,
+        help="Sites submitted to in parallel (one worker per site; 1 = one job after "
+        "another). See ADR-0020.",
+    ),
+]
+PolicyCheckOption = Annotated[
+    PolicyCheck,
+    typer.Option(
+        help="usagepolicycheck cadence: per-job (before and after every submission) or "
+        "per-batch (once per site before its first submission of a cycle and once after "
+        "its last; see ADR-0019).",
+    ),
+]
+NightWalltimeMinutes = Annotated[
+    int, typer.Option(help="Preferred (long) walltime for night/weekend jobs.")
+]
+NightFallbackWalltimeMinutes = Annotated[
+    int,
+    typer.Option(
+        help="Shorter night walltime retried in the same slot if the long job cannot start."
+    ),
+]
+NightMaxQueuedPerSite = Annotated[
+    int | None,
+    typer.Option(help="Waiting jobs per site at night/weekend (default: --max-queued-per-site)."),
+]
+
+
+def build_settings(
+    *,
+    datasets: list[str],
+    sites: str,
+    max_jobs: int,
+    max_jobs_per_site: int,
+    max_queued_per_site: int,
+    walltime_minutes: int,
+    day_walltime_minutes: int | None,
+    night_walltime_minutes: int,
+    night_fallback_walltime_minutes: int,
+    stale_besteffort_minutes: int,
+    policy_check: PolicyCheck,
+    day_long_max_failures: int,
+    chunk_overflow: float,
+    submit_workers: int,
+    night_max_queued_per_site: int | None,
+    besteffort: bool,
+    gpu_models: list[str],
+    namespace: str | None,
+    bucket: str,
+    immediate_in_night: bool = True,
+    window: int | None = None,
+) -> "Settings":
+    """The one mapping from CLI options to `Settings` (units converted here)."""
+    from landuse_filter.application.controller import Settings
+
+    return Settings(
+        sites=sites.split(","),
+        max_jobs_total=max_jobs,
+        max_jobs_per_site=max_jobs_per_site,
+        max_queued_per_site=max_queued_per_site,
+        walltime=timedelta(minutes=walltime_minutes),
+        day_walltime=timedelta(minutes=day_walltime_minutes or walltime_minutes),
+        night_walltime=timedelta(minutes=night_walltime_minutes),
+        night_fallback_walltime=timedelta(minutes=night_fallback_walltime_minutes),
+        stale_besteffort_wait=timedelta(minutes=stale_besteffort_minutes),
+        policy_check=policy_check.value,
+        background_ingest=True,
+        datasets=datasets,
+        day_long_max_failures=day_long_max_failures,
+        chunk_overflow=chunk_overflow,
+        submit_workers=submit_workers,
+        night_max_queued_per_site=night_max_queued_per_site,
+        besteffort=besteffort,
+        gpu_models=gpu_models,
+        namespace=namespace,
+        bucket=bucket,
+        immediate_in_night=immediate_in_night,
+        window=window,
+    )
 
 
 @g5k_app.command("inventory")
@@ -59,54 +169,28 @@ def g5k_run(
     ),
     max_jobs: int = typer.Option(OPS.max_jobs),
     max_jobs_per_site: int = typer.Option(OPS.max_jobs_per_site),
-    walltime_minutes: int = typer.Option(OPS.walltime_minutes),
-    day_walltime_minutes: int | None = typer.Option(
-        OPS.day_walltime_minutes,
-        help="Preferred (long) day walltime, retried with --walltime-minutes if it cannot "
-        "start (default: --walltime-minutes).",
-    ),
-    day_long_max_failures: int = typer.Option(
-        OPS.day_long_max_failures,
-        help="Consecutive failed long day attempts on a cluster before a 1 h pause.",
-    ),
-    chunk_overflow: float = typer.Option(
-        OPS.chunk_overflow,
-        min=1.0,
-        help="Work given to a job = expected capacity x this (>= 1.0); unfinished chunks "
-        "return to the pool at the checkpoint signal.",
-    ),
-    submit_workers: int = typer.Option(
-        OPS.submit_workers,
-        min=1,
-        help="Sites submitted to in parallel (one worker per site; 1 = one job after "
-        "another). See ADR-0020.",
-    ),
-    policy_check: PolicyCheck = typer.Option(
-        PolicyCheck(OPS.policy_check),
-        help="usagepolicycheck cadence: per-job (before and after every submission) or "
-        "per-batch (once per site before its first submission of a cycle and once after "
-        "its last; see ADR-0019).",
-    ),
-    night_walltime_minutes: int = typer.Option(
-        OPS.night_walltime_minutes, help="Preferred (long) walltime for night/weekend jobs."
-    ),
-    night_fallback_walltime_minutes: int = typer.Option(
-        OPS.night_fallback_walltime_minutes,
-        help="Shorter night walltime retried in the same slot if the long job cannot start.",
+    walltime_minutes: WalltimeMinutes = OPS.walltime_minutes,
+    day_walltime_minutes: DayWalltimeMinutes = OPS.day_walltime_minutes,
+    day_long_max_failures: DayLongMaxFailures = OPS.day_long_max_failures,
+    chunk_overflow: ChunkOverflow = OPS.chunk_overflow,
+    submit_workers: SubmitWorkers = OPS.submit_workers,
+    policy_check: PolicyCheckOption = PolicyCheck(OPS.policy_check),
+    night_walltime_minutes: NightWalltimeMinutes = OPS.night_walltime_minutes,
+    night_fallback_walltime_minutes: NightFallbackWalltimeMinutes = (
+        OPS.night_fallback_walltime_minutes
     ),
     besteffort: bool = typer.Option(False),
     stale_besteffort_minutes: int = typer.Option(
-        20,
+        STALE_BESTEFFORT_MINUTES,
         min=1,
         help="Cancel our besteffort jobs still waiting this long after submission "
         "(their GPUs were taken); night/exotic jobs are never reaped. See ADR-0025.",
     ),
     max_queued_per_site: int = typer.Option(
-        1, help="Waiting jobs allowed per site when nothing is free (start predicted < 2 h)."
+        RUN_MAX_QUEUED_PER_SITE,
+        help="Waiting jobs allowed per site when nothing is free (start predicted < 2 h).",
     ),
-    night_max_queued_per_site: int | None = typer.Option(
-        None, help="Waiting jobs per site at night/weekend (default: --max-queued-per-site)."
-    ),
+    night_max_queued_per_site: NightMaxQueuedPerSite = None,
     immediate_in_night: bool = typer.Option(
         True,
         help="At night/weekend also submit immediate-start jobs (no -t night, <= 1 h) "
@@ -123,31 +207,28 @@ def g5k_run(
     once: bool = typer.Option(False, help="Run a single cycle and exit."),
 ) -> None:
     """The controller loop: reconcile, pull results, submit where GPUs are free now."""
-    from landuse_filter.application.controller import Settings
-
-    settings = Settings(
+    settings = build_settings(
         datasets=datasets.split(","),
-        sites=sites.split(","),
-        max_jobs_total=max_jobs,
+        sites=sites,
+        max_jobs=max_jobs,
         max_jobs_per_site=max_jobs_per_site,
         max_queued_per_site=max_queued_per_site,
-        walltime=timedelta(minutes=walltime_minutes),
-        day_walltime=timedelta(minutes=day_walltime_minutes or walltime_minutes),
+        walltime_minutes=walltime_minutes,
+        day_walltime_minutes=day_walltime_minutes,
         day_long_max_failures=day_long_max_failures,
         chunk_overflow=chunk_overflow,
-        policy_check=policy_check.value,
+        policy_check=policy_check,
         submit_workers=submit_workers,
-        night_walltime=timedelta(minutes=night_walltime_minutes),
-        night_fallback_walltime=timedelta(minutes=night_fallback_walltime_minutes),
+        night_walltime_minutes=night_walltime_minutes,
+        night_fallback_walltime_minutes=night_fallback_walltime_minutes,
         night_max_queued_per_site=night_max_queued_per_site,
         immediate_in_night=immediate_in_night,
         besteffort=besteffort,
-        stale_besteffort_wait=timedelta(minutes=stale_besteffort_minutes),
+        stale_besteffort_minutes=stale_besteffort_minutes,
         gpu_models=[g for g in gpu_models.split(",") if g],
         window=window,
         namespace=namespace,
         bucket=bucket,
-        background_ingest=True,
     )
     ctl = _controller(work, settings)
     from landuse_filter.application.controller import run_loop
@@ -160,57 +241,33 @@ def g5k_run_admission(
     gpus: str = typer.Option(..., help="Comma-separated GPU keys to admit (full benchmark each)."),
     work: Path = WORK,
     sites: str = typer.Option(SITES),
-    max_jobs: int = typer.Option(5, help="Per GPU type."),
-    max_jobs_per_site: int = typer.Option(3),
-    walltime_minutes: int = typer.Option(OPS.walltime_minutes),
-    day_walltime_minutes: int | None = typer.Option(
-        OPS.day_walltime_minutes,
-        help="Preferred (long) day walltime, retried with --walltime-minutes if it cannot "
-        "start (default: --walltime-minutes).",
-    ),
-    day_long_max_failures: int = typer.Option(
-        OPS.day_long_max_failures,
-        help="Consecutive failed long day attempts on a cluster before a 1 h pause.",
-    ),
-    chunk_overflow: float = typer.Option(
-        OPS.chunk_overflow,
-        min=1.0,
-        help="Work given to a job = expected capacity x this (>= 1.0); unfinished chunks "
-        "return to the pool at the checkpoint signal.",
-    ),
-    submit_workers: int = typer.Option(
-        OPS.submit_workers,
-        min=1,
-        help="Sites submitted to in parallel (one worker per site; 1 = one job after "
-        "another). See ADR-0020.",
-    ),
-    policy_check: PolicyCheck = typer.Option(
-        PolicyCheck(OPS.policy_check),
-        help="usagepolicycheck cadence: per-job (before and after every submission) or "
-        "per-batch (once per site before its first submission of a cycle and once after "
-        "its last; see ADR-0019).",
-    ),
-    night_walltime_minutes: int = typer.Option(
-        OPS.night_walltime_minutes, help="Preferred (long) walltime for night/weekend jobs."
-    ),
-    night_fallback_walltime_minutes: int = typer.Option(
-        OPS.night_fallback_walltime_minutes,
-        help="Shorter night walltime retried in the same slot if the long job cannot start.",
+    max_jobs: int = typer.Option(ADMISSION_MAX_JOBS, help="Per GPU type."),
+    max_jobs_per_site: int = typer.Option(ADMISSION_MAX_JOBS_PER_SITE),
+    walltime_minutes: WalltimeMinutes = OPS.walltime_minutes,
+    day_walltime_minutes: DayWalltimeMinutes = OPS.day_walltime_minutes,
+    day_long_max_failures: DayLongMaxFailures = OPS.day_long_max_failures,
+    chunk_overflow: ChunkOverflow = OPS.chunk_overflow,
+    submit_workers: SubmitWorkers = OPS.submit_workers,
+    policy_check: PolicyCheckOption = PolicyCheck(OPS.policy_check),
+    night_walltime_minutes: NightWalltimeMinutes = OPS.night_walltime_minutes,
+    night_fallback_walltime_minutes: NightFallbackWalltimeMinutes = (
+        OPS.night_fallback_walltime_minutes
     ),
     stale_besteffort_minutes: int = typer.Option(
-        20, min=1, help="Cancel besteffort jobs still waiting this long (ADR-0025)."
+        STALE_BESTEFFORT_MINUTES,
+        min=1,
+        help="Cancel besteffort jobs still waiting this long (ADR-0025).",
     ),
     max_queued_per_site: int = typer.Option(
-        2, help="Waiting jobs allowed per site when nothing is free (night/weekend)."
+        ADMISSION_MAX_QUEUED_PER_SITE,
+        help="Waiting jobs allowed per site when nothing is free (night/weekend).",
     ),
-    night_max_queued_per_site: int | None = typer.Option(
-        None, help="Waiting jobs per site at night/weekend (default: --max-queued-per-site)."
-    ),
+    night_max_queued_per_site: NightMaxQueuedPerSite = None,
     interval: int = typer.Option(OPS.interval_seconds),
 ) -> None:
     """One process for every GPU-type admission run (namespace gpu-<key>), sharing one
     view of each site per cycle; afterwards run `luf bench admit --gpu <key>`."""
-    from landuse_filter.application.controller import Controller, Settings, run_many
+    from landuse_filter.application.controller import Controller, run_many
     from landuse_filter.application.site_cache import SiteCache
 
     cache = SiteCache()
@@ -218,27 +275,26 @@ def g5k_run_admission(
     controllers = [
         Controller(
             store,
-            Settings(
+            build_settings(
                 datasets=["benchmark"],
-                sites=sites.split(","),
-                max_jobs_total=max_jobs,
+                sites=sites,
+                max_jobs=max_jobs,
                 max_jobs_per_site=max_jobs_per_site,
                 max_queued_per_site=max_queued_per_site,
-                walltime=timedelta(minutes=walltime_minutes),
-                day_walltime=timedelta(minutes=day_walltime_minutes or walltime_minutes),
+                walltime_minutes=walltime_minutes,
+                day_walltime_minutes=day_walltime_minutes,
                 day_long_max_failures=day_long_max_failures,
                 chunk_overflow=chunk_overflow,
-                policy_check=policy_check.value,
+                policy_check=policy_check,
                 submit_workers=submit_workers,
-                night_walltime=timedelta(minutes=night_walltime_minutes),
-                night_fallback_walltime=timedelta(minutes=night_fallback_walltime_minutes),
+                night_walltime_minutes=night_walltime_minutes,
+                night_fallback_walltime_minutes=night_fallback_walltime_minutes,
                 night_max_queued_per_site=night_max_queued_per_site,
                 besteffort=True,
-                stale_besteffort_wait=timedelta(minutes=stale_besteffort_minutes),
+                stale_besteffort_minutes=stale_besteffort_minutes,
                 gpu_models=[g],
                 namespace=f"gpu-{g}",
                 bucket=OPS.bucket,
-                background_ingest=True,
             ),
             log=lambda m: typer.echo(m, err=True),
             sites=cache,
@@ -274,15 +330,14 @@ def _submit_cpu_job(
     if mode not in ("plan", "replan", "publish", "card", "repair"):
         raise typer.BadParameter("mode must be plan, replan, publish, card or repair")
     from datetime import datetime
-    from zoneinfo import ZoneInfo
 
     from landuse_filter.adapters import g5k
-    from landuse_filter.application.controller import commit, git_archive
+    from landuse_filter.application.controller import PARIS, commit, git_archive
     from landuse_filter.domain.capacity import walltime_text
     from landuse_filter.domain.policy import allowed_window
     from landuse_filter.domain.publish_loop import job_name
 
-    window = allowed_window(datetime.now(ZoneInfo("Europe/Paris")), starts_now=True)
+    window = allowed_window(datetime.now(PARIS), starts_now=True)
     wall = min(timedelta(minutes=minutes), window.max_walltime) if window else timedelta(hours=1)
     code_commit = commit()
     code = g5k.deploy_code(site, code_commit, git_archive(code_commit))
@@ -358,10 +413,9 @@ def g5k_calibrate_job(
 ) -> None:
     """Submit one GPU calibration job on ``cluster`` (1 h, starts now or is cancelled)."""
     from datetime import datetime
-    from zoneinfo import ZoneInfo
 
     from landuse_filter.adapters import g5k
-    from landuse_filter.application.controller import commit, git_archive
+    from landuse_filter.application.controller import PARIS, commit, git_archive
     from landuse_filter.application.inventory import load_clusters
     from landuse_filter.domain.capacity import oarsub_arguments
     from landuse_filter.domain.policy import allowed_window
@@ -369,11 +423,7 @@ def g5k_calibrate_job(
     target = next(c for c in load_clusters(_store(work)) if c.site == site and c.name == cluster)
     # Same usage-policy window as the controller: -t night outside daytime, otherwise a
     # 1 h immediate job (regression: an untyped job at 18:40 was scheduled for 08:02).
-    window = (
-        None
-        if target.production
-        else allowed_window(datetime.now(ZoneInfo("Europe/Paris")), starts_now=True)
-    )
+    window = None if target.production else allowed_window(datetime.now(PARIS), starts_now=True)
     wall = min(timedelta(hours=1), window.max_walltime) if window else timedelta(hours=1)
     code_commit = commit()
     code = g5k.deploy_code(site, code_commit, git_archive(code_commit))
