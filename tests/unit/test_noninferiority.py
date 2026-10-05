@@ -18,7 +18,8 @@ def items(n_lang=3, n=120, seed=1):
 
 def test_identical_predictions_pass_with_zero_delta():
     result = evaluate_gate(items(), resamples=500)
-    assert result.passed
+    assert result.passed is True
+    assert result.reasons == ()
     assert result.delta_f1 == 0.0
     assert result.agreement == 1.0
 
@@ -35,8 +36,13 @@ def test_systematic_degradation_fails():
         for k, i in enumerate(base)
     ]
     result = evaluate_gate(worse, resamples=500)
-    assert not result.passed
-    assert result.reasons
+    assert result.passed is False
+    assert result.reasons == (
+        "macro-F1 lower bound -0.0402 <= -0.02",
+        "macro-MCC lower bound -0.1014 <= -0.02",
+        "macro-accuracy lower bound -0.1835 <= -0.02",
+        "failed-rate upper bound 0.1835 >= +0.005",
+    )
 
 
 def test_single_language_collapse_is_blocking():
