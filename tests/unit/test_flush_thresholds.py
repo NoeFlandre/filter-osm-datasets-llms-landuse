@@ -42,23 +42,32 @@ class ClockedEngine(FakeEngine):
         return await super().generate(input_ids)
 
 
-def _parts_with_clock(tmp_path, monkeypatch, step, n):
+def _part_sizes_with_clock(tmp_path, monkeypatch, step, n):
     clock = [0.0]
     # Only the runner's clock is faked; asyncio keeps the real one.
     monkeypatch.setattr(node, "time", SimpleNamespace(monotonic=lambda: clock[0]))
     store = WorkStore(tmp_path)
     chunk(store, n=n)
-    r = Runner(store, ClockedEngine(clock, step), "fp", PROV, window=1)
-    return asyncio.run(r.run(["c1"])).parts
+    sizes = []
+    r = Runner(
+        store,
+        ClockedEngine(clock, step),
+        "fp",
+        PROV,
+        window=1,
+        on_part=lambda _chunk, _part, shas: sizes.append(len(shas)),
+    )
+    asyncio.run(r.run(["c1"]))
+    return sizes
 
 
 def test_default_time_threshold_does_not_flush_just_under_300_seconds(tmp_path, monkeypatch):
-    assert _parts_with_clock(tmp_path, monkeypatch, step=29.0, n=10) == 1  # 290 s in total
+    assert _part_sizes_with_clock(tmp_path, monkeypatch, step=29.0, n=10) == [10]  # 290 s
 
 
 def test_default_time_threshold_flushes_at_300_seconds(tmp_path, monkeypatch):
-    # 20 results at 30 s: a flush after the 10th (300 s) and after the 20th (300 s again)
-    assert _parts_with_clock(tmp_path, monkeypatch, step=30.0, n=20) == 2
+    # 20 results at 30 s: the flush happens at 300 s (10 rows), not later; 10 rows remain
+    assert _part_sizes_with_clock(tmp_path, monkeypatch, step=30.0, n=20) == [10, 10]
 
 
 def test_large_threshold_gives_one_part(tmp_path):
