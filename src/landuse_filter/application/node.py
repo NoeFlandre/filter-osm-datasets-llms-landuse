@@ -22,6 +22,11 @@ from landuse_filter.domain.parsing import parse_generation
 from landuse_filter.domain.records import RULE_NO_LETTERS, Generation, from_sglang, rule_decided_no
 from landuse_filter.domain.sentences import Decision, has_no_letters
 
+# One part upload costs ~2 Hub API requests (ADR-0030); big parts keep ~35 GPUs well under the
+# account limit. An abrupt kill loses at most FLUSH_SECONDS of work (a graceful stop flushes all).
+FLUSH_EVERY = 2048
+FLUSH_SECONDS = 300.0
+
 
 class AsyncEngine(Protocol):
     def generate(self, input_ids: list[int]) -> Awaitable[dict]: ...
@@ -58,8 +63,8 @@ class Runner:
     fp: str
     provenance: dict[str, str]
     window: int = 64
-    flush_every: int = 256
-    flush_seconds: float = 120.0
+    flush_every: int = FLUSH_EVERY
+    flush_seconds: float = FLUSH_SECONDS
     should_stop: Callable[[], bool] = lambda: False
     # Called after each part is written locally: (chunk id, part id, text hashes).
     on_part: Callable[[str, str, list[str]], None] | None = None

@@ -20,12 +20,15 @@ def manifest_path(fp: str, chunk_id: str, part_id: str) -> str:
 def upload_part(
     remote: Remote, store: WorkStore, fp: str, chunk_id: str, *, part_id: str, shas: list[str]
 ) -> None:
-    """Upload a part, then its manifest (manifest last: its presence implies the part)."""
+    """Upload a part and its manifest in ONE commit (atomic: a manifest implies its part).
+
+    One ``put`` is one ``batch_bucket_files`` call, about two Hub API requests (xet write
+    token + ``/batch``) whatever the number of files.
+    """
     parquet = f"parts/{fp}/{chunk_id}/{part_id}.parquet"
     manifest = manifest_path(fp, chunk_id, part_id)
     store.write_json(manifest, {"part_id": part_id, "text_sha256s": sorted(shas)})
-    remote.put([(store.path(parquet), parquet)])
-    remote.put([(store.path(manifest), manifest)])
+    remote.put([(store.path(parquet), parquet), (store.path(manifest), manifest)])
 
 
 def fetch(remote: Remote, store: WorkStore, paths: list[str]) -> None:

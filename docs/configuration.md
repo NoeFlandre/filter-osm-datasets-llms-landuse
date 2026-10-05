@@ -74,6 +74,13 @@ OAR checkpoint signal (5 minutes before the walltime ends). Then the node flushe
 and exits. The unfinished chunks return to the pool. Production: `--chunk-overflow 1.6`.
 To revert, do not set the option (1.2). See [ADR-0018](adr/0018-over-assignment.md).
 
+## Part flush thresholds
+
+A node uploads one part (parquet + manifest, one commit, about 2 Hub API requests) per 2048
+results or 300 s, whichever comes first (`FLUSH_EVERY`, `FLUSH_SECONDS` in
+`application/node.py`). A graceful stop flushes everything; an abrupt kill loses at most 300 s.
+Old small parts mix freely with new ones. See [ADR-0030](adr/0030-fewer-larger-part-uploads.md).
+
 ## Stale besteffort jobs
 
 `--stale-besteffort-minutes` (`luf g5k run` and `run-admission`; default 20) cancels our
