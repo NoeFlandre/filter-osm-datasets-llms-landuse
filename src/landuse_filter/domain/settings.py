@@ -103,20 +103,35 @@ class Field:
     default: Any = None
 
 
-def _optional(
-    name: str, kind: str, parse: Callable[[Mapping[str, Any], str], Any], default: object
-) -> Field:
-    return Field(name, "grid5000", kind, parse, required=False, default=default)
-
-
 # The one place that lists the settings; parsing and environment overrides derive from it.
 # Order is the order in which a bad value is reported.
 FIELDS: Final = (
-    _optional("day_walltime_minutes", "int", _positive, None),
-    _optional("day_long_max_failures", "int", _positive, DEFAULT_LONG_FAILURES),
-    _optional("chunk_overflow", "float", _overflow, DEFAULT_CHUNK_OVERFLOW),
-    _optional("policy_check", "str", _policy_check, PER_JOB),
-    _optional("submit_workers", "int", _positive, DEFAULT_SUBMIT_WORKERS),
+    Field("day_walltime_minutes", "grid5000", "int", _positive, required=False, default=None),
+    Field(
+        "day_long_max_failures",
+        "grid5000",
+        "int",
+        _positive,
+        required=False,
+        default=DEFAULT_LONG_FAILURES,
+    ),
+    Field(
+        "chunk_overflow",
+        "grid5000",
+        "float",
+        _overflow,
+        required=False,
+        default=DEFAULT_CHUNK_OVERFLOW,
+    ),
+    Field("policy_check", "grid5000", "str", _policy_check, required=False, default=PER_JOB),
+    Field(
+        "submit_workers",
+        "grid5000",
+        "int",
+        _positive,
+        required=False,
+        default=DEFAULT_SUBMIT_WORKERS,
+    ),
     Field("namespace", "hub", "str", _str),
     Field("bucket", "hub", "str", _str),
     Field("sites", "grid5000", "list", _sites),

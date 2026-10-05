@@ -184,3 +184,75 @@ def test_settings_from_ops_takes_its_defaults_from_the_ops_and_lets_overrides_wi
     assert s.besteffort is True
     assert s.walltime == timedelta(minutes=ops.walltime_minutes)
     assert s.day_walltime is None
+
+
+OPTIONAL_FIELDS = {
+    "day_walltime_minutes": ("int", None, 90),
+    "day_long_max_failures": ("int", 3, 5),
+    "chunk_overflow": ("float", 1.2, 1.5),
+    "policy_check": ("str", "per-job", "per-batch"),
+    "submit_workers": ("int", 1, 4),
+}
+
+
+@pytest.mark.parametrize("name", list(OPTIONAL_FIELDS))
+def test_optional_field_is_described_by_the_table(name):
+    from landuse_filter.domain.settings import FIELDS
+
+    kind, default, _ = OPTIONAL_FIELDS[name]
+    (f,) = [f for f in FIELDS if f.name == name]
+    assert (f.table, f.kind, f.required, f.default) == ("grid5000", kind, False, default)
+    assert type(f.default) is type(default)
+
+
+@pytest.mark.parametrize("name", list(OPTIONAL_FIELDS))
+def test_optional_field_defaults_when_missing_and_reads_the_value_when_present(name):
+    _, default, value = OPTIONAL_FIELDS[name]
+    assert getattr(parse_settings(good()), name) == default
+    raw = good()
+    raw["grid5000"][name] = value
+    assert getattr(parse_settings(raw), name) == value
+
+
+@pytest.mark.parametrize(
+    ("name", "bad", "message"),
+    [
+        ("day_walltime_minutes", 0, "luf.toml: 'day_walltime_minutes' must be positive"),
+        ("day_walltime_minutes", "x", "luf.toml: 'day_walltime_minutes' must be int"),
+        ("day_walltime_minutes", True, "luf.toml: 'day_walltime_minutes' must be int"),
+        ("day_long_max_failures", 0, "luf.toml: 'day_long_max_failures' must be positive"),
+        ("day_long_max_failures", None, "luf.toml: 'day_long_max_failures' must be int"),
+        ("submit_workers", -1, "luf.toml: 'submit_workers' must be positive"),
+        ("submit_workers", 1.5, "luf.toml: 'submit_workers' must be int"),
+        ("chunk_overflow", 0.5, "luf.toml: 'chunk_overflow' must be at least 1.0"),
+        ("chunk_overflow", "x", "luf.toml: 'chunk_overflow' must be float"),
+        ("chunk_overflow", True, "luf.toml: 'chunk_overflow' must be float"),
+        ("policy_check", "never", "luf.toml: 'policy_check' must be one of"),
+        ("policy_check", None, "luf.toml: 'policy_check' must be one of"),
+    ],
+)
+def test_optional_field_present_but_invalid_is_rejected_not_defaulted(name, bad, message):
+    raw = good()
+    raw["grid5000"][name] = bad
+    with pytest.raises(SettingsError, match=message):
+        parse_settings(raw)
+
+
+def test_optional_fields_are_coerced_from_the_environment_by_kind():
+    from landuse_filter.adapters.settings_file import ENV_FIELDS, with_environment
+
+    for name in OPTIONAL_FIELDS:
+        assert ENV_FIELDS[name] == "grid5000"
+    env = {
+        "LUF_DAY_WALLTIME_MINUTES": "90",
+        "LUF_CHUNK_OVERFLOW": "1.5",
+        "LUF_POLICY_CHECK": "per-batch",
+    }
+    g5k = with_environment(good(), env)["grid5000"]
+    assert g5k["day_walltime_minutes"] == 90
+    assert g5k["chunk_overflow"] == 1.5
+    assert g5k["policy_check"] == "per-batch"
+    with pytest.raises(SettingsError, match="LUF_SUBMIT_WORKERS: 'x' is not an integer"):
+        with_environment(good(), {"LUF_SUBMIT_WORKERS": "x"})
+    with pytest.raises(SettingsError, match="LUF_CHUNK_OVERFLOW: 'x' is not a number"):
+        with_environment(good(), {"LUF_CHUNK_OVERFLOW": "x"})
