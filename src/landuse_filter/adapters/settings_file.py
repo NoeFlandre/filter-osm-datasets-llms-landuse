@@ -12,8 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from landuse_filter.domain.settings import (
-    INT_FIELDS,
-    OPTIONAL_INT_FIELDS,
+    FIELDS,
     OpsSettings,
     SettingsError,
     parse_settings,
@@ -22,30 +21,20 @@ from landuse_filter.domain.settings import (
 DEFAULT = Path(__file__).resolve().parents[3] / "luf.toml"
 
 # field -> toml table; the environment variable is LUF_<FIELD in upper case>
-ENV_FIELDS = {
-    "namespace": "hub",
-    "bucket": "hub",
-    "sites": "grid5000",
-    "cuda_module": "grid5000",
-    "chunk_overflow": "grid5000",
-    "policy_check": "grid5000",
-    **dict.fromkeys((*INT_FIELDS, *OPTIONAL_INT_FIELDS), "grid5000"),
-}
+ENV_FIELDS = {f.name: f.table for f in FIELDS}
+_KINDS = {f.name: f.kind for f in FIELDS}
 
 
 def _env_value(field: str, text: str) -> Any:
-    if field == "sites":
+    kind = _KINDS[field]
+    if kind == "list":
         return [s.strip() for s in text.split(",")]
-    if field == "chunk_overflow":
+    if kind in ("float", "int"):
+        convert, noun = (float, "a number") if kind == "float" else (int, "an integer")
         try:
-            return float(text)
+            return convert(text)
         except ValueError:
-            raise SettingsError(f"LUF_{field.upper()}: {text!r} is not a number") from None
-    if field in INT_FIELDS or field in OPTIONAL_INT_FIELDS:
-        try:
-            return int(text)
-        except ValueError:
-            raise SettingsError(f"LUF_{field.upper()}: {text!r} is not an integer") from None
+            raise SettingsError(f"LUF_{field.upper()}: {text!r} is not {noun}") from None
     return text
 
 

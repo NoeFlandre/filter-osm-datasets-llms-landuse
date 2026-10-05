@@ -104,8 +104,14 @@ def rank_slots(slots: Iterable[Slot], setup: timedelta) -> list[Slot]:
     )
 
 
+DEFAULT_CHUNK_OVERFLOW = 1.2  # work assigned per job = capacity x this (ADR-0018)
+
+
 def assign_chunks(
-    pending: Sequence[tuple[str, int]], taken: set[str], capacity: float, overflow: float = 1.2
+    pending: Sequence[tuple[str, int]],
+    taken: set[str],
+    capacity: float,
+    overflow: float = DEFAULT_CHUNK_OVERFLOW,
 ) -> list[str]:
     """Pick chunks (id, size) in plan order, skipping ones held by live jobs.
 

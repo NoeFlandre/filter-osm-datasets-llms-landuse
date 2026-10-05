@@ -40,7 +40,7 @@ from landuse_filter.domain.policy_check import PER_JOB
 from landuse_filter.domain.prompting import PROMPT_SHA256
 from landuse_filter.domain.retry import SHORT
 from landuse_filter.domain.scheduling import (
-    LONG_FAILURES,
+    DEFAULT_CHUNK_OVERFLOW,
     LONG_PAUSE,
     STALE_BESTEFFORT_WAIT,
     Slot,
@@ -50,6 +50,12 @@ from landuse_filter.domain.scheduling import (
     slot_for,
     walltime_ladder,
     without_long,
+)
+from landuse_filter.domain.settings import (
+    DEFAULT_BUCKET,
+    DEFAULT_LONG_FAILURES,
+    DEFAULT_SUBMIT_WORKERS,
+    OpsSettings,
 )
 
 PARIS = ZoneInfo("Europe/Paris")
@@ -79,19 +85,45 @@ class Settings:
     night_walltime: timedelta = timedelta(hours=2)
     night_fallback_walltime: timedelta = timedelta(minutes=30)
     day_walltime: timedelta | None = None  # preferred day walltime; None: same as walltime
-    day_long_max_failures: int = LONG_FAILURES  # consecutive long failures before a pause
-    chunk_overflow: float = 1.2  # a job gets capacity x this of work; the rest returns (ADR-0018)
+    day_long_max_failures: int = DEFAULT_LONG_FAILURES  # consecutive long failures before a pause
+    chunk_overflow: float = DEFAULT_CHUNK_OVERFLOW  # capacity x this of work per job (ADR-0018)
     besteffort: bool = False
     stale_besteffort_wait: timedelta = STALE_BESTEFFORT_WAIT  # ADR-0025
     gpu_models: list[str] = field(default_factory=list)  # allow-list of gpu keys; empty = admitted
     window: int | None = None  # candidate concurrency (tuning, issue #17); None = GPU profile
     namespace: str | None = None  # results of a candidate config live under <fp>-<namespace>
-    bucket: str = "NoeFlandre/landuse-filter-work"  # private HF Bucket: chunks, parts (ADR-0009)
+    bucket: str = DEFAULT_BUCKET  # private HF Bucket: chunks, parts (ADR-0009)
     paused: bool = False
-    submit_workers: int = 1  # sites submitted to in parallel (ADR-0020); 1 = in turn
+    submit_workers: int = (
+        DEFAULT_SUBMIT_WORKERS  # sites submitted to in parallel (ADR-0020); 1 = in turn
+    )
     immediate_in_night: bool = True  # also submit immediate-start jobs at night (ADR-0027)
     background_ingest: bool = False  # ingest in its own thread, never in the cycle (ADR-0031)
     policy_check: str = PER_JOB  # "per-batch": one usage-policy check per site and cycle (ADR-0019)
+
+    @classmethod
+    def from_ops(cls, ops: OpsSettings, datasets: list[str], **overrides: object) -> "Settings":
+        """Settings whose defaults come from ``luf.toml`` (``ops``); ``overrides`` win."""
+        base = cls(
+            datasets=datasets,
+            sites=list(ops.sites),
+            max_jobs_total=ops.max_jobs,
+            max_jobs_per_site=ops.max_jobs_per_site,
+            walltime=timedelta(minutes=ops.walltime_minutes),
+            night_walltime=timedelta(minutes=ops.night_walltime_minutes),
+            night_fallback_walltime=timedelta(minutes=ops.night_fallback_walltime_minutes),
+            day_walltime=(
+                None
+                if ops.day_walltime_minutes is None
+                else timedelta(minutes=ops.day_walltime_minutes)
+            ),
+            day_long_max_failures=ops.day_long_max_failures,
+            chunk_overflow=ops.chunk_overflow,
+            bucket=ops.bucket,
+            submit_workers=ops.submit_workers,
+            policy_check=ops.policy_check,
+        )
+        return replace(base, **overrides)
 
 
 DEPLOY_REF = "origin/main"

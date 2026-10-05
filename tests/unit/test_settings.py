@@ -149,3 +149,38 @@ def test_submit_workers_defaults_validates_and_reads_environment():
     raw["grid5000"]["submit_workers"] = 0
     with pytest.raises(SettingsError, match="'submit_workers' must be positive"):
         parse_settings(raw)
+
+
+def test_controller_settings_defaults_equal_the_shipped_luf_toml():
+    from datetime import timedelta
+
+    from landuse_filter.adapters.settings_file import DEFAULT, load
+    from landuse_filter.application.controller import Settings
+
+    ops = load(DEFAULT, environ={})
+    s = Settings(datasets=[], sites=[])
+    assert s.max_jobs_total == ops.max_jobs
+    assert s.max_jobs_per_site == ops.max_jobs_per_site
+    assert s.walltime == timedelta(minutes=ops.walltime_minutes)
+    assert s.night_walltime == timedelta(minutes=ops.night_walltime_minutes)
+    assert s.night_fallback_walltime == timedelta(minutes=ops.night_fallback_walltime_minutes)
+    assert s.bucket == ops.bucket
+    assert s.day_long_max_failures == ops.day_long_max_failures
+    assert s.chunk_overflow == ops.chunk_overflow
+    assert s.submit_workers == ops.submit_workers
+    assert s.policy_check == ops.policy_check
+
+
+def test_settings_from_ops_takes_its_defaults_from_the_ops_and_lets_overrides_win():
+    from datetime import timedelta
+
+    from landuse_filter.adapters.settings_file import DEFAULT, load
+    from landuse_filter.application.controller import Settings
+
+    ops = load(DEFAULT, environ={})
+    s = Settings.from_ops(ops, ["benchmark"], besteffort=True)
+    assert s.sites == list(ops.sites)
+    assert s.datasets == ["benchmark"]
+    assert s.besteffort is True
+    assert s.walltime == timedelta(minutes=ops.walltime_minutes)
+    assert s.day_walltime is None
