@@ -106,3 +106,14 @@ plan order. While the workers run, the main thread ingests results each `PULL_IN
 The cycle logs `cycle submitted N jobs in S s (sites K)`. Production:
 `--submit-workers 8`. To revert, use `--submit-workers 1`. See
 [ADR-0020](adr/0020-parallel-submission.md).
+
+## Hub rate limit (HTTP 429)
+
+The Hub allows 1000 API calls per 5 minutes per account. The bucket adapter
+(`adapters/remote.py`, used by the controllers, node jobs and the CLI) retries `ls`, `put`, `get`,
+`delete` and `ensure` on HTTP 429. It waits the `Retry-After` seconds of the response (plus 1 s and
+up to 1 s of jitter), or backs off exponentially with jitter when the header is missing. Limits
+(constants in `domain/retry.py`, not configurable at run time): 10 calls in all, one wait at most
+300 s, all waits together at most 1200 s. It logs one line per wait. Then it re-raises the original
+error. A 429 on a later page of a listing retries that page only. Other errors are not retried.
+See [ADR-0028](adr/0028-hub-rate-limit-retry.md).
