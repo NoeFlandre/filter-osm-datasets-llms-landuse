@@ -351,8 +351,7 @@ def test_loop_survives_a_failing_cycle(world):
     assert sleeps == [5]
     assert logs[0] == "cycle failed; retrying in 5s (RuntimeError: git rev-parse failed)"
     assert any(line.startswith("  | ") and "flaky" in line for line in logs[1:])  # traceback
-    assert out
-    assert '"pending_chunks": 0' in out[0]
+    assert out == ['{"pending_chunks": 0, "live_jobs": 0, "submitted": []}']
     c.cycle = real
 
 
@@ -809,8 +808,8 @@ def test_day_window_never_uses_the_long_walltime(world):
     day = datetime(2026, 9, 29, 10, 0, tzinfo=ZoneInfo("Europe/Paris"))
     c.now = day
     c.cycle(day)
-    assert fake.submitted
-    assert set(_minutes(fake)) == {60}
+    assert len(fake.submitted) == 2
+    assert _minutes(fake) == [60, 60]
 
 
 def test_queue_limit_is_the_night_value_only_at_night():
@@ -1028,9 +1027,9 @@ def test_night_window_submits_immediate_jobs_on_free_gpus_without_night_type(wor
     c, fake = _night_world(world)
     c.settings.immediate_in_night = True
     c.cycle(NOW)
-    assert fake.submitted
-    assert set(_types(fake)) == {"now"}
-    assert set(_minutes(fake)) <= {30, 60}
+    assert len(fake.submitted) == 2
+    assert _types(fake) == ["now", "now"]
+    assert _minutes(fake) == [60, 60]
     assert fake.policy_checks >= 2  # usagepolicycheck still runs for these jobs
 
 

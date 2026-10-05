@@ -251,7 +251,15 @@ def test_long_walltime_fallback_works_in_parallel(tmp_path, monkeypatch):
         lambda site, job_id: ("Waiting", 4_000_000_000) if walls[job_id] else ("Running", None),
     )
     report = c.cycle(NOW)
-    assert report.submitted
+    assert len(set(report.submitted)) == 6
+    assert sorted(j.split(":")[0] for j in report.submitted) == [
+        "lille/gres",
+        "lille/gres",
+        "nancy/gres",
+        "nancy/gres",
+        "rennes/gres",
+        "rennes/gres",
+    ]
     live = c.live()
     assert {a.walltime_s for a in live} == {1800}  # every site fell back to the short job
     taken = [ch for a in live for ch in a.chunks]

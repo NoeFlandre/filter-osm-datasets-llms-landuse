@@ -174,7 +174,8 @@ def test_locator_places_website_texts_from_the_input_file_itself():
             WEBSITE, fetch=lambda _p: inputs, cell_of=lambda lon, lat: f"{round(lon)}/{round(lat)}"
         )(WEBSITE, "polygons/a.parquet", inputs / "website.parquet")
     )
-    assert pairs
+    assert len(pairs) == 46
+    assert sorted({c for _, c in pairs}) == ["2/48", "3/49", "4/50", "6/52"]
     assert all("/" in cell for _, cell in pairs)
 
 

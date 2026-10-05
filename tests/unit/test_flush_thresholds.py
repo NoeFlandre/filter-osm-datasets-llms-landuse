@@ -5,17 +5,17 @@ import asyncio
 import pyarrow as pa
 
 from landuse_filter.adapters.store import WorkStore
-from landuse_filter.application import node
 from landuse_filter.application.node import Runner
 from landuse_filter.application.sync import upload_part
 from tests.unit.test_node import PROV, FakeEngine, chunk, runner
 
 
-def test_default_flush_thresholds_are_large():
-    assert node.FLUSH_EVERY == 2048
-    assert node.FLUSH_SECONDS == 300.0
-    r = Runner(WorkStore("/nonexistent"), FakeEngine(), "fp", PROV)
-    assert (r.flush_every, r.flush_seconds) == (2048, 300.0)
+def test_default_thresholds_give_one_part_for_a_whole_chunk(tmp_path):
+    store = WorkStore(tmp_path)
+    chunk(store)
+    r = Runner(store, FakeEngine(), "fp", PROV, window=4)
+    stats = asyncio.run(r.run(["c1"]))
+    assert (stats.parts, stats.completed) == (1, 10)
 
 
 def test_large_threshold_gives_one_part(tmp_path):

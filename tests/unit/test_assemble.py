@@ -34,7 +34,7 @@ def test_every_position_gets_exactly_one_decision(tmp_path):
     assert n == len(rs) == len(table)
     assert len({r["label_id"] for r in table}) == n
     skipped = [r for r in table if r["decision"] == "skipped_unsplit"]
-    assert skipped
+    assert len(skipped) == 1
     assert all(r["generation_id"] is None for r in skipped)
     assert all(r["generation_id"] for r in table if r["decision"] != "skipped_unsplit")
     assert {"polygon_id", "field", "sentence_index"} <= table[0].keys()
@@ -100,7 +100,7 @@ def test_unresolved_texts_are_pending_when_the_file_is_published_partially():
     rows = label_rows(rs, resolved, "fp", "rev", allow_pending=True)
     pending = [r for r in rows if r["decision"] == "pending"]
     assert len(rows) == len(rs)
-    assert pending
+    assert len(pending) == 36
     assert all(r["generation_id"] is None and r["failure_reason"] is None for r in pending)
     assert {r["decision"] for r in rows} == {"yes", "pending", "skipped_unsplit"}
 
