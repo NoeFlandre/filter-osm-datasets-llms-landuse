@@ -160,3 +160,18 @@ def test_put_get_delete_retry(monkeypatch, tmp_path):
     limited.append(err(429))
     remote.delete(["a"])
     assert seen[-1] == {"delete": ["a"]}
+
+
+def test_next_delay_exact_values_with_jitter():
+    assert next_delay(1, 10.0, 0.5) == 11.5
+    assert next_delay(2, None, 0.5) == 3.0
+    assert next_delay(2, None, 0.0) == 2.0
+    assert next_delay(1, 0.0, 0.0) == 1.0
+
+
+def test_give_up_boundaries():
+    assert not give_up(MAX_ATTEMPTS - 1, 0.0, 1.0)
+    assert give_up(MAX_ATTEMPTS, 0.0, 1.0)
+    assert not give_up(1, MAX_TOTAL_WAIT - 5.0, 5.0)
+    assert give_up(1, MAX_TOTAL_WAIT - 5.0, 5.5)
+    assert not give_up(1, 0.0, MAX_DELAY)
