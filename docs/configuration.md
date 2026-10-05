@@ -122,6 +122,15 @@ assignments every 900 s (`LIVE_INTERVAL`), and everything on the first pull afte
 every 3600 s (`RECONCILE_INTERVAL`). Both constants are in `application/staging.py`. Restart the
 controller to apply. See [ADR-0029](adr/0029-incremental-ingest.md).
 
+## Background ingest
+
+Ingest runs in its own thread, never in the cycle: a rate-limited Hub cannot delay submission.
+Every 180 s it runs one bounded pull (short 429 budget: 3 attempts, at most 60 s per wait; the
+first listing that stays rate-limited ends the pull, no new listing after 240 s) and logs
+`ingest: full|incremental pull, N listings, M new manifests, F rate-limited, D deferred, S s`.
+A long gap between these lines means ingest is stalled. The first pull after a start is the full
+catch-up, in the background. See [ADR-0031](adr/0031-ingest-never-starves-submission.md).
+
 ## Hub rate limit (HTTP 429)
 
 The Hub allows 1000 API calls per 5 minutes per account. The bucket adapter

@@ -16,6 +16,9 @@ from landuse_filter.domain.parsing import parse_generation
 INSERT_BATCH = 10_000
 
 
+SQLITE_WAIT = 60.0  # seconds a writer waits for the other thread's transaction
+
+
 def _key(location: str) -> str:
     """``<fp>/<chunk>/<part>.json``: a manifest's identity, whatever root it sits under."""
     return "/".join(location.replace("\\", "/").split("/")[-3:])
@@ -39,7 +42,9 @@ class ProgressIndex:
 
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(path)
+        self.db = sqlite3.connect(
+            path, timeout=SQLITE_WAIT
+        )  # cycle and ingest threads share the file
         self.db.executescript(
             "CREATE TABLE IF NOT EXISTS seen (path TEXT PRIMARY KEY);"
             "CREATE TABLE IF NOT EXISTS done (chunk TEXT, sha TEXT, PRIMARY KEY (chunk, sha));"
