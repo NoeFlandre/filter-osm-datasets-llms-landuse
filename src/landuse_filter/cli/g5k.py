@@ -413,7 +413,7 @@ def g5k_publish_status(
     import time
 
     from landuse_filter.adapters.remote import BucketRemote
-    from landuse_filter.application.progress import read_progress
+    from landuse_filter.application.job_progress import read_progress
 
     state = read_progress(BucketRemote(bucket), dataset)
     if state is None:

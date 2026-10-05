@@ -14,8 +14,8 @@ from pathlib import Path
 
 from landuse_filter.adapters.remote import Remote
 from landuse_filter.adapters.store import WorkStore
+from landuse_filter.application.job_progress import NULL, Progress
 from landuse_filter.application.plan import Encode, Planner
-from landuse_filter.application.progress import NULL, Progress
 
 CHECKPOINT_SECONDS = 900.0
 

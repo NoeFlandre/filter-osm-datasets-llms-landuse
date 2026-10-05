@@ -191,7 +191,7 @@ def node_publish(
     from dataclasses import asdict
 
     from landuse_filter.adapters.remote import BucketRemote
-    from landuse_filter.application.progress import bucket_progress
+    from landuse_filter.application.job_progress import bucket_progress
     from landuse_filter.application.remote_publish import run_card_only, run_publish
 
     scratch = _store(config.scratch_dir())

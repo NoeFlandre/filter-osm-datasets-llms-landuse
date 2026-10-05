@@ -7,13 +7,13 @@ from landuse_filter.adapters.readers import WEBSITE
 from landuse_filter.adapters.remote import DirRemote
 from landuse_filter.adapters.store import WorkStore
 from landuse_filter.application import remote_publish
-from landuse_filter.application.plan import Planner
-from landuse_filter.application.progress import (
+from landuse_filter.application.job_progress import (
     Progress,
     bucket_progress,
     progress_path,
     read_progress,
 )
+from landuse_filter.application.plan import Planner
 from tests.unit.test_publish import INPUTS, fake_hub, generate_all
 
 

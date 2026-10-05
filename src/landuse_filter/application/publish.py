@@ -43,7 +43,7 @@ from landuse_filter.application.assemble import (
 )
 from landuse_filter.application.card import MAP_ASSET, CardFacts, MapFacts, render_card
 from landuse_filter.application.datasets import SPECS
-from landuse_filter.application.progress import NULL, Progress
+from landuse_filter.application.job_progress import NULL, Progress
 from landuse_filter.application.results import canonical_generations
 from landuse_filter.domain.sentences import SentenceRef
 

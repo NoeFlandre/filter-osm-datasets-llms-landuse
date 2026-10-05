@@ -5,7 +5,7 @@ from collections.abc import Callable
 from landuse_filter.adapters.hub import Hub
 from landuse_filter.adapters.remote import Remote
 from landuse_filter.adapters.store import WorkStore
-from landuse_filter.application.progress import NULL, Progress
+from landuse_filter.application.job_progress import NULL, Progress
 from landuse_filter.application.publish import PublishReport, publish, refresh_card_only
 from landuse_filter.application.publish_loop import status_path
 from landuse_filter.application.remote_plan import restore_index

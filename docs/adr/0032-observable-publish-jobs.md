@@ -12,7 +12,7 @@ had to ssh to guess what a job was doing.
 
 ## Decision
 
-- `application/progress.py`: a small `Progress` helper (injectable clock, wall clock, output and
+- `application/job_progress.py`: a small `Progress` helper (injectable clock, wall clock, output and
   marker upload). `event(phase, **counters)` prints one flushed line `luf: [<elapsed>s] <phase>
   k=v ...`; `tick(...)` does the same at most every 60 s for per-item progress; `finish(reason)`
   prints the last line and always uploads the marker.

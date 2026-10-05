@@ -149,7 +149,7 @@ Publish and card jobs print one flushed line per phase to their OAR stdout
 seconds, parts read / total and rows/s, files built, each Hub commit with its file count, short id
 and seconds, the stop reason). The same state is written to `published/<dataset>.progress.json`
 in the bucket at most once per 60 s (`PUT_SECONDS`, `TICK_SECONDS` in
-`application/progress.py`). Read it from the laptop with one bucket get:
+`application/job_progress.py`). Read it from the laptop with one bucket get:
 
 ```
 luf g5k publish-status --dataset <dataset>

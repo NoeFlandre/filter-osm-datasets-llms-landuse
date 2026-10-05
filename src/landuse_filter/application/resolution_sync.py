@@ -23,7 +23,7 @@ import pyarrow.parquet as pq
 from landuse_filter.adapters.indexes import ResolutionIndex
 from landuse_filter.adapters.remote import Remote
 from landuse_filter.adapters.store import WorkStore
-from landuse_filter.application.progress import NULL, Progress
+from landuse_filter.application.job_progress import NULL, Progress
 from landuse_filter.domain.parsing import PARSER_VERSION, parse_generation
 
 BATCH = 1000  # parts downloaded (and parsed) at a time
