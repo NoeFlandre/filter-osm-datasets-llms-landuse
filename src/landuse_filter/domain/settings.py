@@ -1,10 +1,11 @@
 """Validated operational settings (pure). Loaded from ``luf.toml`` by an adapter."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any, Final, TypeVar
 
 from landuse_filter.domain.policy_check import MODES, PER_JOB
+from landuse_filter.domain.scheduling import DEFAULT_CHUNK_OVERFLOW, LONG_FAILURES
 
 T = TypeVar("T")
 
@@ -13,6 +14,11 @@ SCHEMA_VERSION = 1
 
 class SettingsError(ValueError):
     """``luf.toml`` is missing a field, has a wrong type, or a wrong schema version."""
+
+
+DEFAULT_LONG_FAILURES = LONG_FAILURES
+DEFAULT_SUBMIT_WORKERS = 1  # sites submitted to in parallel (ADR-0020)
+DEFAULT_BUCKET = "NoeFlandre/landuse-filter-work"  # private work bucket; luf.toml [hub] bucket
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,23 +34,13 @@ class OpsSettings:
     interval_seconds: int
     cuda_module: str
     day_walltime_minutes: int | None = None  # None: same as walltime_minutes
-    day_long_max_failures: int = 3
-    chunk_overflow: float = 1.2  # work assigned per job = capacity x this (ADR-0018)
+    day_long_max_failures: int = DEFAULT_LONG_FAILURES
+    chunk_overflow: float = DEFAULT_CHUNK_OVERFLOW
     policy_check: str = PER_JOB  # usagepolicycheck cadence (ADR-0019)
-    submit_workers: int = 1  # sites submitted to in parallel (ADR-0020)
+    submit_workers: int = DEFAULT_SUBMIT_WORKERS
 
     def output_repo(self, dataset: str) -> str:
         return f"{self.namespace}/{dataset}-landuse"
-
-
-INT_FIELDS = (
-    "walltime_minutes",
-    "night_walltime_minutes",
-    "night_fallback_walltime_minutes",
-    "max_jobs",
-    "max_jobs_per_site",
-    "interval_seconds",
-)
 
 
 def _need(table: Mapping[str, Any], key: str, kind: type[T]) -> T:
@@ -61,14 +57,15 @@ def _table(raw: Mapping[str, Any], name: str) -> Mapping[str, Any]:
     return table
 
 
-def _sites(g5k: Mapping[str, Any]) -> tuple[str, ...]:
-    sites = _need(g5k, "sites", list)
+def _str(table: Mapping[str, Any], key: str) -> str:
+    return _need(table, key, str)
+
+
+def _sites(g5k: Mapping[str, Any], key: str) -> tuple[str, ...]:
+    sites = _need(g5k, key, list)
     if not sites or not all(isinstance(s, str) and s for s in sites):
         raise SettingsError("luf.toml: 'sites' must be a non-empty list of site names")
     return tuple(sites)
-
-
-OPTIONAL_INT_FIELDS = ("day_walltime_minutes", "day_long_max_failures", "submit_workers")
 
 
 def _positive(g5k: Mapping[str, Any], key: str) -> int:
@@ -78,43 +75,84 @@ def _positive(g5k: Mapping[str, Any], key: str) -> int:
     return value
 
 
-def _optional(g5k: Mapping[str, Any], key: str, default: int | None) -> int | None:
-    return _positive(g5k, key) if key in g5k else default
-
-
-def _overflow(g5k: Mapping[str, Any]) -> float:
-    if "chunk_overflow" not in g5k:
-        return 1.2
-    value = g5k["chunk_overflow"]
+def _overflow(g5k: Mapping[str, Any], key: str) -> float:
+    value = g5k[key]
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise SettingsError("luf.toml: 'chunk_overflow' must be float")
+        raise SettingsError(f"luf.toml: {key!r} must be float")
     if value < 1.0:
-        raise SettingsError("luf.toml: 'chunk_overflow' must be at least 1.0")
+        raise SettingsError(f"luf.toml: {key!r} must be at least 1.0")
     return float(value)
 
 
-def _policy_check(g5k: Mapping[str, Any]) -> str:
-    value = g5k.get("policy_check", PER_JOB)
+def _policy_check(g5k: Mapping[str, Any], key: str) -> str:
+    value = g5k[key]
     if value not in MODES:
-        raise SettingsError(f"luf.toml: 'policy_check' must be one of {', '.join(MODES)}")
+        raise SettingsError(f"luf.toml: {key!r} must be one of {', '.join(MODES)}")
     return value
+
+
+@dataclass(frozen=True, slots=True)
+class Field:
+    """One ``luf.toml`` setting: where it lives, how it is parsed and coerced from text."""
+
+    name: str
+    table: str
+    kind: str  # "str", "int", "float" or "list": drives LUF_<NAME> coercion
+    parse: Callable[[Mapping[str, Any], str], Any]
+    required: bool = True
+    default: Any = None
+
+
+# The one place that lists the settings; parsing and environment overrides derive from it.
+# Order is the order in which a bad value is reported.
+FIELDS: Final = (
+    Field("day_walltime_minutes", "grid5000", "int", _positive, required=False, default=None),
+    Field(
+        "day_long_max_failures",
+        "grid5000",
+        "int",
+        _positive,
+        required=False,
+        default=DEFAULT_LONG_FAILURES,
+    ),
+    Field(
+        "chunk_overflow",
+        "grid5000",
+        "float",
+        _overflow,
+        required=False,
+        default=DEFAULT_CHUNK_OVERFLOW,
+    ),
+    Field("policy_check", "grid5000", "str", _policy_check, required=False, default=PER_JOB),
+    Field(
+        "submit_workers",
+        "grid5000",
+        "int",
+        _positive,
+        required=False,
+        default=DEFAULT_SUBMIT_WORKERS,
+    ),
+    Field("namespace", "hub", "str", _str),
+    Field("bucket", "hub", "str", _str),
+    Field("sites", "grid5000", "list", _sites),
+    Field("cuda_module", "grid5000", "str", _str),
+    Field("walltime_minutes", "grid5000", "int", _positive),
+    Field("night_walltime_minutes", "grid5000", "int", _positive),
+    Field("night_fallback_walltime_minutes", "grid5000", "int", _positive),
+    Field("max_jobs", "grid5000", "int", _positive),
+    Field("max_jobs_per_site", "grid5000", "int", _positive),
+    Field("interval_seconds", "grid5000", "int", _positive),
+)
 
 
 def parse_settings(raw: Mapping[str, Any]) -> OpsSettings:
     if raw.get("schema_version") != SCHEMA_VERSION:
         raise SettingsError(f"luf.toml: schema_version must be {SCHEMA_VERSION}")
-    hub, g5k = _table(raw, "hub"), _table(raw, "grid5000")
-    return OpsSettings(
-        day_walltime_minutes=_optional(g5k, "day_walltime_minutes", None),
-        day_long_max_failures=_positive(g5k, "day_long_max_failures")
-        if "day_long_max_failures" in g5k
-        else 3,
-        chunk_overflow=_overflow(g5k),
-        policy_check=_policy_check(g5k),
-        submit_workers=_positive(g5k, "submit_workers") if "submit_workers" in g5k else 1,
-        namespace=_need(hub, "namespace", str),
-        bucket=_need(hub, "bucket", str),
-        sites=_sites(g5k),
-        cuda_module=_need(g5k, "cuda_module", str),
-        **{key: _positive(g5k, key) for key in INT_FIELDS},
-    )
+    tables = {"hub": _table(raw, "hub"), "grid5000": _table(raw, "grid5000")}
+    values = {
+        f.name: f.default
+        if not f.required and f.name not in tables[f.table]
+        else f.parse(tables[f.table], f.name)
+        for f in FIELDS
+    }
+    return OpsSettings(**values)
