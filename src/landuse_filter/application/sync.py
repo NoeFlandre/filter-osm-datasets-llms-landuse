@@ -36,11 +36,15 @@ def fetch(remote: Remote, store: WorkStore, paths: list[str]) -> None:
 def fetch_manifests(
     remote: Remote, store: WorkStore, prefix: str, seen: Callable[[str], bool] | None = None
 ) -> list[str]:
-    """Download manifests under ``prefix`` that are neither local nor already ``seen``."""
+    """Download manifests under ``prefix`` not already ``seen`` (else: not already local).
+
+    With ``seen``, a manifest that is local but unseen (a download whose ingest was
+    interrupted) is returned again so it is ingested; ``fetch`` skips the download.
+    """
     wanted = [
         p
         for p in remote.ls(prefix)
-        if p.endswith(".json") and not store.exists(p) and not (seen and seen(p))
+        if p.endswith(".json") and (not seen(p) if seen else not store.exists(p))
     ]
     fetch(remote, store, wanted)
     return wanted

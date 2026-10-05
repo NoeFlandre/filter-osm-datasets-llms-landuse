@@ -290,7 +290,7 @@ class Controller:
         )
 
     def pull(self) -> None:
-        self.transport.pull(self.progress)
+        self.transport.pull(self.progress, {c for a in self.live() for c in a.chunks})
 
     # --- submission -----------------------------------------------------------------
 
