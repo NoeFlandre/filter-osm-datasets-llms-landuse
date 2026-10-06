@@ -6,7 +6,8 @@ from datetime import datetime, timedelta
 from landuse_filter.adapters.g5k import Job, RemoteError
 from landuse_filter.domain.cpu_job_guard import cpu_job_verdict, is_zombie, stale_day_job
 
-POST_SUBMIT_WAIT = 20.0
+POLL_INTERVAL = 5.0  # seconds between OAR status reads after oarsub
+POLL_WINDOW = 120.0  # OAR may take this long to assign a start time
 STARTED = ("Running", "Launching", "toLaunch", "Finishing", "Terminated")
 
 
@@ -25,8 +26,13 @@ def guard_start(
     sleep: Callable[[float], None],
 ) -> None:
     """After ``oarsub``: ask OAR when the job starts; delete it and raise if the verdict says no."""
-    sleep(POST_SUBMIT_WAIT)
-    state, epoch = status(job_id)
+    waited = 0.0
+    while True:
+        sleep(POLL_INTERVAL)
+        waited += POLL_INTERVAL
+        state, epoch = status(job_id)
+        if state in STARTED or epoch or waited >= POLL_WINDOW:
+            break
     if state in STARTED:
         start: datetime | None = now()
     else:
