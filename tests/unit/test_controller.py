@@ -533,6 +533,8 @@ def test_cpu_jobs_avoid_the_sagittaire_cluster(monkeypatch, tmp_path):
     monkeypatch.setattr(g5k, "ssh", lambda *a, **k: "")
     monkeypatch.setattr(g5k, "policy_check", lambda site: None)
     monkeypatch.setattr(g5k, "submit", lambda site, args: submitted.append(args) or "1")
+    monkeypatch.setattr(g5k, "scheduled_start", lambda site, job: ("Running", None))
+    monkeypatch.setattr("time.sleep", lambda s: None)
     monkeypatch.setattr(ctl_mod, "commit", lambda: "abc")
     monkeypatch.setattr(ctl_mod, "git_archive", lambda ref: b"")
     result = CliRunner().invoke(

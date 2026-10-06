@@ -39,6 +39,7 @@ class Job:
     state: str
     queue: str
     scheduled_start: int | None = None
+    submitted: int | None = None
 
 
 def ssh(site: str, command: str, *, timeout: float = 120, stdin: bytes | None = None) -> str:
@@ -77,6 +78,7 @@ def our_jobs(site: str) -> list[Job]:
             j.get("state", ""),
             j.get("queue", ""),
             j.get("scheduled_start"),
+            j.get("submissionTime"),
         )
         for job_id, j in payload.items()
         if (j.get("name") or "").startswith(JOB_PREFIX)

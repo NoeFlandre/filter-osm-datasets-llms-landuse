@@ -319,7 +319,13 @@ def g5k_cpu_job(
     walltime_minutes: int = typer.Option(60),
 ) -> None:
     """Submit one resumable planning or publishing job (default queue, one CPU node)."""
-    job_id, wall = _submit_cpu_job(mode, site, dataset, revision, walltime_minutes)
+    from landuse_filter.application.cpu_guard import CpuJobCancelledError
+
+    try:
+        job_id, wall = _submit_cpu_job(mode, site, dataset, revision, walltime_minutes)
+    except CpuJobCancelledError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
     typer.echo(f"{mode} job {job_id} on {site} ({wall})")
 
 
@@ -329,10 +335,12 @@ def _submit_cpu_job(
     """Deploy the code and submit one CPU job; returns (job id, walltime text)."""
     if mode not in ("plan", "replan", "publish", "card", "repair"):
         raise typer.BadParameter("mode must be plan, replan, publish, card or repair")
+    import time
     from datetime import datetime
 
     from landuse_filter.adapters import g5k
     from landuse_filter.application.controller import PARIS, commit, git_archive
+    from landuse_filter.application.cpu_guard import guard_start
     from landuse_filter.domain.capacity import walltime_text
     from landuse_filter.domain.policy import allowed_window
     from landuse_filter.domain.publish_loop import job_name
@@ -362,7 +370,17 @@ def _submit_cpu_job(
             f"{code}/scripts/node_job.sh {code} {mode} {dataset} {revision}",
         ]
     )
+    submitted = datetime.now(PARIS)
     job_id = g5k.submit(site, args)
+    guard_start(
+        job_id=job_id,
+        submitted=submitted,
+        walltime=wall,
+        now=lambda: datetime.now(PARIS),
+        status=lambda j: g5k.scheduled_start(site, j),
+        cancel=lambda j: g5k.cancel(site, j),
+        sleep=time.sleep,
+    )
     g5k.policy_check(site)
     return job_id, walltime_text(wall)
 
@@ -383,9 +401,13 @@ def g5k_publish_loop(
 ) -> None:
     """Resubmit `cpu-job publish` whenever none is live, until the bucket status says done."""
     import time
+    from datetime import datetime
 
     from landuse_filter.adapters import g5k
     from landuse_filter.adapters.remote import BucketRemote
+    from landuse_filter.application.controller import PARIS
+    from landuse_filter.application.cpu_guard import live as live_jobs
+    from landuse_filter.application.cpu_guard import sweep
     from landuse_filter.application.publish_loop import LoopIO, read_status, run_loop
     from landuse_filter.domain.publish_loop import job_name
 
@@ -393,7 +415,14 @@ def g5k_publish_loop(
     name = job_name(g5k.JOB_PREFIX, "publish", dataset)
     io = LoopIO(
         status=lambda: read_status(remote, dataset),
-        live=lambda: any(j.name == name for j in g5k.our_jobs(site)),
+        live=lambda: live_jobs(g5k.our_jobs(site), name, now=datetime.now(PARIS)),
+        sweep=lambda: sweep(
+            g5k.our_jobs(site),
+            name,
+            now=datetime.now(PARIS),
+            cancel=lambda j: g5k.cancel(site, j),
+            log=lambda m: typer.echo(m, err=True),
+        ),
         submit=lambda: _submit_cpu_job("publish", site, dataset, revision, walltime_minutes)[0],
         sleep=time.sleep,
         log=lambda m: typer.echo(m, err=True),
