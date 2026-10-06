@@ -26,21 +26,23 @@ class CpuVerdict:
     reason: str
 
 
+def _boundaries(start: datetime, end: datetime) -> list[tuple[datetime, time]]:
+    days = [start.date() + timedelta(days=n) for n in range((end.date() - start.date()).days + 1)]
+    return [
+        (datetime.combine(day, edge, tzinfo=start.tzinfo), edge)
+        for day in days
+        if is_working_day(day)
+        for edge in (DAY_START, DAY_END)
+    ]
+
+
 def crosses_forbidden(submitted: datetime, start: datetime, end: datetime) -> bool:
     """True when (start, end) strictly contains a forbidden working-day boundary."""
-    day = start.date()
-    while day <= end.date():
-        if is_working_day(day):
-            for edge in (DAY_START, DAY_END):
-                moment = datetime.combine(day, edge, tzinfo=start.tzinfo)
-                if not start < moment < end:
-                    continue
-                evening = submitted.date() == day and submitted.time() >= EVENING_SUBMIT
-                if edge == DAY_END and evening:
-                    continue
-                return True
-        day += timedelta(days=1)
-    return False
+    evening = submitted.date() if submitted.time() >= EVENING_SUBMIT else None
+    return any(
+        start < moment < end and not (edge == DAY_END and moment.date() == evening)
+        for moment, edge in _boundaries(start, end)
+    )
 
 
 def cpu_job_verdict(

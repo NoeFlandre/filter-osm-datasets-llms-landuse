@@ -212,5 +212,49 @@ def test_run_loop_sweeps_every_cycle():
         log=lambda m: None,
         sweep=lambda: swept.append(1),
     )
-    assert run_loop(io, "r", interval=1, cap=1) == "finished"
+    assert run_loop(io, "r", interval=1, cap=1, max_cycles=2) == "finished"
     assert swept == [1]
+
+
+def reason(sub, start, wall=H):
+    return cpu_job_verdict(submitted=sub, walltime=wall, expected_start=start).reason
+
+
+def test_reasons_and_exact_tolerance():
+    assert reason(at(1, 10), None) == "would start late: no predicted start in daytime"
+    assert reason(at(1, 22), None) == "night job, start left to the night type"
+    assert reason(at(1, 10), at(1, 10, 10)) == "ok"
+    assert reason(at(1, 10), at(1, 10, 10) + timedelta(seconds=1)) == "would start late"
+    assert reason(at(1, 8, 59), at(1, 8, 59)) == "would cross a day/night boundary"
+    assert reason(at(1, 20), at(1, 20)) == "ok"
+    # a night submission is not subject to the 10 minute start tolerance
+    assert verdict(at(1, 20), at(1, 23))
+    assert verdict(at(3, 10), at(3, 15))  # weekend daytime hours
+
+
+def test_exact_edges_do_not_cross():
+    assert not crosses_forbidden(at(1, 10), at(1, 8), at(1, 9))  # ends at 09:00
+    assert not crosses_forbidden(at(1, 10), at(1, 9), at(1, 10))  # starts at 09:00
+    assert crosses_forbidden(at(1, 10), at(1, 8, 59), at(1, 9, 1))
+    assert not crosses_forbidden(at(1, 10), at(1, 18), at(1, 19))
+    assert not crosses_forbidden(at(1, 10), at(1, 19), at(1, 20))
+    assert crosses_forbidden(at(1, 10), at(1, 18, 59), at(1, 19, 1))
+    assert crosses_forbidden(at(1, 16, 59), at(1, 18, 59), at(1, 19, 1))
+    assert not crosses_forbidden(at(1, 17), at(1, 18, 59), at(1, 19, 1))
+    # a 17:00 submission of ANOTHER day does not grant today's crossing
+    assert crosses_forbidden(at(30, 17, m=9), at(1, 18, 59), at(1, 19, 1))
+    # an evening job may cross 19:00 but never the next 09:00
+    assert crosses_forbidden(at(1, 17), at(1, 18), at(2, 10))
+
+
+def test_zombie_and_stale_exact_limits():
+    assert not is_zombie(state="Waiting", submitted=at(1, 10), now=at(1, 12))
+    assert is_zombie(state="Waiting", submitted=at(1, 10), now=at(1, 12) + timedelta(seconds=1))
+    assert not stale_day_job(submitted=at(1, 10), now=at(1, 10, 10))
+    assert stale_day_job(submitted=at(1, 10), now=at(1, 10, 10) + timedelta(seconds=1))
+    assert not stale_day_job(submitted=at(1, 16, 45), now=at(1, 16, 49))
+    assert stale_day_job(submitted=at(1, 16, 59), now=at(1, 17, 5)) is True
+    assert not stale_day_job(submitted=at(1, 17), now=at(1, 17, 30))
+    assert stale_day_job(submitted=at(1, 16, 59), now=at(1, 17, 11))
+    assert not stale_day_job(submitted=at(1, 8, 55), now=at(1, 9, 5))  # night job submitted early
+    assert stale_day_job(submitted=at(1, 16, 40), now=at(2, 9, 0))
