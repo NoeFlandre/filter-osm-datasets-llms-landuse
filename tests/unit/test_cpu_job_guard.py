@@ -24,7 +24,9 @@ def at(d, h, mi=0, m=10, y=2026):
 
 
 def verdict(sub, start, wall=H):
-    return cpu_job_verdict(submitted=sub, walltime=wall, expected_start=start).allowed
+    allowed = cpu_job_verdict(submitted=sub, walltime=wall, expected_start=start).allowed
+    assert isinstance(allowed, bool)
+    return allowed
 
 
 def test_incident_is_refused():
@@ -76,8 +78,8 @@ def test_friday_night_to_monday_crossing():
 
 
 def test_unknown_start():
-    assert not verdict(at(1, 10), None)
-    assert verdict(at(1, 22), None)
+    assert verdict(at(1, 10), None) is False
+    assert verdict(at(1, 22), None) is True
 
 
 def test_stale_day_job_and_watchdog():
@@ -258,3 +260,13 @@ def test_zombie_and_stale_exact_limits():
     assert stale_day_job(submitted=at(1, 16, 59), now=at(1, 17, 11))
     assert not stale_day_job(submitted=at(1, 8, 55), now=at(1, 9, 5))  # night job submitted early
     assert stale_day_job(submitted=at(1, 16, 40), now=at(2, 9, 0))
+
+
+def test_every_day_between_start_and_end_is_scanned():
+    # Sunday 20:00 -> Tuesday 10:00 crosses Monday 09:00 and Tuesday 09:00
+    assert crosses_forbidden(at(4, 12), at(4, 20), at(6, 10))
+    # Saturday night to Monday 08:00: no boundary at all
+    assert not crosses_forbidden(at(3, 12), at(3, 20), at(5, 8))
+    # Friday evening to Monday 08:00 crosses nothing; a day later crosses Monday 09:00
+    assert not crosses_forbidden(at(2, 12), at(2, 20), at(5, 8))
+    assert crosses_forbidden(at(2, 12), at(2, 20), at(5, 9, 1))

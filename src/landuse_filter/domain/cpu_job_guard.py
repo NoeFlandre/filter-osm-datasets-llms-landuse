@@ -27,13 +27,15 @@ class CpuVerdict:
 
 
 def _boundaries(start: datetime, end: datetime) -> list[tuple[datetime, time]]:
-    days = [start.date() + timedelta(days=n) for n in range((end.date() - start.date()).days + 1)]
-    return [
-        (datetime.combine(day, edge, tzinfo=start.tzinfo), edge)
-        for day in days
-        if is_working_day(day)
-        for edge in (DAY_START, DAY_END)
-    ]
+    found: list[tuple[datetime, time]] = []
+    day = start.date()
+    while day <= end.date():
+        if is_working_day(day):
+            found += [
+                (datetime.combine(day, e, tzinfo=start.tzinfo), e) for e in (DAY_START, DAY_END)
+            ]
+        day += timedelta(days=1)
+    return found
 
 
 def crosses_forbidden(submitted: datetime, start: datetime, end: datetime) -> bool:
