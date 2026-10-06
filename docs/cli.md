@@ -196,9 +196,10 @@ Usage: root g5k cpu-job [OPTIONS] {mode}
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
 │ *  --site                    <str>  Site to run the CPU job on. [required]                       │
-│ *  --dataset                 <str>  [required]                                                   │
-│ *  --revision                <str>  [required]                                                   │
-│    --walltime-minutes        <int>  [default: 60]                                                │
+│ *  --dataset                 <str>  Dataset id (Hub repository name). [required]                 │
+│ *  --revision                <str>  Dataset revision (commit) to process. [required]             │
+│    --walltime-minutes        <int>  Walltime asked for each job (policy permitting).             │
+│                                     [default: 60]                                                │
 │    --help                           Show this message and exit.                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
@@ -239,8 +240,10 @@ Usage: root g5k publish-loop [OPTIONS]
  Resubmit `cpu-job publish` whenever none is live, until the bucket status says done.               
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --dataset                     <str>               [required]                                  │
-│ *  --revision                    <str>               [required]                                  │
+│ *  --dataset                     <str>               Dataset id (Hub repository name).           │
+│                                                      [required]                                  │
+│ *  --revision                    <str>               Dataset revision (commit) to process.       │
+│                                                      [required]                                  │
 │ *  --site                        <str>               Site to submit the publish jobs on.         │
 │                                                      [required]                                  │
 │    --walltime-minutes            <int>               Walltime asked for each job (policy         │
@@ -250,7 +253,8 @@ Usage: root g5k publish-loop [OPTIONS]
 │    --max-interval-seconds        <int range> [x>=1]  Longest pause after repeated failures (slow │
 │                                                      frontend, timeouts).                        │
 │                                                      [default: 1800]                             │
-│    --bucket                      <str>               [default: NoeFlandre/landuse-filter-work]   │
+│    --bucket                      <str>               Hub bucket holding the shared run state.    │
+│                                                      [default: NoeFlandre/landuse-filter-work]   │
 │    --help                                            Show this message and exit.                 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
@@ -263,8 +267,9 @@ Usage: root g5k publish-status [OPTIONS]
  Print the live phase of the running publish/card job (one small bucket download).                  
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --dataset        <str>  [required]                                                            │
-│    --bucket         <str>  [default: NoeFlandre/landuse-filter-work]                             │
+│ *  --dataset        <str>  Dataset id (Hub repository name). [required]                          │
+│    --bucket         <str>  Hub bucket holding the shared run state.                              │
+│                            [default: NoeFlandre/landuse-filter-work]                             │
 │    --help                  Show this message and exit.                                           │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
@@ -305,7 +310,10 @@ Usage: root g5k run [OPTIONS]
 │                                                                           models).               │
 │    --max-jobs                                       <int>                 [default: 12]          │
 │    --max-jobs-per-site                              <int>                 [default: 4]           │
-│    --walltime-minutes                               <int>                 [default: 60]          │
+│    --walltime-minutes                               <int>                 Walltime asked for     │
+│                                                                           each job (policy       │
+│                                                                           permitting).           │
+│                                                                           [default: 60]          │
 │    --day-walltime-minu…                             <int>                 Preferred (long) day   │
 │                                                                           walltime, retried with │
 │                                                                           --walltime-minutes if  │
@@ -349,7 +357,10 @@ Usage: root g5k run [OPTIONS]
 │                                                                           slot if the long job   │
 │                                                                           cannot start.          │
 │                                                                           [default: 30]          │
-│    --besteffort            --no-besteffort                                [default:              │
+│    --besteffort            --no-besteffort                                Submit besteffort jobs │
+│                                                                           (preemptible) instead  │
+│                                                                           of default-queue jobs. │
+│                                                                           [default:              │
 │                                                                           no-besteffort]         │
 │    --stale-besteffort-…                             <int range> [x>=1]    Cancel our besteffort  │
 │                                                                           jobs still waiting     │
@@ -417,7 +428,9 @@ Usage: root g5k run-admission [OPTIONS]
 │                                                                  grenoble,lille,lyon,nancy,renn… │
 │    --max-jobs                            <int>                   Per GPU type. [default: 5]      │
 │    --max-jobs-per-site                   <int>                   [default: 3]                    │
-│    --walltime-minutes                    <int>                   [default: 60]                   │
+│    --walltime-minutes                    <int>                   Walltime asked for each job     │
+│                                                                  (policy permitting).            │
+│                                                                  [default: 60]                   │
 │    --day-walltime-minutes                <int>                   Preferred (long) day walltime,  │
 │                                                                  retried with --walltime-minutes │
 │                                                                  if it cannot start (default:    │
