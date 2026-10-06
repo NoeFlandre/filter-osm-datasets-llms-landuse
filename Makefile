@@ -4,7 +4,6 @@ SHELL := bash
 RUN := $(UV) run --no-sync
 HYPOTHESIS_PROFILE ?= ci
 # The gated scope (mutation testing and CRAP) lives once, in [tool.mutmut] source_paths.
-CRAP_LIMITS = $(shell $(RUN) python scripts/quality_scope.py --limit 6)
 
 .PHONY: help install baseline lint format types test property acceptance architecture crap mutation smoke docs-build gauntlet
 
@@ -42,8 +41,9 @@ architecture:  ## Dependency boundaries (AST test + import-linter)
 	$(RUN) pytest tests/architecture
 	$(RUN) lint-imports
 
+# The scope helper runs as its own command so a failure (or an empty scope) stops the gate.
 crap: test  ## CRAP < 6 on the gated scope
-	$(RUN) python scripts/crap.py $(CRAP_LIMITS) --allowlist scripts/crap-allowlist.json
+	limits="$$($(RUN) python scripts/quality_scope.py --limit 6)" && $(RUN) python scripts/crap.py $$limits --allowlist scripts/crap-allowlist.json
 
 mutation:  ## Mutation testing gated on reviewed survivors
 	$(RUN) mutmut run --max-children 4 || true

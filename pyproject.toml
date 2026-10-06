@@ -183,4 +183,4 @@ source_paths = [
     "src/landuse_filter/application/plan.py",
 ]
 pytest_add_cli_args_test_selection = ["tests/unit/", "tests/property/"]
-also_copy = ["src/landuse_filter/", "tests/", "data/", "scripts/", "docs/", "pyproject.toml", "README.md", "luf.toml"]
+also_copy = ["src/landuse_filter/", "tests/", "data/", "scripts/", "docs/", "pyproject.toml", "README.md", "luf.toml", "Makefile"]

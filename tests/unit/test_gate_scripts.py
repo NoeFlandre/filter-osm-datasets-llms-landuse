@@ -2,6 +2,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPTS = Path(__file__).parents[2] / "scripts"
 
 
@@ -58,7 +60,9 @@ def test_crap_limits_derive_from_the_mutation_scope():
 def test_the_makefile_lists_no_scope_of_its_own():
     makefile = (ROOT / "Makefile").read_text()
     crap = next(line for line in makefile.splitlines() if "scripts/crap.py" in line)
-    assert "$(CRAP_LIMITS)" in crap
+    assert "quality_scope.py" in crap
+    assert "$(shell" not in makefile  # $(shell) would drop a failing helper's exit status
+    assert crap.split("quality_scope.py")[1].split("&&")[1].strip().startswith("$(RUN)")
     assert "src/landuse_filter" not in makefile
     assert "PURE_APPLICATION" not in makefile
 
@@ -71,3 +75,20 @@ def test_the_scope_script_prints_the_crap_arguments():
         check=True,
     )
     assert done.stdout.split() == _quality_scope().crap_limit_args(6.0)
+
+
+def test_an_empty_or_missing_scope_fails_the_helper_and_so_the_crap_gate(tmp_path):
+    for body in ("[tool.mutmut]\nsource_paths = []\n", "[tool.other]\nx = 1\n"):
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(body)
+        with pytest.raises(SystemExit, match="no gated scope"):
+            _quality_scope().gated_paths(pyproject)
+    # The recipe's shape: a failing helper must stop the command that follows it.
+    failing = subprocess.run(
+        ["bash", "-ec", 'limits="$(false)" && echo ran'],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert failing.returncode != 0
+    assert "ran" not in failing.stdout

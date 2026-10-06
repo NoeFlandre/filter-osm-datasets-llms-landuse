@@ -14,7 +14,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 def gated_paths(pyproject: Path = PROJECT_ROOT / "pyproject.toml") -> list[str]:
     """Repository-relative source paths under the gates (directories keep no trailing slash)."""
     config = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-    return [p.rstrip("/") for p in config["tool"]["mutmut"]["source_paths"]]
+    paths = [
+        p.rstrip("/") for p in config.get("tool", {}).get("mutmut", {}).get("source_paths", [])
+    ]
+    if not paths:
+        raise SystemExit("[tool.mutmut] source_paths is missing or empty: no gated scope")
+    return paths
 
 
 def crap_limit_args(limit: float, pyproject: Path = PROJECT_ROOT / "pyproject.toml") -> list[str]:
