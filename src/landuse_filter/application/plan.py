@@ -142,7 +142,7 @@ class Planner:
                     self.db.execute(statement)
             self.db.commit()
             _bind_fingerprint(self.db, self.fp)
-        except Exception:
+        except Exception:  # broad on purpose: close the connection, then re-raise
             self.db.close()
             raise
 

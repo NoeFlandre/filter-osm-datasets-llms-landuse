@@ -197,7 +197,7 @@ class _PartialSink:
             self.unrefreshed = {}
             if self.on_progress:
                 self.on_progress()  # the card marker too
-        except Exception:
+        except Exception:  # broad on purpose: a card refresh failure must not stop the run
             log.exception("progressive card refresh failed; continuing")
 
 
@@ -476,7 +476,7 @@ def _card_from_ledgers(run: _Run) -> None:
         return
     try:
         _progress_card(run, {})
-    except Exception:
+    except Exception:  # broad on purpose: a stale card must not block the run
         log.exception("card refresh at the start failed; continuing")
 
 
