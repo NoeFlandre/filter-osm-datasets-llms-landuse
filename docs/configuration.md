@@ -141,3 +141,18 @@ up to 1 s of jitter), or backs off exponentially with jitter when the header is 
 300 s, all waits together at most 1200 s. It logs one line per wait. Then it re-raises the original
 error. A 429 on a later page of a listing retries that page only. Other errors are not retried.
 See [ADR-0028](adr/0028-hub-rate-limit-retry.md).
+
+## Job progress (publish, card)
+
+Publish and card jobs print one flushed line per phase to their OAR stdout
+(`luf: [<s>s] <phase> k=v ...`: planner index and resolution snapshot downloads with bytes and
+seconds, parts read / total and rows/s, files built, each Hub commit with its file count, short id
+and seconds, the stop reason). The same state is written to `published/<dataset>.progress.json`
+in the bucket at most once per 60 s (`PUT_SECONDS`, `TICK_SECONDS` in
+`application/job_progress.py`). Read it from the laptop with one bucket get:
+
+```
+luf g5k publish-status --dataset <dataset>
+```
+
+See [ADR-0032](adr/0032-observable-publish-jobs.md).

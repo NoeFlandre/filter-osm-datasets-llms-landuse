@@ -134,19 +134,21 @@ Usage: root g5k [OPTIONS] COMMAND [ARGS]...
 │ --help          Show this message and exit.                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────╮
-│ inventory      Refresh the GPU cluster inventory of all sites (Reference API).                   │
-│ run            The controller loop: reconcile, pull results, submit where GPUs are free now.     │
-│ run-admission  One process for every GPU-type admission run (namespace gpu-<key>), sharing one   │
-│                view of each site per cycle; afterwards run `luf bench admit --gpu <key>`.        │
-│ cpu-job        Submit one resumable planning or publishing job (default queue, one CPU node).    │
-│ publish-loop   Resubmit `cpu-job publish` whenever none is live, until the bucket status says    │
-│                done.                                                                             │
-│ calibrate-job  Submit one GPU calibration job on ``cluster`` (1 h, starts now or is cancelled).  │
-│ pause          Stop submitting new jobs (running jobs drain unless --cancel).                    │
-│ resume         Allow the controller to submit again.                                             │
-│ storage        Home quota usage per site and size of the project's ~/luf tree.                   │
-│ clean          Delete stale project files under ~/luf on each site (old code, envs, logs, synced │
-│                parts).                                                                           │
+│ inventory       Refresh the GPU cluster inventory of all sites (Reference API).                  │
+│ run             The controller loop: reconcile, pull results, submit where GPUs are free now.    │
+│ run-admission   One process for every GPU-type admission run (namespace gpu-<key>), sharing one  │
+│                 view of each site per cycle; afterwards run `luf bench admit --gpu <key>`.       │
+│ cpu-job         Submit one resumable planning or publishing job (default queue, one CPU node).   │
+│ publish-loop    Resubmit `cpu-job publish` whenever none is live, until the bucket status says   │
+│                 done.                                                                            │
+│ publish-status  Print the live phase of the running publish/card job (one small bucket           │
+│                 download).                                                                       │
+│ calibrate-job   Submit one GPU calibration job on ``cluster`` (1 h, starts now or is cancelled). │
+│ pause           Stop submitting new jobs (running jobs drain unless --cancel).                   │
+│ resume          Allow the controller to submit again.                                            │
+│ storage         Home quota usage per site and size of the project's ~/luf tree.                  │
+│ clean           Delete stale project files under ~/luf on each site (old code, envs, logs,       │
+│                 synced parts).                                                                   │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -250,6 +252,20 @@ Usage: root g5k publish-loop [OPTIONS]
 │                                                      [default: 1800]                             │
 │    --bucket                      <str>               [default: NoeFlandre/landuse-filter-work]   │
 │    --help                                            Show this message and exit.                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+```
+
+## `luf g5k publish-status`
+
+```text
+Usage: root g5k publish-status [OPTIONS]                                                           
+                                                                                                    
+ Print the live phase of the running publish/card job (one small bucket download).                  
+                                                                                                    
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
+│ *  --dataset        <str>  [required]                                                            │
+│    --bucket         <str>  [default: NoeFlandre/landuse-filter-work]                             │
+│    --help                  Show this message and exit.                                           │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 

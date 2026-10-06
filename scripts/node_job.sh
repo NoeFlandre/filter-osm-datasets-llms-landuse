@@ -22,6 +22,7 @@ CACHE="$HOME/luf/cache"
 export LUF_WORK="$HOME/luf/work"
 export HF_HOME="$CACHE/hf"
 export HF_HUB_DISABLE_TELEMETRY=1
+export PYTHONUNBUFFERED=1  # OAR stdout shows each phase line as it happens
 export FLASHINFER_WORKSPACE_BASE="$CACHE/flashinfer"
 export UV_CACHE_DIR="/tmp/$USER-uv-${OAR_JOB_ID:-local}"
 # Node-local scratch for chunk inputs and parts (bucket mode); removed on exit.

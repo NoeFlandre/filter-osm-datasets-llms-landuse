@@ -19,22 +19,27 @@ def remote_files(repo_id: str) -> set[str]:
     return set(HfApi().list_repo_files(repo_id, repo_type="dataset"))
 
 
-def upload(repo_id: str, files: Sequence[tuple[Path, str]], message: str) -> None:
-    """Commit ``(local path, path in repo)`` pairs in batches (Xet dedupes identical bytes)."""
+def upload(repo_id: str, files: Sequence[tuple[Path, str]], message: str) -> str | None:
+    """Commit ``(local path, path in repo)`` pairs in batches (Xet dedupes identical bytes).
+
+    Returns the last commit's id (``None`` when there was nothing to commit)."""
     from huggingface_hub import CommitOperationAdd, HfApi
 
     api = HfApi()
+    oid: str | None = None
     for start in range(0, len(files), BATCH):
         ops = [
             CommitOperationAdd(path_in_repo=dst, path_or_fileobj=str(src))
             for src, dst in files[start : start + BATCH]
         ]
-        api.create_commit(
+        info = api.create_commit(
             repo_id,
             ops,
             commit_message=f"{message} ({start + len(ops)}/{len(files)})",
             repo_type="dataset",
         )
+        oid = info.oid
+    return oid
 
 
 def download_all(repo_id: str, revision: str, paths: Iterable[str]) -> list[tuple[Path, str]]:
@@ -76,7 +81,9 @@ class Hub(Protocol):
 
     def ensure_dataset(self, repo_id: str) -> None: ...
     def remote_files(self, repo_id: str) -> set[str]: ...
-    def upload(self, repo_id: str, files: Sequence[tuple[Path, str]], message: str) -> None: ...
+    def upload(
+        self, repo_id: str, files: Sequence[tuple[Path, str]], message: str
+    ) -> str | None: ...
     def download_all(
         self, repo_id: str, revision: str, paths: Iterable[str]
     ) -> list[tuple[Path, str]]: ...
@@ -93,8 +100,8 @@ class HfHub:
     def remote_files(self, repo_id: str) -> set[str]:
         return remote_files(repo_id)
 
-    def upload(self, repo_id: str, files: Sequence[tuple[Path, str]], message: str) -> None:
-        upload(repo_id, files, message)
+    def upload(self, repo_id: str, files: Sequence[tuple[Path, str]], message: str) -> str | None:
+        return upload(repo_id, files, message)
 
     def download_all(
         self, repo_id: str, revision: str, paths: Iterable[str]

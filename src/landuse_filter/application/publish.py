@@ -43,6 +43,7 @@ from landuse_filter.application.assemble import (
 )
 from landuse_filter.application.card import MAP_ASSET, CardFacts, MapFacts, render_card
 from landuse_filter.application.datasets import SPECS
+from landuse_filter.application.job_progress import NULL, Progress
 from landuse_filter.application.results import canonical_generations
 from landuse_filter.domain.sentences import SentenceRef
 
@@ -108,6 +109,21 @@ class Coverage:
     partial: list[str]  # labels paths of partly labelled files on the Hub
 
 
+def _commit(  # noqa: PLR0917
+    progress: Progress, hub: Hub, repo: str, files: list[tuple[Path, str]], message: str, kind: str
+) -> None:
+    """One Hub upload, logged with its size in files, its duration and the commit id."""
+    t0 = time.monotonic()
+    sha = hub.upload(repo, files, message)
+    progress.event(
+        "hub_commit",
+        kind=kind,
+        files=len(files),
+        commit=(sha or "")[:10] or "-",
+        seconds=round(time.monotonic() - t0),
+    )
+
+
 class _PartialSink:
     """Uploads partial files as they are built and records each commit in the ledger, so a
     job stopped at its walltime keeps what it already published."""
@@ -121,8 +137,10 @@ class _PartialSink:
         *,
         dry_run: bool,
         on_progress: Callable[[], None] | None,
+        progress: Progress = NULL,
     ) -> None:
         self.store, self.dataset, self.repo, self.dry_run = store, dataset, repo, dry_run
+        self.progress = progress
         self.hub = hub
         self.on_progress = on_progress
         self.pending: list[tuple[Path, str]] = []
@@ -144,8 +162,13 @@ class _PartialSink:
 
     def flush(self) -> None:
         if self.pending and not self.dry_run:
-            self.hub.upload(
-                self.repo, self.pending, f"Add partial land-use labels ({config.GENERATION_FP})"
+            _commit(
+                self.progress,
+                self.hub,
+                self.repo,
+                self.pending,
+                f"Add partial land-use labels ({config.GENERATION_FP})",
+                "partial",
             )
             self.store.append_jsonl(
                 partial_ledger(self.dataset),
@@ -209,6 +232,7 @@ def publish(  # noqa: PLR0913
     should_stop: Callable[[], str | None] = lambda: None,
     resolved: ResolutionIndex | None = None,
     fetch_parts: Callable[[set[str]], None] | None = None,
+    progress: Progress = NULL,
 ) -> PublishReport:
     """Publish what is new. ``resolved`` is a ready resolution index (a bucket snapshot) whose
     parts are not on the store: ``fetch_parts`` then brings the ones holding the generations that
@@ -224,8 +248,10 @@ def publish(  # noqa: PLR0913
         on_progress=on_progress,
         stop=_Stop(should_stop),
         resolved=resolved,
+        progress=progress,
     )
     _card_from_ledgers(run)
+    progress.event("build_start", files=len(run.files), published=len(run.done))
     new, new_shas = _build_files(run)
     new += _missing_viewers(run, resolved=run.ctx.resolved, out=run.ctx.out)
     new += _generation_files(
@@ -241,6 +267,7 @@ def refresh_card_only(
     *,
     on_progress: Callable[[], None] | None = None,
     hub: Hub | None = None,
+    progress: Progress = NULL,
 ) -> PublishReport:
     """Refresh the card from the ledgers alone: no planner index, no result parts, no uploads
     of labels. Missing per-file counts are read from the Hub (resumably, see
@@ -257,6 +284,7 @@ def refresh_card_only(
     partial = {r["path"] for r in store.compact_jsonl(partial_ledger(dataset))} - done
     if not labelled and not partial:
         return PublishReport(dataset, 0, len(total), 0, {})
+    progress.event("card_start", labelled=labelled, partial=len(partial), total=len(total))
     decisions = _refresh_card(
         store,
         hub,
@@ -280,6 +308,7 @@ def _prepare(  # noqa: PLR0913
     on_progress: Callable[[], None] | None,
     stop: _Stop,
     resolved: ResolutionIndex | None = None,
+    progress: Progress = NULL,
 ) -> _Run:
     repo = output_repo(dataset)
     fp = config.GENERATION_FP
@@ -296,6 +325,7 @@ def _prepare(  # noqa: PLR0913
             done=done,
             on_progress=on_progress,
             should_stop=stop,
+            progress=progress,
         )
     if resolved is None:
         resolved = ResolutionIndex(store.path(f"index/resolve-{fp}.sqlite"))
@@ -314,7 +344,9 @@ def _prepare(  # noqa: PLR0913
         resolved_before={
             r["path"]: r["resolved"] for r in store.compact_jsonl(partial_ledger(dataset))
         },
-        sink=_PartialSink(store, dataset, repo, hub, dry_run=dry_run, on_progress=on_progress),
+        sink=_PartialSink(
+            store, dataset, repo, hub, dry_run=dry_run, on_progress=on_progress, progress=progress
+        ),
         hub=hub,
         db=db,
         files=files,
@@ -331,12 +363,13 @@ def _build_files(run: _Run) -> tuple[list[tuple[Path, str]], set[str]]:
     ctx, out = run.ctx, run.ctx.out
     new: list[tuple[Path, str]] = []
     new_shas: set[str] = set()
-    for path in run.files:
+    for seen, path in enumerate(run.files, 1):
         target = f"labels/{path}"
         if target in run.done:
             continue
         if run.stop():
             break
+        run.sink.progress.tick("building_files", file=seen, total=len(run.files), complete=len(new))
         local = Path(
             run.hub.download_all(SPECS[run.dataset].source.repo_id, run.revision, [path])[0][0]
         )
@@ -385,7 +418,9 @@ def _generation_files(
     if not new_shas:
         return []
     if fetch_parts is not None:
-        fetch_parts(set(run.ctx.resolved.parts_of(new_shas).values()))
+        parts = set(run.ctx.resolved.parts_of(new_shas).values())
+        run.sink.progress.event("fetch_generation_parts", parts=len(parts))
+        fetch_parts(parts)
     fp = run.ctx.fp
     batch = len(list(run.store.read_jsonl(f"published/{run.dataset}.jsonl")))
     gen_dir = run.store.path(f"publish/{run.dataset}-gen-{batch:05d}")
@@ -401,6 +436,7 @@ def _finish(run: _Run, new: list[tuple[Path, str]]) -> PublishReport:
     completed = {d for _, d in new if d.startswith("labels/")}
     labelled = len([p for p in run.files if f"labels/{p}" in run.done]) + len(completed)
     run.sink.flush()
+    run.sink.progress.event("final_upload", complete_files=len(new))
     partial_paths = (set(run.resolved_before) | set(run.sink.resolved)) - run.done - completed
     decisions: dict[str, int] = {}
     if run.dry_run:
@@ -414,6 +450,7 @@ def _finish(run: _Run, new: list[tuple[Path, str]]) -> PublishReport:
             partial=run.sink.unrefreshed,
             coverage=Coverage(labelled, len(run.files), sorted(partial_paths)),
             on_progress=run.sink.on_progress,
+            progress=run.sink.progress,
         )
     return PublishReport(
         run.dataset,
@@ -462,7 +499,7 @@ def _progress_card(run: _Run, local: dict[str, Path]) -> None:
     )
 
 
-def _upload(
+def _upload(  # noqa: PLR0913
     store: WorkStore,
     hub: Hub,
     target: tuple[str, str, str],
@@ -471,12 +508,15 @@ def _upload(
     partial: dict[str, Path],
     coverage: Coverage,
     on_progress: Callable[[], None] | None = None,
+    progress: Progress = NULL,
 ) -> dict[str, int]:
     """Upload the complete files, record them and refresh the card (partial files are
     already up and recorded)."""
     dataset, repo, revision = target
     if new:
-        hub.upload(repo, new, f"Add land-use labels ({config.GENERATION_FP})")
+        _commit(
+            progress, hub, repo, new, f"Add land-use labels ({config.GENERATION_FP})", "complete"
+        )
         store.append_jsonl(f"published/{dataset}.jsonl", [{"path": d} for _, d in new])
     return _refresh_card(
         store,
@@ -579,6 +619,7 @@ def _mirror(  # noqa: PLR0913
     done: set[str],
     on_progress: Callable[[], None] | None = None,
     should_stop: Callable[[], bool] = lambda: False,
+    progress: Progress = NULL,
 ) -> None:
     """Copy the input files to the output repo, resumably: each uploaded batch is recorded in
     ``published/<dataset>.mirror.jsonl`` (so a restart does not even list the output repo
@@ -589,6 +630,7 @@ def _mirror(  # noqa: PLR0913
     if marker in done:
         return
     wanted = _unmirrored(hub, store, dataset, input_repo, revision, repo)
+    progress.event("mirror_start", files=len(wanted))
     with ThreadPoolExecutor(MIRROR_WORKERS) as pool:
         for start in range(0, len(wanted), BATCH):
             if should_stop():
@@ -599,7 +641,7 @@ def _mirror(  # noqa: PLR0913
                 for part in pool.map(lambda p: _fetch(hub, input_repo, revision, p), batch)
                 for f in part
             ]
-            hub.upload(repo, files, f"Mirror {input_repo}@{revision[:7]}")
+            _commit(progress, hub, repo, files, f"Mirror {input_repo}@{revision[:7]}", "mirror")
             store.append_jsonl(
                 mirror_ledger(dataset), [{"path": p, "revision": revision} for p in batch]
             )

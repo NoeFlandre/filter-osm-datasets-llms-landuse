@@ -1,6 +1,7 @@
 """`luf node` commands."""
 
 import json
+import os
 from typing import TYPE_CHECKING
 
 import typer
@@ -165,7 +166,6 @@ def node_calibrate(
 def _stop_watch() -> "Callable[[], str | None]":
     """Reason to wind down, once SIGTERM/SIGUSR2/SIGINT arrived (OAR's checkpoint, 5 minutes
     before the end) or the job deadline from ``LUF_JOB_DEADLINE_EPOCH`` is near."""
-    import os
     import signal
     import time
 
@@ -191,20 +191,24 @@ def node_publish(
     from dataclasses import asdict
 
     from landuse_filter.adapters.remote import BucketRemote
+    from landuse_filter.application.job_progress import bucket_progress
     from landuse_filter.application.remote_publish import run_card_only, run_publish
 
     scratch = _store(config.scratch_dir())
+    remote = BucketRemote(bucket)
+    progress = bucket_progress(remote, dataset, os.environ.get("OAR_JOB_ID", ""))
     if card_only:
-        card = run_card_only(BucketRemote(bucket), scratch, dataset, revision)
+        card = run_card_only(remote, scratch, dataset, revision, progress=progress)
         typer.echo(json.dumps(asdict(card)))
         return
     report = run_publish(
-        BucketRemote(bucket),
+        remote,
         scratch,
         dataset,
         revision,
         config.GENERATION_FP,
         should_stop=_stop_watch(),
+        progress=progress,
     )
     if report.stopped:
         typer.echo(f"luf: publish stopped early ({report.stopped}); ledgers and card are saved")
