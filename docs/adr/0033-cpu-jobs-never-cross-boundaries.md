@@ -17,8 +17,9 @@ submission-time window and never checked the real start.
   Whatever the time, `[start, start + walltime]` must not strictly contain a working-day 09:00,
   nor a working-day 19:00 unless the job was submitted that day at/after 17:00. A night job with no
   predicted start is left to OAR's `-t night`, which confines it to the night.
-- `application/cpu_guard.py`: after `oarsub`, `_submit_cpu_job` waits 20 s, asks `oarstat -J` for
-  the state and predicted start, and on a refusal runs `oardel` and raises `CpuJobCancelledError`
+- `application/cpu_guard.py`: after `oarsub`, `_submit_cpu_job` polls `oarstat -J` every 5 s
+  (up to 120 s, issue #211: OAR may not have assigned a start yet) until the job is started or has a
+  predicted start, then judges it, and on a refusal runs `oardel` and raises `CpuJobCancelledError`
   ("would start late; cancelled"). `cpu-job` exits 1; `publish-loop` logs it and retries on its next
   interval. Every CPU mode (plan, replan, publish, card, repair) goes through this one function.
 - Watchdog (`stale_day_job`): at each cycle, `publish-loop` deletes its own Waiting job when it was

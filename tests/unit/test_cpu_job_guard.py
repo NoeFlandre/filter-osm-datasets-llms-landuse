@@ -6,7 +6,14 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from landuse_filter.adapters.g5k import Job
-from landuse_filter.application.cpu_guard import CpuJobCancelledError, guard_start, live, sweep
+from landuse_filter.application.cpu_guard import (
+    POLL_INTERVAL,
+    POLL_WINDOW,
+    CpuJobCancelledError,
+    guard_start,
+    live,
+    sweep,
+)
 from landuse_filter.domain.cpu_job_guard import (
     cpu_job_verdict,
     crosses_forbidden,
@@ -174,6 +181,75 @@ def test_guard_start_unknown_start_in_daytime_cancels():
             sleep=lambda s: None,
         )
     assert cancelled == ["5"]
+
+
+def run_guard(statuses, sub=None, clock=None):
+    seq, cancelled, sleeps = iter(statuses), [], []
+    sub = sub or at(1, 10)
+    guard_start(
+        job_id="5",
+        submitted=sub,
+        walltime=H,
+        now=lambda: clock or sub,
+        status=lambda j: next(seq),
+        cancel=cancelled.append,
+        sleep=sleeps.append,
+    )
+    return cancelled, sleeps
+
+
+def test_guard_waits_for_oar_to_assign_a_start():
+    soon = int(at(1, 10, 5).timestamp())
+    cancelled, sleeps = run_guard([("Waiting", None), ("Waiting", 0), ("Waiting", soon)])
+    assert cancelled == []
+    assert sleeps == [POLL_INTERVAL] * 3
+
+
+def test_guard_running_at_first_poll_is_allowed():
+    cancelled, sleeps = run_guard([("Running", None)])
+    assert cancelled == []
+    assert sleeps == [POLL_INTERVAL]
+
+
+def test_guard_running_after_a_wait_is_allowed():
+    cancelled, _ = run_guard([("Waiting", None)] * 3 + [("Launching", None)])
+    assert cancelled == []
+
+
+def test_guard_never_assigned_is_cancelled_after_the_window():
+    n = int(POLL_WINDOW / POLL_INTERVAL)
+    seq = [("Waiting", None)] * n
+    cancelled = []
+    with pytest.raises(CpuJobCancelledError):
+        guard_start(
+            job_id="5",
+            submitted=at(1, 10),
+            walltime=H,
+            now=lambda: at(1, 10),
+            status=lambda j: seq.pop(),
+            cancel=cancelled.append,
+            sleep=lambda s: None,
+        )
+    assert cancelled == ["5"]
+    assert seq == []
+
+
+def test_guard_late_predicted_start_cancels_without_waiting_the_window():
+    late = int(at(1, 12).timestamp())
+    cancelled = []
+    sleeps = []
+    with pytest.raises(CpuJobCancelledError):
+        guard_start(
+            job_id="5",
+            submitted=at(1, 10),
+            walltime=H,
+            now=lambda: at(1, 10),
+            status=lambda j: ("Waiting", late),
+            cancel=cancelled.append,
+            sleep=sleeps.append,
+        )
+    assert cancelled == ["5"]
+    assert sleeps == [POLL_INTERVAL]
 
 
 def job(i, name="luf-publish-x", state="Waiting", sub=None):
