@@ -116,7 +116,7 @@ class Settings:
     submit_workers: int = (
         DEFAULT_SUBMIT_WORKERS  # sites submitted to in parallel (ADR-0020); 1 = in turn
     )
-    immediate_in_night: bool = True  # also submit immediate-start jobs at night (ADR-0027)
+    immediate_in_night: bool = True  # also submit immediate-start jobs at night (ADR-0034)
     background_ingest: bool = False  # ingest in its own thread, never in the cycle (ADR-0031)
     policy_check: str = PER_JOB  # "per-batch": one usage-policy check per site and cycle (ADR-0019)
 
@@ -445,7 +445,7 @@ class Controller:
     def _cluster_slots(
         self, c: Cluster, nodes: dict, now: datetime, jobs: dict[str, list[g5k.Job]]
     ) -> list[Slot | None]:
-        """Night/weekend: an immediate-start slot (ADR-0027), then the queued night one."""
+        """Night/weekend: an immediate-start slot (ADR-0034), then the queued night one."""
         if self.memory.backed_off(c, now):
             return []
         window = allowed_window(now, starts_now=True) if not c.production else None

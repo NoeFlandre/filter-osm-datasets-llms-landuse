@@ -194,7 +194,7 @@ def g5k_run(
     immediate_in_night: bool = typer.Option(
         True,
         help="At night/weekend also submit immediate-start jobs (no -t night, <= 1 h) "
-        "where GPUs are free now, besides the queued night jobs. See ADR-0027.",
+        "where GPUs are free now, besides the queued night jobs. See ADR-0034.",
     ),
     window: int | None = typer.Option(
         None, help="Candidate concurrency (tuning); default: GPU profile."
