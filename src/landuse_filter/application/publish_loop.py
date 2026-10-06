@@ -41,6 +41,7 @@ class LoopIO:
     submit: Callable[[], str]
     sleep: Callable[[float], None]
     log: Callable[[str], None]
+    sweep: Callable[[], None] = lambda: None  # watchdog: delete stale waiting day jobs
 
 
 def run_loop(
@@ -59,6 +60,7 @@ def run_loop(
     while max_cycles is None or cycles < max_cycles:
         cycles += 1
         try:
+            io.sweep()
             done = is_done(io.status(), revision)
             action = decide(done=done, live=False if done else io.live())
             if action == SUBMIT:

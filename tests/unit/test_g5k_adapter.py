@@ -121,3 +121,9 @@ def test_concurrent_deploys_of_the_same_commit_all_succeed(tmp_path):
     assert (target / ".complete").exists()
     assert len(list((target / "tests" / "unit").iterdir())) == 50
     assert not list((tmp_path / "luf" / "code").glob(".deploy.*"))
+
+
+def test_our_jobs_reads_the_submission_time(monkeypatch):
+    payload = {"1": {"name": "luf-abc", "state": "Waiting", "submissionTime": 1700000000}}
+    fake(monkeypatch, (0, json.dumps(payload), ""))
+    assert g5k.our_jobs("lille")[0].submitted == 1700000000

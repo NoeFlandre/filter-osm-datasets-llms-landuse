@@ -156,3 +156,11 @@ luf g5k publish-status --dataset <dataset>
 ```
 
 See [ADR-0032](adr/0032-observable-publish-jobs.md).
+
+## CPU-job boundary guard (fixed)
+
+`cpu-job` and `publish-loop` take no option for it. The constants live in
+`domain/cpu_job_guard.py`: start tolerance 10 minutes, watchdog cutoff 16:50, evening submission
+from 17:00, zombie age 2 hours. After `oarsub`, a daytime job that OAR predicts to start late (or
+to cross 09:00/19:00) is deleted with `oardel` and reported as `would start late; cancelled`.
+See [ADR-0033](adr/0033-cpu-jobs-never-cross-boundaries.md).
