@@ -49,6 +49,35 @@ def test_our_jobs_only_returns_luf_jobs(monkeypatch):
     assert [(j.job_id, j.name, j.scheduled_start) for j in jobs] == [("1", "luf-abc", 5)]
 
 
+def test_policy_check_scopes_to_site_and_accepts_clean_json(monkeypatch):
+    report = {"jobs": {}, "total_jobs": {}, "limits": {"lille": {}}}
+    run = fake(monkeypatch, (0, json.dumps(report), ""))
+
+    g5k.policy_check("lille")
+
+    assert run.calls[0][-1] == "usagepolicycheck -t --sites lille --json"
+
+
+def test_policy_check_rejects_reported_violations_even_when_command_succeeds(monkeypatch):
+    report = {
+        "jobs": {"user": {"2026-10-06": {"lille": {"cluster": {}}}}},
+        "total_jobs": {},
+        "limits": {"lille": {}},
+    }
+    fake(monkeypatch, (0, json.dumps(report), ""))
+
+    with pytest.raises(g5k.RemoteError, match="usage-policy violations"):
+        g5k.policy_check("lille")
+
+
+@pytest.mark.parametrize("output", ["not json", '{"total_jobs": {}}'])
+def test_policy_check_fails_closed_on_unverifiable_output(monkeypatch, output):
+    fake(monkeypatch, (0, output, ""))
+
+    with pytest.raises(g5k.RemoteError, match="unverifiable policy report"):
+        g5k.policy_check("lille")
+
+
 def test_submit_parses_the_job_id_and_quotes_arguments(monkeypatch):
     run = fake(monkeypatch, (0, "[ADMISSION RULE] ...\nOAR_JOB_ID=4165999\n", ""))
     assert g5k.submit("rennes", ["-p", "cluster='x'", "cmd with space"]) == "4165999"

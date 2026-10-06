@@ -86,7 +86,27 @@ def our_jobs(site: str) -> list[Job]:
 
 
 def policy_check(site: str) -> None:
-    ssh(site, "usagepolicycheck -t", timeout=180)
+    out = ssh(
+        site,
+        f"usagepolicycheck -t --sites {shlex.quote(site)} --json",
+        timeout=180,
+    )
+    try:
+        report = json.loads(out)
+    except json.JSONDecodeError as exc:
+        raise RemoteError(
+            f"{site}: usagepolicycheck returned an unverifiable policy report"
+        ) from exc
+    if (
+        not isinstance(report, dict)
+        or not isinstance(report.get("jobs"), dict)
+        or not isinstance(report.get("total_jobs"), dict)
+        or not isinstance(report.get("limits"), dict)
+        or site not in report["limits"]
+    ):
+        raise RemoteError(f"{site}: usagepolicycheck returned an unverifiable policy report")
+    if report["jobs"]:
+        raise RemoteError(f"{site}: usagepolicycheck reported usage-policy violations")
 
 
 _JOB_ID = re.compile(r"OAR_JOB_ID=(\d+)")
