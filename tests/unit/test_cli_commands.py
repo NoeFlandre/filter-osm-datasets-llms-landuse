@@ -245,6 +245,8 @@ def remote(monkeypatch):
     monkeypatch.setattr(
         g5k_adapter, "submit", lambda site, args: calls.submitted.append((site, args)) or "4242"
     )
+    monkeypatch.setattr(g5k_adapter, "scheduled_start", lambda site, job: ("Running", None))
+    monkeypatch.setattr("time.sleep", lambda s: None)
     return calls
 
 
@@ -261,6 +263,19 @@ def test_cpu_job_submits_a_node_job_script_command(remote):
     assert "-q" in args
     assert remote.deployed == [("lille", "abc123")]
     assert remote.policy == 1
+
+
+def test_cpu_job_that_would_start_late_is_cancelled(remote, monkeypatch):
+    cancelled = []
+    monkeypatch.setattr(g5k_adapter, "scheduled_start", lambda site, job: ("Waiting", None))
+    monkeypatch.setattr(g5k_adapter, "cancel", lambda site, job: cancelled.append(job))
+    monkeypatch.setattr("landuse_filter.domain.cpu_job_guard.is_daytime", lambda moment: True)
+    result = invoke(
+        "g5k", "cpu-job", "replan", "--site", "lille", "--dataset", "ds", "--revision", "rev1"
+    )
+    assert result.exit_code == 1
+    assert "would start late" in result.output
+    assert cancelled == ["4242"]
 
 
 def test_cpu_job_rejects_an_unknown_mode(remote):
