@@ -1,6 +1,7 @@
 """`luf g5k` commands."""
 
 import hashlib
+import time
 from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -32,8 +33,21 @@ ADMISSION_MAX_JOBS = 5
 ADMISSION_MAX_JOBS_PER_SITE = 3
 ADMISSION_MAX_QUEUED_PER_SITE = 2
 STALE_BESTEFFORT_MINUTES = 20
+DEFAULT_FRONTEND_SITE = "nancy"
+CPU_JOB_WALLTIME_MINUTES = 60
+CPU_JOB_CHECKPOINT_SECONDS = 300
+PUBLISH_POLL_SECONDS = 300
+PUBLISH_MAX_POLL_SECONDS = 1800
 
-WalltimeMinutes = Annotated[int, typer.Option()]
+WalltimeMinutes = Annotated[
+    int, typer.Option(help="Walltime asked for each job (policy permitting).")
+]
+DatasetOption = Annotated[str, typer.Option(help="Dataset id (Hub repository name).")]
+RevisionOption = Annotated[str, typer.Option(help="Dataset revision (commit) to process.")]
+BesteffortOption = Annotated[
+    bool, typer.Option(help="Submit besteffort jobs (preemptible) instead of default-queue jobs.")
+]
+BucketOption = Annotated[str, typer.Option(help="Hub bucket holding the shared run state.")]
 DayWalltimeMinutes = Annotated[
     int | None,
     typer.Option(
@@ -139,7 +153,8 @@ def build_settings(
 
 @g5k_app.command("inventory")
 def g5k_inventory(
-    work: Path = WORK, site: str = typer.Option("nancy", help="Frontend to query from.")
+    work: Path = WORK,
+    site: str = typer.Option(DEFAULT_FRONTEND_SITE, help="Frontend to query from."),
 ) -> None:
     """Refresh the GPU cluster inventory of all sites (Reference API)."""
     from landuse_filter.adapters import g5k
@@ -179,7 +194,7 @@ def g5k_run(
     night_fallback_walltime_minutes: NightFallbackWalltimeMinutes = (
         OPS.night_fallback_walltime_minutes
     ),
-    besteffort: bool = typer.Option(False),
+    besteffort: BesteffortOption = False,
     stale_besteffort_minutes: int = typer.Option(
         STALE_BESTEFFORT_MINUTES,
         min=1,
@@ -313,10 +328,11 @@ CPU_JOB_PROPERTY = "gpu_count = 0 AND cluster != 'sagittaire'"
 @g5k_app.command("cpu-job")
 def g5k_cpu_job(
     mode: str = typer.Argument(..., help="plan, replan, publish, card or repair"),
+    *,
     site: str = typer.Option(..., help="Site to run the CPU job on."),
-    dataset: str = typer.Option(...),
-    revision: str = typer.Option(...),
-    walltime_minutes: int = typer.Option(60),
+    dataset: DatasetOption,
+    revision: RevisionOption,
+    walltime_minutes: WalltimeMinutes = CPU_JOB_WALLTIME_MINUTES,
 ) -> None:
     """Submit one resumable planning or publishing job (default queue, one CPU node)."""
     from landuse_filter.application.cpu_guard import CpuJobCancelledError
@@ -335,7 +351,6 @@ def _submit_cpu_job(
     """Deploy the code and submit one CPU job; returns (job id, walltime text)."""
     if mode not in ("plan", "replan", "publish", "card", "repair"):
         raise typer.BadParameter("mode must be plan, replan, publish, card or repair")
-    import time
     from datetime import datetime
 
     from landuse_filter.adapters import g5k
@@ -360,7 +375,7 @@ def _submit_cpu_job(
             "-l",
             f"host=1,walltime={walltime_text(wall)}",
             "--checkpoint",
-            "300",
+            str(CPU_JOB_CHECKPOINT_SECONDS),
             "-n",
             job_name(g5k.JOB_PREFIX, mode, dataset),
             "-O",
@@ -387,20 +402,22 @@ def _submit_cpu_job(
 
 @g5k_app.command("publish-loop")
 def g5k_publish_loop(
-    dataset: str = typer.Option(...),
-    revision: str = typer.Option(...),
+    *,
+    dataset: DatasetOption,
+    revision: RevisionOption,
     site: str = typer.Option(..., help="Site to submit the publish jobs on."),
-    walltime_minutes: int = typer.Option(
-        60, help="Walltime asked for each job (policy permitting)."
+    walltime_minutes: WalltimeMinutes = CPU_JOB_WALLTIME_MINUTES,
+    interval_seconds: int = typer.Option(
+        PUBLISH_POLL_SECONDS, min=1, help="Pause between two checks."
     ),
-    interval_seconds: int = typer.Option(300, min=1, help="Pause between two checks."),
     max_interval_seconds: int = typer.Option(
-        1800, min=1, help="Longest pause after repeated failures (slow frontend, timeouts)."
+        PUBLISH_MAX_POLL_SECONDS,
+        min=1,
+        help="Longest pause after repeated failures (slow frontend, timeouts).",
     ),
-    bucket: str = typer.Option(OPS.bucket),
+    bucket: BucketOption = OPS.bucket,
 ) -> None:
     """Resubmit `cpu-job publish` whenever none is live, until the bucket status says done."""
-    import time
     from datetime import datetime
 
     from landuse_filter.adapters import g5k
@@ -435,12 +452,11 @@ def g5k_publish_loop(
 
 @g5k_app.command("publish-status")
 def g5k_publish_status(
-    dataset: str = typer.Option(...),
-    bucket: str = typer.Option(OPS.bucket),
+    *,
+    dataset: DatasetOption,
+    bucket: BucketOption = OPS.bucket,
 ) -> None:
     """Print the live phase of the running publish/card job (one small bucket download)."""
-    import time
-
     from landuse_filter.adapters.remote import BucketRemote
     from landuse_filter.application.job_progress import read_progress
 
