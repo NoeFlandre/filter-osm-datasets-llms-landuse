@@ -81,7 +81,7 @@ def allowed_window(now: datetime, *, starts_now: bool) -> Window | None:
 
 
 def immediate_window(window: Window | None) -> Window | None:
-    """The quota-free immediate-start window inside a night/weekend ``window`` (ADR-0027).
+    """The quota-free immediate-start window inside a night/weekend ``window`` (ADR-0034).
 
     A job without the ``night`` type and of <= 1 h that ends before the next working-day
     09:00 breaks no rule outside daytime. ``None`` for a daytime or missing window (the

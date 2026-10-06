@@ -1018,7 +1018,7 @@ def test_recent_besteffort_and_other_queues_are_left_alone(world):
     assert not fake.cancelled
 
 
-# --- immediate-start jobs in the night window (ADR-0027) ------------------------------
+# --- immediate-start jobs in the night window (ADR-0034) ------------------------------
 
 
 def _types(fake):

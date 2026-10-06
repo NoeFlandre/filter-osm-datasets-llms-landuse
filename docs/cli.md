@@ -375,7 +375,7 @@ Usage: root g5k run [OPTIONS]
 │                                                                           1 h) where GPUs are    │
 │                                                                           free now, besides the  │
 │                                                                           queued night jobs. See │
-│                                                                           ADR-0027.              │
+│                                                                           ADR-0034.              │
 │                                                                           [default:              │
 │                                                                           immediate-in-night]    │
 │    --window                                         <int>                 Candidate concurrency  │
