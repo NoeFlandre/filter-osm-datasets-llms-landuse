@@ -1,6 +1,6 @@
 """Operational settings: defaults < ``luf.toml`` < environment < CLI option.
 
-``luf.toml`` (repo root, or ``$LUF_CONFIG``) holds the defaults; ``LUF_<FIELD>``
+``luf.toml`` (packaged defaults, or ``$LUF_CONFIG``) holds the defaults; ``LUF_<FIELD>``
 environment variables override a field (see ``ENV_FIELDS``); a CLI option, where one
 exists, wins over both because Typer uses this loader's value only as the default.
 """
@@ -8,6 +8,8 @@ exists, wins over both because Typer uses this loader's value only as the defaul
 import os
 import tomllib
 from collections.abc import Mapping
+from importlib import resources
+from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +20,8 @@ from landuse_filter.domain.settings import (
     parse_settings,
 )
 
-DEFAULT = Path(__file__).resolve().parents[3] / "luf.toml"
+# Packaged with the wheel, so an installed luf reads it without a checkout.
+DEFAULT = resources.files("landuse_filter") / "data" / "luf.toml"
 
 # field -> toml table; the environment variable is LUF_<FIELD in upper case>
 ENV_FIELDS = {f.name: f.table for f in FIELDS}
@@ -48,8 +51,11 @@ def with_environment(raw: Mapping[str, Any], environ: Mapping[str, str]) -> dict
     return merged
 
 
-def load(path: Path | None = None, environ: Mapping[str, str] | None = None) -> OpsSettings:
+def load(
+    path: Path | Traversable | None = None, environ: Mapping[str, str] | None = None
+) -> OpsSettings:
     env = os.environ if environ is None else environ
-    target = path or Path(env.get("LUF_CONFIG", DEFAULT))
+    configured = env.get("LUF_CONFIG")
+    target = path or (DEFAULT if configured is None else Path(configured))
     with target.open("rb") as f:
         return parse_settings(with_environment(tomllib.load(f), env))

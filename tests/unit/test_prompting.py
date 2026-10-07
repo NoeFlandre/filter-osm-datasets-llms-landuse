@@ -1,5 +1,5 @@
 import hashlib
-from pathlib import Path
+from importlib import resources
 
 import pytest
 
@@ -10,7 +10,7 @@ from landuse_filter.domain.prompting import (
     render_prompt,
 )
 
-PROMPT = Path(__file__).parents[2] / "data" / "prompt.txt"
+PROMPT = resources.files("landuse_filter") / "data" / "prompt.txt"
 
 
 def test_vendored_prompt_is_the_benchmark_prompt():

@@ -7,6 +7,7 @@ Exit codes: 0 ok, 1 failure, 2 usage error, 3 gate failed, 4 nothing to do,
 import hashlib
 import json
 import sys
+from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -43,7 +44,7 @@ app.add_typer(g5k_app, name="g5k")
 app.add_typer(node_app, name="node")
 
 
-PROMPT = Path(__file__).resolve().parents[3] / "data" / "prompt.txt"
+PROMPT = resources.files("landuse_filter") / "data" / "prompt.txt"  # packaged with the wheel
 
 
 WORK = typer.Option(config.work_dir(), "--work", help="Local work tree.")
