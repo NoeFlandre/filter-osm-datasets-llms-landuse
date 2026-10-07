@@ -5,6 +5,7 @@ receives just the small assignment file, and the controller pulls only manifests
 job summaries. There is no other transport.
 """
 
+import functools
 import threading
 import time
 from collections.abc import Callable, Collection
@@ -148,7 +149,7 @@ class Transport:
                 self._jobs_due = True
         if not report.limited:
             self._chunks(index, fp, live=live, report=report, started=started, budget=budget)
-        jobs = lambda: fetch_manifests(self.remote, self.store, "jobs/")  # noqa: E731
+        jobs = functools.partial(fetch_manifests, self.remote, self.store, "jobs/")
         if self._jobs_due and not report.limited and self._attempt(report, jobs):
             self._jobs_due = False
         report.seconds = self.clock() - started

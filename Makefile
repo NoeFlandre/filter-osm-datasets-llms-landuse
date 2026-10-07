@@ -17,9 +17,10 @@ install:  ## Dev environment (CPU; tokenizer extra for planning) + git hooks
 baseline:  ## Existing suite before changing anything
 	$(RUN) pytest
 
-lint:  ## ruff format check + lint
+lint:  ## ruff format check + lint + shellcheck
 	$(RUN) ruff format --check .
 	$(RUN) ruff check .
+	shellcheck scripts/node_job.sh scripts/ops/*.sh scripts/hooks/pre-commit
 
 format:  ## Apply ruff formatting and fixes
 	$(RUN) ruff format .
