@@ -136,15 +136,39 @@ def deploy_command(target: str) -> str:
     )
 
 
+UV_VERSION = "0.11.33"  # pinned release; the Dockerfile pins uv 0.11 by image digest
+# sha256 of the release tarball for each frontend architecture, from the release's .sha256 files.
+UV_SHA256 = {
+    "x86_64": "aa9fca823c03289fb6e3460b3dc864f3ea895cafaf9b99247701a67b17d1b018",
+    "aarch64": "9ed88a9a42de3102f9704d021ab186fdf8a69a7ad9a1d3f3486ac6b1e55d6141",
+}
+
+
+def install_uv_command() -> str:
+    """Install the pinned uv release into ~/.local/bin; the tarball must match its sha256."""
+    cases = " ".join(f"{arch}) sha={digest};;" for arch, digest in UV_SHA256.items())
+    url = (
+        f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}"
+        "/uv-$arch-unknown-linux-gnu.tar.gz"
+    )
+    return (
+        "command -v uv >/dev/null || test -x ~/.local/bin/uv || { "
+        'arch=$(uname -m) && case "$arch" in '
+        f'{cases} *) echo "no pinned uv for $arch" >&2; exit 1;; esac && '
+        "tmp=$(mktemp -d) && "
+        f'curl -fsSL "{url}" -o "$tmp/uv.tar.gz" && '
+        'echo "$sha  $tmp/uv.tar.gz" | sha256sum -c - >/dev/null && '
+        'tar -xzf "$tmp/uv.tar.gz" -C "$tmp" && mkdir -p ~/.local/bin && '
+        'install -m 755 "$tmp/uv-$arch-unknown-linux-gnu/uv" ~/.local/bin/uv; '
+        'st=$?; rm -rf "$tmp"; exit $st; }'
+    )
+
+
 def deploy_code(site: str, commit: str, archive: bytes) -> str:
     """Unpack a ``git archive`` of ``commit`` into ``~/luf/code/<commit>``; idempotent."""
     target = f"{REMOTE_ROOT}/code/{commit}"
     ssh(site, deploy_command(target), stdin=archive, timeout=300)
-    ssh(
-        site,
-        "command -v uv >/dev/null || test -x ~/.local/bin/uv || "
-        "(curl -LsSf https://astral.sh/uv/install.sh | sh) >/dev/null 2>&1",
-    )
+    ssh(site, install_uv_command(), timeout=300)
     return target
 
 
