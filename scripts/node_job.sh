@@ -97,6 +97,7 @@ export PATH="$venv/bin:$PATH"
 # venv keeps the package from whenever it was built (regression: Lyon job 2070636
 # ran stale code without `node plan`).
 export PYTHONPATH="$CODE/src${PYTHONPATH:+:$PYTHONPATH}"
+# shellcheck disable=SC2329  # invoked indirectly through run_forwarding
 luf() { "$venv/bin/python" -c 'import sys; from landuse_filter.cli import app; sys.exit(app())' "$@"; }
 env_seconds=$(( $(date +%s) - t0 ))
 export LUF_ENV_READY_SECONDS="$env_seconds"  # recorded in the job timeline (luf node run)

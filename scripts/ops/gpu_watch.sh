@@ -41,7 +41,7 @@ for s in "grenoble lille lyon nancy rennes sophia toulouse luxembourg".split():
 print(f"running={sum(v for k, v in run.items() if not k.startswith('cpu'))} waiting={wait} " + ' '.join(f"{k}={v}" for k, v in sorted(run.items())) + (f" UNREACHABLE={','.join(down)}" if down else ""))
 PY
 )
-  ds=$(luf status --datasets osm-polygon-description-tag,osm-polygon-website-tag,osm-polygon-wikidata-and-wikipedia --work $W 2>&1 | python3 -c "
+  ds=$(luf status --datasets osm-polygon-description-tag,osm-polygon-website-tag,osm-polygon-wikidata-and-wikipedia --work "$W" 2>&1 | python3 -c "
 import sys, ast
 out = []
 for line in sys.stdin:
@@ -50,7 +50,7 @@ for line in sys.stdin:
         d = ast.literal_eval(rest.strip())
         out.append(f\"{name.split('-')[2][:4]}={d['chunks_complete']}/{d['chunks']}\")
 print(' '.join(out))")
-  adm=$(tail -n 400 $W/controller-admission.log 2>/dev/null | python3 -c "
+  adm=$(tail -n 400 "$W"/controller-admission.log 2>/dev/null | python3 -c "
 import sys, json
 last = {}
 for line in sys.stdin:
@@ -58,7 +58,7 @@ for line in sys.stdin:
         try: r = json.loads(line); last[r['namespace'].removeprefix('gpu-')] = r['pending_chunks']
         except Exception: pass
 print(' '.join(f'{k}={v}' for k, v in sorted(last.items()) if v))")
-  err=$(tail -n 60 $W/controller-production.log $W/controller-admission.log 2>/dev/null | grep -hE "cycle failed|submission failed" | grep -v "besteffort. Reserve" | tail -1 | cut -c1-140)
+  err=$(tail -n 60 "$W"/controller-production.log "$W"/controller-admission.log 2>/dev/null | grep -hE "cycle failed|submission failed" | grep -v "besteffort. Reserve" | tail -1 | cut -c1-140)
   # A controller that submits but no longer ingests results (seen 2026-10-01: wedged for an hour)
   # shows up as a growing age of the progress index.
   last=$(python3 -c "import glob, os, sys; f = glob.glob(sys.argv[1] + '/index/progress-*.sqlite'); print(int(max(map(os.path.getmtime, f))) if f else 0)" "$W")
