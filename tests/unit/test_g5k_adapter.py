@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 
 import pytest
@@ -127,3 +128,94 @@ def test_our_jobs_reads_the_submission_time(monkeypatch):
     payload = {"1": {"name": "luf-abc", "state": "Waiting", "submissionTime": 1700000000}}
     fake(monkeypatch, (0, json.dumps(payload), ""))
     assert g5k.our_jobs("lille")[0].submitted == 1700000000
+
+
+def test_deploy_never_pipes_a_remote_installer_into_a_shell(monkeypatch):
+    """Regression (#233): uv was installed by piping the live astral.sh script to sh."""
+    sent = []
+    monkeypatch.setattr(g5k, "ssh", lambda site, command, **kwargs: sent.append(command) or "")
+    g5k.deploy_code("lille", "abc", b"")
+    install = sent[-1]
+    assert "install.sh" not in install
+    assert "astral.sh" not in install
+    assert not re.search(r"\|\s*(ba)?sh\b", install)
+    assert "sha256sum -c" in install
+    urls = [part.split('"')[0] for part in install.split('"https://')[1:]]
+    assert len(urls) == 1
+    assert f"/download/{g5k.UV_VERSION}/" in urls[0]
+
+
+def _tool_dir(tmp_path, curl_body):
+    """A PATH holding only the tools the installer needs, with a stub curl that writes curl_body."""
+    import shutil
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for tool in [
+        "bash",
+        "uname",
+        "mktemp",
+        "sha256sum",
+        "tar",
+        "mkdir",
+        "install",
+        "rm",
+        "echo",
+        "cp",
+        "gzip",
+    ]:
+        (bin_dir / tool).symlink_to(shutil.which(tool))
+    stub = bin_dir / "curl"
+    stub.write_text(
+        f"#!/bin/sh\nwhile [ $# -gt 0 ]; do case $1 in -o) out=$2;; esac; shift; done\n"
+        f'cp {curl_body} "$out"\n'
+    )
+    stub.chmod(0o755)
+    return bin_dir
+
+
+def _run_install(tmp_path, bin_dir):
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    return subprocess.run(
+        ["bash", "-c", g5k.install_uv_command()],
+        capture_output=True,
+        text=True,
+        env={"PATH": str(bin_dir), "HOME": str(home)},
+        check=False,
+    ), home
+
+
+def test_install_uv_refuses_a_download_that_fails_the_checksum(tmp_path, monkeypatch):
+    import platform
+
+    bogus = tmp_path / "bogus.tar.gz"
+    bogus.write_bytes(b"not the release")
+    monkeypatch.setitem(g5k.UV_SHA256, platform.machine(), "0" * 64)
+    done, home = _run_install(tmp_path, _tool_dir(tmp_path, bogus))
+    assert done.returncode != 0
+    assert "did NOT match" in done.stderr
+    assert not (home / ".local" / "bin" / "uv").exists()
+
+
+def test_install_uv_installs_the_verified_release(tmp_path, monkeypatch):
+    import hashlib
+    import io
+    import platform
+    import tarfile
+
+    payload = b"#!/bin/sh\necho uv 0.11.33\n"
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        info = tarfile.TarInfo(f"uv-{platform.machine()}-unknown-linux-gnu/uv")
+        info.size = len(payload)
+        info.mode = 0o755
+        tar.addfile(info, io.BytesIO(payload))
+    release = tmp_path / "release.tar.gz"
+    release.write_bytes(buf.getvalue())
+    monkeypatch.setitem(
+        g5k.UV_SHA256, platform.machine(), hashlib.sha256(buf.getvalue()).hexdigest()
+    )
+    done, home = _run_install(tmp_path, _tool_dir(tmp_path, release))
+    assert done.returncode == 0, done.stderr
+    assert (home / ".local" / "bin" / "uv").exists()
