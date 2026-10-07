@@ -15,11 +15,9 @@ import typer
 from landuse_filter import __version__, config
 from landuse_filter.adapters.settings_file import load as load_settings
 
-OPS = load_settings()  # luf.toml (or $LUF_CONFIG): sites, bucket, walltimes, caps
-
-
 if TYPE_CHECKING:
     from landuse_filter.adapters.store import WorkStore
+    from landuse_filter.domain.settings import OpsSettings
 
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help=__doc__)
@@ -46,10 +44,25 @@ app.add_typer(node_app, name="node")
 PROMPT = Path(__file__).resolve().parents[3] / "data" / "prompt.txt"
 
 
-WORK = typer.Option(config.work_dir(), "--work", help="Local work tree.")
+WORK = typer.Option(default_factory=config.work_dir, help="Local work tree.")
 
 
 JSON_OUT = typer.Option(False, "--json", help="Machine-readable output.")
+
+
+# Operator settings (luf.toml or $LUF_CONFIG, with LUF_<FIELD> overrides) are read when a
+# command runs, never at import: importing the CLI (or running `--help`) must not touch them.
+def _ops() -> "OpsSettings":
+    """The operator settings, read now (sites, bucket, walltimes, caps)."""
+    return load_settings()
+
+
+def _sites_default() -> str:
+    return ",".join(_ops().sites)
+
+
+def _bucket_default() -> str:
+    return _ops().bucket
 
 
 def _store(work: Path) -> "WorkStore":
@@ -88,9 +101,6 @@ def fingerprint(as_json: bool = JSON_OUT) -> None:
     _emit(
         {"config_fingerprint": config.GENERATION_FP, "config": config.reference_config()}, as_json
     )
-
-
-SITES = ",".join(OPS.sites)
 
 
 def main() -> None:  # pragma: no cover

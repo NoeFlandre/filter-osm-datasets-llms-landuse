@@ -8,7 +8,7 @@ import typer
 
 from landuse_filter import config
 from landuse_filter.cli import (
-    OPS,
+    _bucket_default,
     _store,
     _template,
     node_app,
@@ -52,7 +52,7 @@ def node_run(
 def node_plan(
     dataset: str = typer.Option(...),
     revision: str = typer.Option(...),
-    bucket: str = typer.Option(OPS.bucket),
+    bucket: str = typer.Option(default_factory=_bucket_default),
     chunk_size: int = typer.Option(2000, min=1),
 ) -> None:
     """Scan a dataset on this node's scratch and publish chunks to the bucket."""
@@ -80,7 +80,7 @@ def node_plan(
 def node_replan(
     dataset: str = typer.Option(...),
     revision: str = typer.Option(...),
-    bucket: str = typer.Option(OPS.bucket),
+    bucket: str = typer.Option(default_factory=_bucket_default),
     chunk_size: int = typer.Option(2000, min=1),
 ) -> None:
     """Plan every not-yet-generated text again, round-robin over H3 cells (ADR-0014)."""
@@ -107,7 +107,7 @@ def node_calibrate(
     chunk: str = typer.Option(..., help="Chunk id whose prompts drive the sweep."),
     windows: str = typer.Option("16,32,64,128"),
     max_prompts: int = typer.Option(300, help="Prompts per level (keeps a sweep well inside 1 h)."),
-    bucket: str = typer.Option(OPS.bucket),
+    bucket: str = typer.Option(default_factory=_bucket_default),
 ) -> None:
     """Sweep concurrency on this GPU; write a candidate profile (speed only)."""
     from dataclasses import asdict
@@ -182,7 +182,7 @@ def _stop_watch() -> "Callable[[], str | None]":
 def node_publish(
     dataset: str = typer.Option(...),
     revision: str = typer.Option(...),
-    bucket: str = typer.Option(OPS.bucket),
+    bucket: str = typer.Option(default_factory=_bucket_default),
     card_only: bool = typer.Option(
         False, "--card-only", help="Only refresh the dataset card from the bucket's ledgers."
     ),
@@ -218,7 +218,7 @@ def node_publish(
 @node_app.command("repair")
 def node_repair(
     dataset: str = typer.Option(...),
-    bucket: str = typer.Option(OPS.bucket),
+    bucket: str = typer.Option(default_factory=_bucket_default),
 ) -> None:
     """Remove duplicate rows from the published generations/ tables, then reset the card cache."""
     import pyarrow.parquet as pq

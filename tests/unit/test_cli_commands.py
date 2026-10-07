@@ -14,6 +14,7 @@ from landuse_filter import config
 from landuse_filter.adapters import benchmark, hub
 from landuse_filter.adapters import g5k as g5k_adapter
 from landuse_filter.adapters import remote as remote_mod
+from landuse_filter.adapters.settings_file import load as load_settings
 from landuse_filter.application import (
     bench,
     locate,
@@ -27,12 +28,13 @@ from landuse_filter.application import (
 from landuse_filter.application import controller as ctl_mod
 from landuse_filter.application import publish as publish_mod
 from landuse_filter.application import status as status_mod
-from landuse_filter.cli import OPS, app
+from landuse_filter.cli import app
 from landuse_filter.cli import bench as bench_cli
 from landuse_filter.cli import g5k as g5k_cli
 from landuse_filter.cli import node as node_cli
 
 runner = CliRunner()
+OPS = load_settings()  # the same operator settings the commands read at run time
 
 
 def invoke(*args):
