@@ -63,9 +63,3 @@ def chat_encoder(model_id: str, revision: str) -> Callable[[list[str]], list[lis
         return out
 
     return encode
-
-
-def template_digest(model_id: str, revision: str) -> str:
-    from landuse_filter.domain.hashing import sha256_text
-
-    return sha256_text(str(_tokenizer(model_id, revision).chat_template))
