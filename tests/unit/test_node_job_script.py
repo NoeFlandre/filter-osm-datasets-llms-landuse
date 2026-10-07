@@ -433,6 +433,10 @@ def test_checkpoint_signal_is_forwarded_to_the_child_and_its_exit_code_returned(
     script = SCRIPT.read_text()
     block = re.search(r"# >>> run_forwarding\n(.*?)# <<< run_forwarding", script, re.S)
     assert block, "run_forwarding block missing"
+    luf = re.search(r"^luf\(\) \{.*\}$", SCRIPT, re.M)
+    assert luf, "luf definition missing"
+    fake_python = tmp_path / "venv" / "bin" / "python"
+    fake_python.parent.mkdir(parents=True)
     child = tmp_path / "child.py"
     ready = tmp_path / "ready"
     child.write_text(
@@ -445,11 +449,17 @@ def test_checkpoint_signal_is_forwarded_to_the_child_and_its_exit_code_returned(
         f"pathlib.Path({str(ready)!r}).write_text('x')\n"
         "time.sleep(30)\n"
     )
+    # The fake venv python ignores `luf`'s arguments and runs the child instead.
+    fake_python.write_text(f"#!/bin/sh\nexec '{sys.executable}' '{child}'\n")
+    fake_python.chmod(0o755)
     harness = tmp_path / "h.sh"
     harness.write_text(
         "set -euo pipefail\n"
+        f"venv='{tmp_path / 'venv'}'\n"
+        + luf.group(0)
+        + "\n"
         + block.group(1)
-        + f"rc=0\nrun_forwarding '{sys.executable}' '{child}'|| rc=$?\n"
+        + "rc=0\nrun_forwarding luf node run || rc=$?\n"
         'echo "wrapper rc=$rc"\nexit "$rc"\n'
     )
     proc = subprocess.Popen(
