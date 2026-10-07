@@ -63,4 +63,3 @@ def chat_encoder(model_id: str, revision: str) -> Callable[[list[str]], list[lis
         return out
 
     return encode
-
