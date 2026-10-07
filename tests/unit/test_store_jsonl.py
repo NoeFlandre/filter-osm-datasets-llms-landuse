@@ -1,6 +1,7 @@
 import pytest
 
-from landuse_filter.adapters.store import CorruptJSONLError, WorkStore
+from landuse_filter.adapters import store as store_module
+from landuse_filter.adapters.store import CorruptJSONLError, WorkStore, write_atomic
 
 
 def test_append_repairs_torn_tail_then_appends_twice_and_reopens(tmp_path):
@@ -140,3 +141,19 @@ def test_append_finds_a_torn_tail_longer_than_one_read_window(tmp_path):
         {"path": "first"},
         {"path": "second"},
     ]
+
+
+def test_write_atomic_removes_temp_file_when_write_fails(tmp_path, monkeypatch):
+    target = tmp_path / "out.json"
+    target.write_bytes(b"old")
+
+    def boom(fd):
+        raise OSError("disk failure")
+
+    monkeypatch.setattr(store_module.os, "fsync", boom)
+
+    with pytest.raises(OSError, match="disk failure"):
+        write_atomic(target, b"new")
+
+    assert target.read_bytes() == b"old"
+    assert [p.name for p in tmp_path.iterdir()] == ["out.json"]
