@@ -3,9 +3,9 @@
 Each setting has one documented source order. The list below goes from the lowest to the highest precedence:
 
 1. **Defaults** in the code (`config.py`: model, revisions, generation parameters,
-   the `/tmp/luf-scratch` and `work` directories). `data/prompt.txt` is the prompt.
+   the `/tmp/luf-scratch` and `work` directories). `src/landuse_filter/data/prompt.txt` is the prompt.
    Its SHA-256 pins it.
-2. **`luf.toml`** at the repository root (or the file that `$LUF_CONFIG` names):
+2. **`luf.toml`**, the defaults in `src/landuse_filter/data/luf.toml` (or the file that `$LUF_CONFIG` names):
    namespace, bucket, Grid'5000 sites, walltimes, job caps, interval, CUDA module.
 3. **Environment variables**: `LUF_<FIELD>` for each `luf.toml` field
    (`LUF_NAMESPACE`, `LUF_BUCKET`, `LUF_SITES` comma separated, `LUF_WALLTIME_MINUTES`,

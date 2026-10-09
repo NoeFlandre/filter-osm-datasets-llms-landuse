@@ -8,6 +8,7 @@ import hashlib
 import json
 import sys
 from enum import StrEnum
+from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -42,7 +43,7 @@ app.add_typer(g5k_app, name="g5k")
 app.add_typer(node_app, name="node")
 
 
-PROMPT = Path(__file__).resolve().parents[3] / "data" / "prompt.txt"
+PROMPT = resources.files("landuse_filter") / "data" / "prompt.txt"  # packaged with the wheel
 
 
 WORK = typer.Option(default_factory=config.work_dir, help="Local work tree.")
