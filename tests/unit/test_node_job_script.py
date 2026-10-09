@@ -433,7 +433,7 @@ def test_checkpoint_signal_is_forwarded_to_the_child_and_its_exit_code_returned(
     script = SCRIPT.read_text()
     block = re.search(r"# >>> run_forwarding\n(.*?)# <<< run_forwarding", script, re.S)
     assert block, "run_forwarding block missing"
-    luf = re.search(r"^luf\(\) \{.*\}$", SCRIPT, re.M)
+    luf = re.search(r"^luf\(\) \{.*\}$", script, re.M)
     assert luf, "luf definition missing"
     fake_python = tmp_path / "venv" / "bin" / "python"
     fake_python.parent.mkdir(parents=True)
