@@ -1,6 +1,9 @@
+from pathlib import Path
+
 import pytest
 
-from landuse_filter.adapters.store import CorruptJSONLError, WorkStore
+from landuse_filter.adapters import store as store_module
+from landuse_filter.adapters.store import CorruptJSONLError, WorkStore, write_atomic
 
 
 def test_append_repairs_torn_tail_then_appends_twice_and_reopens(tmp_path):
@@ -140,3 +143,65 @@ def test_append_finds_a_torn_tail_longer_than_one_read_window(tmp_path):
         {"path": "first"},
         {"path": "second"},
     ]
+
+
+def test_write_atomic_removes_temp_file_when_write_fails(tmp_path, monkeypatch):
+    target = tmp_path / "out.json"
+    target.write_bytes(b"old")
+
+    def boom(fd):
+        raise OSError("disk failure")
+
+    monkeypatch.setattr(store_module.os, "fsync", boom)
+
+    with pytest.raises(OSError, match="disk failure"):
+        write_atomic(target, b"new")
+
+    assert target.read_bytes() == b"old"
+    assert [p.name for p in tmp_path.iterdir()] == ["out.json"]
+
+
+def _broken_unlink(self, missing_ok=False):
+    raise PermissionError("read-only file system")
+
+
+@pytest.mark.parametrize("stage", ["fsync", "replace"])
+def test_write_atomic_keeps_original_error_when_temp_cleanup_also_fails(
+    tmp_path, monkeypatch, stage
+):
+    target = tmp_path / "out.json"
+    target.write_bytes(b"old")
+    original = OSError(5, f"original {stage} failure")
+
+    def fail(*_args, **_kwargs):
+        raise original
+
+    if stage == "fsync":
+        monkeypatch.setattr(store_module.os, "fsync", fail)
+    else:
+        monkeypatch.setattr(Path, "replace", fail)
+    monkeypatch.setattr(Path, "unlink", _broken_unlink)
+
+    with pytest.raises(OSError, match=f"original {stage} failure") as raised:
+        write_atomic(target, b"new")
+
+    assert raised.value is original
+    assert any("read-only file system" in note for note in raised.value.__notes__)
+    assert target.read_bytes() == b"old"
+
+
+def test_write_atomic_keeps_interruption_when_temp_cleanup_also_fails(tmp_path, monkeypatch):
+    target = tmp_path / "out.json"
+    target.write_bytes(b"old")
+
+    def interrupted(fd):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(store_module.os, "fsync", interrupted)
+    monkeypatch.setattr(Path, "unlink", _broken_unlink)
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        write_atomic(target, b"new")
+
+    assert any("read-only file system" in note for note in raised.value.__notes__)
+    assert target.read_bytes() == b"old"

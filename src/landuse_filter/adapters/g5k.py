@@ -19,16 +19,20 @@ SSH_OPTIONS = [
     "ServerAliveCountMax=3",  # a dead path is dropped after ~45 s, not left to the command timeout
 ]
 JOB_PREFIX = "luf-"
+SSH_UNREACHABLE = 255  # ssh's own exit status when the connection fails
 
 
 class RemoteError(RuntimeError):
     pass
 
 
+class TransportError(RemoteError):
+    """The site could not be reached: ssh exited 255 or the command timed out."""
+
+
 def is_transport_failure(exc: Exception) -> bool:
     """Whether ``exc`` means the site could not be reached (ssh 255 or a timeout), not a refusal."""
-    text = str(exc)
-    return ": timed out: " in text or ": exit 255: " in text
+    return isinstance(exc, TransportError)
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,11 +56,12 @@ def ssh(site: str, command: str, *, timeout: float = 120, stdin: bytes | None = 
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
-        raise RemoteError(f"{site}: timed out: {command[:80]}") from exc
+        raise TransportError(f"{site}: timed out: {command[:80]}") from exc
     if done.returncode != 0:
-        raise RemoteError(
-            f"{site}: exit {done.returncode}: {done.stderr.decode(errors='replace')[-500:]}"
-        )
+        message = f"{site}: exit {done.returncode}: {done.stderr.decode(errors='replace')[-500:]}"
+        if done.returncode == SSH_UNREACHABLE:
+            raise TransportError(message)
+        raise RemoteError(message)
     return done.stdout.decode()
 
 
@@ -86,7 +91,27 @@ def our_jobs(site: str) -> list[Job]:
 
 
 def policy_check(site: str) -> None:
-    ssh(site, "usagepolicycheck -t", timeout=180)
+    out = ssh(
+        site,
+        f"usagepolicycheck -t --sites {shlex.quote(site)} --json",
+        timeout=180,
+    )
+    try:
+        report = json.loads(out)
+    except json.JSONDecodeError as exc:
+        raise RemoteError(
+            f"{site}: usagepolicycheck returned an unverifiable policy report"
+        ) from exc
+    if (
+        not isinstance(report, dict)
+        or not isinstance(report.get("jobs"), dict)
+        or not isinstance(report.get("total_jobs"), dict)
+        or not isinstance(report.get("limits"), dict)
+        or site not in report["limits"]
+    ):
+        raise RemoteError(f"{site}: usagepolicycheck returned an unverifiable policy report")
+    if report["jobs"]:
+        raise RemoteError(f"{site}: usagepolicycheck reported usage-policy violations")
 
 
 _JOB_ID = re.compile(r"OAR_JOB_ID=(\d+)")
@@ -136,15 +161,39 @@ def deploy_command(target: str) -> str:
     )
 
 
+UV_VERSION = "0.11.33"  # pinned release; the Dockerfile pins uv 0.11 by image digest
+# sha256 of the release tarball for each frontend architecture, from the release's .sha256 files.
+UV_SHA256 = {
+    "x86_64": "aa9fca823c03289fb6e3460b3dc864f3ea895cafaf9b99247701a67b17d1b018",
+    "aarch64": "9ed88a9a42de3102f9704d021ab186fdf8a69a7ad9a1d3f3486ac6b1e55d6141",
+}
+
+
+def install_uv_command() -> str:
+    """Install the pinned uv release into ~/.local/bin; the tarball must match its sha256."""
+    cases = " ".join(f"{arch}) sha={digest};;" for arch, digest in UV_SHA256.items())
+    url = (
+        f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}"
+        "/uv-$arch-unknown-linux-gnu.tar.gz"
+    )
+    return (
+        "command -v uv >/dev/null || test -x ~/.local/bin/uv || { "
+        'arch=$(uname -m) && case "$arch" in '
+        f'{cases} *) echo "no pinned uv for $arch" >&2; exit 1;; esac && '
+        "tmp=$(mktemp -d) && "
+        f'curl -fsSL "{url}" -o "$tmp/uv.tar.gz" && '
+        'echo "$sha  $tmp/uv.tar.gz" | sha256sum -c - >/dev/null && '
+        'tar -xzf "$tmp/uv.tar.gz" -C "$tmp" && mkdir -p ~/.local/bin && '
+        'install -m 755 "$tmp/uv-$arch-unknown-linux-gnu/uv" ~/.local/bin/uv; '
+        'st=$?; rm -rf "$tmp"; exit $st; }'
+    )
+
+
 def deploy_code(site: str, commit: str, archive: bytes) -> str:
     """Unpack a ``git archive`` of ``commit`` into ``~/luf/code/<commit>``; idempotent."""
     target = f"{REMOTE_ROOT}/code/{commit}"
     ssh(site, deploy_command(target), stdin=archive, timeout=300)
-    ssh(
-        site,
-        "command -v uv >/dev/null || test -x ~/.local/bin/uv || "
-        "(curl -LsSf https://astral.sh/uv/install.sh | sh) >/dev/null 2>&1",
-    )
+    ssh(site, install_uv_command(), timeout=300)
     return target
 
 

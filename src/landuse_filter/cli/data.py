@@ -8,6 +8,7 @@ import typer
 from landuse_filter.cli import (
     JSON_OUT,
     WORK,
+    DatasetName,
     _emit,
     _store,
     _template,
@@ -20,7 +21,7 @@ if TYPE_CHECKING:
 
 @app.command()
 def plan(
-    dataset: str = typer.Option(..., help="Input dataset name, e.g. osm-polygon-description-tag."),
+    dataset: DatasetName = typer.Option(..., help="Input dataset to plan."),
     revision: str = typer.Option(..., help="Pinned input dataset commit sha."),
     work: Path = WORK,
     chunk_size: int = typer.Option(2000, min=1),
@@ -36,8 +37,6 @@ def plan(
     from landuse_filter.adapters.readers import SOURCES
     from landuse_filter.application.plan import Planner, download, list_input_files
 
-    if dataset not in SOURCES:
-        raise typer.BadParameter(f"unknown dataset; choose from {sorted(SOURCES)}")
     source = SOURCES[dataset]
     planner = Planner(_store(work), dataset, config.GENERATION_FP)
     planner.register(list_input_files(source, revision))
@@ -52,7 +51,7 @@ def plan(
 
 @app.command()
 def publish(
-    dataset: str = typer.Option(..., help="Input dataset name."),
+    dataset: DatasetName = typer.Option(..., help="Input dataset to publish."),
     revision: str = typer.Option(..., help="Pinned input revision (same as planning)."),
     work: Path = WORK,
     dry_run: bool = typer.Option(False, help="Build labels locally; upload nothing."),
