@@ -134,12 +134,18 @@ def test_publish_status_command_prints_the_marker(tmp_path, monkeypatch):
     from landuse_filter.cli import app
 
     remote = DirRemote(tmp_path / "b")
-    bucket_progress(remote, "d", "9").event("parts_read", read=3, total=10)
+    bucket_progress(remote, "osm-polygon-description-tag", "9").event(
+        "parts_read", read=3, total=10
+    )
     monkeypatch.setattr("landuse_filter.adapters.remote.BucketRemote", lambda _bucket: remote)
-    result = CliRunner().invoke(app, ["g5k", "publish-status", "--dataset", "d"])
+    result = CliRunner().invoke(
+        app, ["g5k", "publish-status", "--dataset", "osm-polygon-description-tag"]
+    )
     assert result.exit_code == 0
     assert "job 9" in result.output
     assert "phase parts_read" in result.output
     assert "read=3 total=10" in result.output
-    missing = CliRunner().invoke(app, ["g5k", "publish-status", "--dataset", "zz"])
+    missing = CliRunner().invoke(
+        app, ["g5k", "publish-status", "--dataset", "osm-polygon-wikidata-and-wikipedia"]
+    )
     assert missing.exit_code == 1
