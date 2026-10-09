@@ -8,6 +8,7 @@ import typer
 
 from landuse_filter import config
 from landuse_filter.cli import (
+    DatasetName,
     _bucket_default,
     _store,
     _template,
@@ -20,7 +21,7 @@ if TYPE_CHECKING:
     from landuse_filter.application.remote_plan import PlanInputs
 
 
-def _plan_inputs(dataset: str, revision: str, chunk_size: int) -> "PlanInputs":
+def _plan_inputs(dataset: DatasetName, revision: str, chunk_size: int) -> "PlanInputs":
     """The inputs shared by ``run_plan`` and ``run_replan``."""
     from landuse_filter.adapters.readers import SOURCES
     from landuse_filter.adapters.tokenizer import chat_encoder
@@ -50,7 +51,7 @@ def node_run(
 
 @node_app.command("plan")
 def node_plan(
-    dataset: str = typer.Option(...),
+    dataset: DatasetName = typer.Option(...),
     revision: str = typer.Option(...),
     bucket: str = typer.Option(default_factory=_bucket_default),
     chunk_size: int = typer.Option(2000, min=1),
@@ -78,7 +79,7 @@ def node_plan(
 
 @node_app.command("replan")
 def node_replan(
-    dataset: str = typer.Option(...),
+    dataset: DatasetName = typer.Option(...),
     revision: str = typer.Option(...),
     bucket: str = typer.Option(default_factory=_bucket_default),
     chunk_size: int = typer.Option(2000, min=1),
@@ -180,7 +181,7 @@ def _stop_watch() -> "Callable[[], str | None]":
 
 @node_app.command("publish")
 def node_publish(
-    dataset: str = typer.Option(...),
+    dataset: DatasetName = typer.Option(...),
     revision: str = typer.Option(...),
     bucket: str = typer.Option(default_factory=_bucket_default),
     card_only: bool = typer.Option(
@@ -217,7 +218,7 @@ def node_publish(
 
 @node_app.command("repair")
 def node_repair(
-    dataset: str = typer.Option(...),
+    dataset: DatasetName = typer.Option(...),
     bucket: str = typer.Option(default_factory=_bucket_default),
 ) -> None:
     """Remove duplicate rows from the published generations/ tables, then reset the card cache."""

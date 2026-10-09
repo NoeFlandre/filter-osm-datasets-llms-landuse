@@ -195,12 +195,18 @@ Usage: root g5k cpu-job [OPTIONS] {mode}:<plan|replan|publish|card|repair>
 │                                                   [required]                                     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --site                    <str>  Site to run the CPU job on. [required]                       │
-│ *  --dataset                 <str>  Dataset id (Hub repository name). [required]                 │
-│ *  --revision                <str>  Dataset revision (commit) to process. [required]             │
-│    --walltime-minutes        <int>  Walltime asked for each job (policy permitting).             │
-│                                     [default: 60]                                                │
-│    --help                           Show this message and exit.                                  │
+│ *  --site                    <str>                             Site to run the CPU job on.       │
+│                                                                [required]                        │
+│ *  --dataset                 <osm-polygon-description-tag|osm  Input dataset to process.         │
+│                              -polygon-wikidata-and-wikipedia|  [required]                        │
+│                              osm-polygon-website-tag>                                            │
+│ *  --revision                <str>                             Dataset revision (commit) to      │
+│                                                                process.                          │
+│                                                                [required]                        │
+│    --walltime-minutes        <int>                             Walltime asked for each job       │
+│                                                                (policy permitting).              │
+│                                                                [default: 60]                     │
+│    --help                                                      Show this message and exit.       │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -240,22 +246,28 @@ Usage: root g5k publish-loop [OPTIONS]
  Resubmit `cpu-job publish` whenever none is live, until the bucket status says done.               
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --dataset                     <str>               Dataset id (Hub repository name).           │
-│                                                      [required]                                  │
-│ *  --revision                    <str>               Dataset revision (commit) to process.       │
-│                                                      [required]                                  │
-│ *  --site                        <str>               Site to submit the publish jobs on.         │
-│                                                      [required]                                  │
-│    --walltime-minutes            <int>               Walltime asked for each job (policy         │
-│                                                      permitting).                                │
-│                                                      [default: 60]                               │
-│    --interval-seconds            <int range> [x>=1]  Pause between two checks. [default: 300]    │
-│    --max-interval-seconds        <int range> [x>=1]  Longest pause after repeated failures (slow │
-│                                                      frontend, timeouts).                        │
-│                                                      [default: 1800]                             │
-│    --bucket                      <str>               Hub bucket holding the shared run state.    │
-│                                                      [default: (dynamic)]                        │
-│    --help                                            Show this message and exit.                 │
+│ *  --dataset                     <osm-polygon-description-tag|o  Input dataset to process.       │
+│                                  sm-polygon-wikidata-and-wikipe  [required]                      │
+│                                  dia|osm-polygon-website-tag>                                    │
+│ *  --revision                    <str>                           Dataset revision (commit) to    │
+│                                                                  process.                        │
+│                                                                  [required]                      │
+│ *  --site                        <str>                           Site to submit the publish jobs │
+│                                                                  on.                             │
+│                                                                  [required]                      │
+│    --walltime-minutes            <int>                           Walltime asked for each job     │
+│                                                                  (policy permitting).            │
+│                                                                  [default: 60]                   │
+│    --interval-seconds            <int range> [x>=1]              Pause between two checks.       │
+│                                                                  [default: 300]                  │
+│    --max-interval-seconds        <int range> [x>=1]              Longest pause after repeated    │
+│                                                                  failures (slow frontend,        │
+│                                                                  timeouts).                      │
+│                                                                  [default: 1800]                 │
+│    --bucket                      <str>                           Hub bucket holding the shared   │
+│                                                                  run state.                      │
+│                                                                  [default: (dynamic)]            │
+│    --help                                                        Show this message and exit.     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -267,9 +279,13 @@ Usage: root g5k publish-status [OPTIONS]
  Print the live phase of the running publish/card job (one small bucket download).                  
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --dataset        <str>  Dataset id (Hub repository name). [required]                          │
-│    --bucket         <str>  Hub bucket holding the shared run state. [default: (dynamic)]         │
-│    --help                  Show this message and exit.                                           │
+│ *  --dataset        <osm-polygon-description-tag|osm-pol  Input dataset to process. [required]   │
+│                     ygon-wikidata-and-wikipedia|osm-poly                                         │
+│                     gon-website-tag>                                                             │
+│    --bucket         <str>                                 Hub bucket holding the shared run      │
+│                                                           state.                                 │
+│                                                           [default: (dynamic)]                   │
+│    --help                                                 Show this message and exit.            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -534,11 +550,13 @@ Usage: root node plan [OPTIONS]
  Scan a dataset on this node's scratch and publish chunks to the bucket.                            
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --dataset           <str>               [required]                                            │
-│ *  --revision          <str>               [required]                                            │
-│    --bucket            <str>               [default: (dynamic)]                                  │
-│    --chunk-size        <int range> [x>=1]  [default: 2000]                                       │
-│    --help                                  Show this message and exit.                           │
+│ *  --dataset           <osm-polygon-description-tag|osm-po  [required]                           │
+│                        lygon-wikidata-and-wikipedia|osm-po                                       │
+│                        lygon-website-tag>                                                        │
+│ *  --revision          <str>                                [required]                           │
+│    --bucket            <str>                                [default: (dynamic)]                 │
+│    --chunk-size        <int range> [x>=1]                   [default: 2000]                      │
+│    --help                                                   Show this message and exit.          │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -550,11 +568,14 @@ Usage: root node publish [OPTIONS]
  Build and upload the -landuse dataset on this node's scratch.                                      
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --dataset          <str>  [required]                                                          │
-│ *  --revision         <str>  [required]                                                          │
-│    --bucket           <str>  [default: (dynamic)]                                                │
-│    --card-only               Only refresh the dataset card from the bucket's ledgers.            │
-│    --help                    Show this message and exit.                                         │
+│ *  --dataset          <osm-polygon-description-tag|osm-pol  [required]                           │
+│                       ygon-wikidata-and-wikipedia|osm-poly                                       │
+│                       gon-website-tag>                                                           │
+│ *  --revision         <str>                                 [required]                           │
+│    --bucket           <str>                                 [default: (dynamic)]                 │
+│    --card-only                                              Only refresh the dataset card from   │
+│                                                             the bucket's ledgers.                │
+│    --help                                                   Show this message and exit.          │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -566,9 +587,11 @@ Usage: root node repair [OPTIONS]
  Remove duplicate rows from the published generations/ tables, then reset the card cache.           
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --dataset        <str>  [required]                                                            │
-│    --bucket         <str>  [default: (dynamic)]                                                  │
-│    --help                  Show this message and exit.                                           │
+│ *  --dataset        <osm-polygon-description-tag|osm-pol  [required]                             │
+│                     ygon-wikidata-and-wikipedia|osm-poly                                         │
+│                     gon-website-tag>                                                             │
+│    --bucket         <str>                                 [default: (dynamic)]                   │
+│    --help                                                 Show this message and exit.            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -580,11 +603,13 @@ Usage: root node replan [OPTIONS]
  Plan every not-yet-generated text again, round-robin over H3 cells (ADR-0014).                     
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --dataset           <str>               [required]                                            │
-│ *  --revision          <str>               [required]                                            │
-│    --bucket            <str>               [default: (dynamic)]                                  │
-│    --chunk-size        <int range> [x>=1]  [default: 2000]                                       │
-│    --help                                  Show this message and exit.                           │
+│ *  --dataset           <osm-polygon-description-tag|osm-po  [required]                           │
+│                        lygon-wikidata-and-wikipedia|osm-po                                       │
+│                        lygon-website-tag>                                                        │
+│ *  --revision          <str>                                [required]                           │
+│    --bucket            <str>                                [default: (dynamic)]                 │
+│    --chunk-size        <int range> [x>=1]                   [default: 2000]                      │
+│    --help                                                   Show this message and exit.          │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -609,20 +634,26 @@ Usage: root plan [OPTIONS]
  Scan input files (resumable) and emit work chunks.                                                 
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --dataset                          <str>               Input dataset name, e.g.               │
-│                                                           osm-polygon-description-tag.           │
-│                                                           [required]                             │
-│ *  --revision                         <str>               Pinned input dataset commit sha.       │
-│                                                           [required]                             │
-│    --work                             <path>              Local work tree. [default: (dynamic)]  │
-│    --chunk-size                       <int range> [x>=1]  [default: 2000]                        │
-│    --limit-files                      <int>               Scan at most N more files this run.    │
-│    --final          --no-final                            Also emit the last partial chunk.      │
-│                                                           [default: no-final]                    │
-│    --scan-only      --no-scan-only                        Only scan (sizing); emit no chunks.    │
-│                                                           [default: no-scan-only]                │
-│    --json                                                 Machine-readable output.               │
-│    --help                                                 Show this message and exit.            │
+│ *  --dataset                          <osm-polygon-description-tag  Input dataset to plan.       │
+│                                       |osm-polygon-wikidata-and-wi  [required]                   │
+│                                       kipedia|osm-polygon-website-                               │
+│                                       tag>                                                       │
+│ *  --revision                         <str>                         Pinned input dataset commit  │
+│                                                                     sha.                         │
+│                                                                     [required]                   │
+│    --work                             <path>                        Local work tree.             │
+│                                                                     [default: (dynamic)]         │
+│    --chunk-size                       <int range> [x>=1]            [default: 2000]              │
+│    --limit-files                      <int>                         Scan at most N more files    │
+│                                                                     this run.                    │
+│    --final          --no-final                                      Also emit the last partial   │
+│                                                                     chunk.                       │
+│                                                                     [default: no-final]          │
+│    --scan-only      --no-scan-only                                  Only scan (sizing); emit no  │
+│                                                                     chunks.                      │
+│                                                                     [default: no-scan-only]      │
+│    --json                                                           Machine-readable output.     │
+│    --help                                                           Show this message and exit.  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -634,13 +665,19 @@ Usage: root publish [OPTIONS]
  Mirror the input and upload labels/generations for every fully generated file.                     
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --dataset                     <str>   Input dataset name. [required]                          │
-│ *  --revision                    <str>   Pinned input revision (same as planning). [required]    │
-│    --work                        <path>  Local work tree. [default: (dynamic)]                   │
-│    --dry-run     --no-dry-run            Build labels locally; upload nothing.                   │
-│                                          [default: no-dry-run]                                   │
-│    --json                                Machine-readable output.                                │
-│    --help                                Show this message and exit.                             │
+│ *  --dataset                     <osm-polygon-description-tag|o  Input dataset to publish.       │
+│                                  sm-polygon-wikidata-and-wikipe  [required]                      │
+│                                  dia|osm-polygon-website-tag>                                    │
+│ *  --revision                    <str>                           Pinned input revision (same as  │
+│                                                                  planning).                      │
+│                                                                  [required]                      │
+│    --work                        <path>                          Local work tree.                │
+│                                                                  [default: (dynamic)]            │
+│    --dry-run     --no-dry-run                                    Build labels locally; upload    │
+│                                                                  nothing.                        │
+│                                                                  [default: no-dry-run]           │
+│    --json                                                        Machine-readable output.        │
+│    --help                                                        Show this message and exit.     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 

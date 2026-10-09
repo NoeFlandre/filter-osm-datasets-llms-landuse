@@ -11,6 +11,7 @@ import typer
 
 from landuse_filter.cli import (
     WORK,
+    DatasetName,
     _bucket_default,
     _ops,
     _sites_default,
@@ -44,7 +45,7 @@ PUBLISH_MAX_POLL_SECONDS = 1800
 WalltimeMinutes = Annotated[
     int, typer.Option(help="Walltime asked for each job (policy permitting).")
 ]
-DatasetOption = Annotated[str, typer.Option(help="Dataset id (Hub repository name).")]
+DatasetOption = Annotated[DatasetName, typer.Option(help="Input dataset to process.")]
 RevisionOption = Annotated[str, typer.Option(help="Dataset revision (commit) to process.")]
 BesteffortOption = Annotated[
     bool, typer.Option(help="Submit besteffort jobs (preemptible) instead of default-queue jobs.")
