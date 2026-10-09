@@ -1,9 +1,11 @@
 """``luf node run``: executed on a reserved GPU node by scripts/node_job.sh."""
 
 import asyncio
+import logging
 import os
 import signal
 import socket
+import sys
 import time
 from typing import TYPE_CHECKING
 
@@ -16,6 +18,17 @@ from landuse_filter.application.node import Runner
 from landuse_filter.application.node_timeline import Timeline, timeline_record
 from landuse_filter.domain.gpu import GpuSpec, gpu_key, ineligibility
 
+log = logging.getLogger(__name__)
+
+
+def _stdout_progress() -> None:
+    """The OAR job log is the progress record: bare ``luf:`` lines on stdout, flushed per line."""
+    if not log.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        log.addHandler(handler)
+    log.setLevel(logging.INFO)
+
 
 class Stop:
     def __init__(self) -> None:
@@ -25,7 +38,7 @@ class Stop:
 
     def _handle(self, signum: int, _frame: object) -> None:
         self.requested = True
-        print(f"luf: signal {signum}: stopping after flush", flush=True)  # noqa: T201
+        log.warning(f"luf: signal {signum}: stopping after flush")
 
     def __call__(self) -> bool:
         return self.requested
@@ -62,6 +75,7 @@ def workspace(assignment: dict) -> tuple[WorkStore, "BucketRemote"]:
 def run(assignment_id: str) -> int:
     from landuse_filter.adapters.engine import SGLangEngine
 
+    _stdout_progress()
     timeline = Timeline()
     spool = WorkStore(config.work_dir())
     assignment = spool.read_json(f"assignments/{assignment_id}.json")
@@ -69,7 +83,7 @@ def run(assignment_id: str) -> int:
     spec = detect_gpu()
     reason = ineligibility(spec)
     if reason:
-        print(f"luf: GPU {spec.model} not eligible: {reason}", flush=True)  # noqa: T201
+        log.error(f"luf: GPU {spec.model} not eligible: {reason}")
         return 5
     stop = Stop()
     t0 = time.monotonic()
@@ -131,5 +145,5 @@ def run(assignment_id: str) -> int:
         },
     )
     remote.put([(spool.path(summary_path), summary_path)])
-    print(f"luf: done {stats.completed} sentences, {stats.sentences_per_second:.2f}/s", flush=True)  # noqa: T201
+    log.info(f"luf: done {stats.completed} sentences, {stats.sentences_per_second:.2f}/s")
     return 0
