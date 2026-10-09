@@ -187,12 +187,13 @@ Usage: root g5k clean [OPTIONS]
 ## `luf g5k cpu-job`
 
 ```text
-Usage: root g5k cpu-job [OPTIONS] {mode}                                                           
+Usage: root g5k cpu-job [OPTIONS] {mode}:<plan|replan|publish|card|repair>                         
                                                                                                     
  Submit one resumable planning or publishing job (default queue, one CPU node).                     
                                                                                                     
 ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────╮
-│ *    mode      <str>  plan, replan, publish, card or repair [required]                           │
+│ *    mode      <plan|replan|publish|card|repair>  plan, replan, publish, card or repair          │
+│                                                   [required]                                     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
 │ *  --site                    <str>  Site to run the CPU job on. [required]                       │
