@@ -539,7 +539,16 @@ def test_cpu_jobs_avoid_the_sagittaire_cluster(monkeypatch, tmp_path):
     monkeypatch.setattr(ctl_mod, "git_archive", lambda ref: b"")
     result = CliRunner().invoke(
         cli.g5k_app,
-        ["cpu-job", "plan", "--site", "lyon", "--dataset", "d", "--revision", "r"],
+        [
+            "cpu-job",
+            "plan",
+            "--site",
+            "lyon",
+            "--dataset",
+            "osm-polygon-description-tag",
+            "--revision",
+            "r",
+        ],
     )
     assert result.exit_code == 0, result.output
     prop = submitted[0][submitted[0].index("-p") + 1]

@@ -7,6 +7,7 @@ Exit codes: 0 ok, 1 failure, 2 usage error, 3 gate failed, 4 nothing to do,
 import hashlib
 import json
 import sys
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -50,6 +51,14 @@ WORK = typer.Option(config.work_dir(), "--work", help="Local work tree.")
 
 
 JSON_OUT = typer.Option(False, "--json", help="Machine-readable output.")
+
+
+class DatasetName(StrEnum):
+    """Input datasets: the keys of ``adapters.readers.SOURCES`` (a test keeps them equal)."""
+
+    DESCRIPTION = "osm-polygon-description-tag"
+    WIKI = "osm-polygon-wikidata-and-wikipedia"
+    WEBSITE = "osm-polygon-website-tag"
 
 
 def _store(work: Path) -> "WorkStore":
