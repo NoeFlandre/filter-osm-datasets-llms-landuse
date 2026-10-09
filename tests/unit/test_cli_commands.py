@@ -285,6 +285,7 @@ def test_cpu_job_rejects_an_unknown_mode(remote):
         "g5k", "cpu-job", "explode", "--site", "lille", "--dataset", "d", "--revision", "r"
     )
     assert result.exit_code == 2
+    assert "replan" in result.output  # Typer lists the valid modes
     assert remote.submitted == []
 
 

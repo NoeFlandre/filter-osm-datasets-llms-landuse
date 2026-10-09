@@ -3,6 +3,7 @@
 import hashlib
 import time
 from datetime import timedelta
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
@@ -343,9 +344,17 @@ LOCKFILE = Path(__file__).resolve().parents[3] / "uv.lock"
 CPU_JOB_PROPERTY = "gpu_count = 0 AND cluster != 'sagittaire'"
 
 
+class CpuJobMode(StrEnum):
+    PLAN = "plan"
+    REPLAN = "replan"
+    PUBLISH = "publish"
+    CARD = "card"
+    REPAIR = "repair"
+
+
 @g5k_app.command("cpu-job")
 def g5k_cpu_job(
-    mode: str = typer.Argument(..., help="plan, replan, publish, card or repair"),
+    mode: CpuJobMode = typer.Argument(..., help="plan, replan, publish, card or repair"),
     *,
     site: str = typer.Option(..., help="Site to run the CPU job on."),
     dataset: DatasetOption,
@@ -364,11 +373,9 @@ def g5k_cpu_job(
 
 
 def _submit_cpu_job(
-    mode: str, site: str, dataset: str, revision: str, minutes: int
+    mode: CpuJobMode, site: str, dataset: str, revision: str, minutes: int
 ) -> tuple[str, str]:
     """Deploy the code and submit one CPU job; returns (job id, walltime text)."""
-    if mode not in ("plan", "replan", "publish", "card", "repair"):
-        raise typer.BadParameter("mode must be plan, replan, publish, card or repair")
     from datetime import datetime
 
     from landuse_filter.adapters import g5k
@@ -460,7 +467,9 @@ def g5k_publish_loop(
             cancel=lambda j: g5k.cancel(site, j),
             log=lambda m: typer.echo(m, err=True),
         ),
-        submit=lambda: _submit_cpu_job("publish", site, dataset, revision, walltime_minutes)[0],
+        submit=lambda: _submit_cpu_job(
+            CpuJobMode.PUBLISH, site, dataset, revision, walltime_minutes
+        )[0],
         sleep=time.sleep,
         log=lambda m: typer.echo(m, err=True),
     )

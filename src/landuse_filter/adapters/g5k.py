@@ -19,16 +19,20 @@ SSH_OPTIONS = [
     "ServerAliveCountMax=3",  # a dead path is dropped after ~45 s, not left to the command timeout
 ]
 JOB_PREFIX = "luf-"
+SSH_UNREACHABLE = 255  # ssh's own exit status when the connection fails
 
 
 class RemoteError(RuntimeError):
     pass
 
 
+class TransportError(RemoteError):
+    """The site could not be reached: ssh exited 255 or the command timed out."""
+
+
 def is_transport_failure(exc: Exception) -> bool:
     """Whether ``exc`` means the site could not be reached (ssh 255 or a timeout), not a refusal."""
-    text = str(exc)
-    return ": timed out: " in text or ": exit 255: " in text
+    return isinstance(exc, TransportError)
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,11 +56,12 @@ def ssh(site: str, command: str, *, timeout: float = 120, stdin: bytes | None = 
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
-        raise RemoteError(f"{site}: timed out: {command[:80]}") from exc
+        raise TransportError(f"{site}: timed out: {command[:80]}") from exc
     if done.returncode != 0:
-        raise RemoteError(
-            f"{site}: exit {done.returncode}: {done.stderr.decode(errors='replace')[-500:]}"
-        )
+        message = f"{site}: exit {done.returncode}: {done.stderr.decode(errors='replace')[-500:]}"
+        if done.returncode == SSH_UNREACHABLE:
+            raise TransportError(message)
+        raise RemoteError(message)
     return done.stdout.decode()
 
 
