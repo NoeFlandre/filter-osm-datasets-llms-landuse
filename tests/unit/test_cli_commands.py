@@ -14,6 +14,7 @@ from landuse_filter import config
 from landuse_filter.adapters import benchmark, hub
 from landuse_filter.adapters import g5k as g5k_adapter
 from landuse_filter.adapters import remote as remote_mod
+from landuse_filter.adapters.settings_file import load as load_settings
 from landuse_filter.application import (
     bench,
     locate,
@@ -27,12 +28,13 @@ from landuse_filter.application import (
 from landuse_filter.application import controller as ctl_mod
 from landuse_filter.application import publish as publish_mod
 from landuse_filter.application import status as status_mod
-from landuse_filter.cli import OPS, app
+from landuse_filter.cli import app
 from landuse_filter.cli import bench as bench_cli
 from landuse_filter.cli import g5k as g5k_cli
 from landuse_filter.cli import node as node_cli
 
 runner = CliRunner()
+OPS = load_settings()  # the same operator settings the commands read at run time
 
 
 def invoke(*args):
@@ -81,11 +83,20 @@ def test_missing_required_options_are_usage_errors():
     assert invoke("g5k", "run").exit_code == 2
     assert invoke("node", "run").exit_code == 2
     assert invoke("g5k", "cpu-job", "plan").exit_code == 2
-    assert invoke("node", "plan", "--dataset", "d").exit_code == 2
+    assert invoke("node", "plan", "--dataset", "osm-polygon-description-tag").exit_code == 2
 
 
 def test_node_plan_rejects_a_non_positive_chunk_size():
-    result = invoke("node", "plan", "--dataset", "d", "--revision", "r", "--chunk-size", 0)
+    result = invoke(
+        "node",
+        "plan",
+        "--dataset",
+        "osm-polygon-description-tag",
+        "--revision",
+        "r",
+        "--chunk-size",
+        0,
+    )
     assert result.exit_code == 2
 
 
@@ -252,13 +263,21 @@ def remote(monkeypatch):
 
 def test_cpu_job_submits_a_node_job_script_command(remote):
     result = invoke(
-        "g5k", "cpu-job", "replan", "--site", "lille", "--dataset", "ds", "--revision", "rev1"
+        "g5k",
+        "cpu-job",
+        "replan",
+        "--site",
+        "lille",
+        "--dataset",
+        "osm-polygon-description-tag",
+        "--revision",
+        "rev1",
     )
     assert result.exit_code == 0, result.output
     assert "replan job 4242 on lille" in result.output
     ((site, args),) = remote.submitted
     assert site == "lille"
-    assert args[-1] == "CODE/scripts/node_job.sh CODE replan ds rev1"
+    assert args[-1] == "CODE/scripts/node_job.sh CODE replan osm-polygon-description-tag rev1"
     assert args[args.index("-p") + 1] == g5k_cli.CPU_JOB_PROPERTY
     assert "-q" in args
     assert remote.deployed == [("lille", "abc123")]
@@ -271,7 +290,15 @@ def test_cpu_job_that_would_start_late_is_cancelled(remote, monkeypatch):
     monkeypatch.setattr(g5k_adapter, "cancel", lambda site, job: cancelled.append(job))
     monkeypatch.setattr("landuse_filter.domain.cpu_job_guard.is_daytime", lambda moment: True)
     result = invoke(
-        "g5k", "cpu-job", "replan", "--site", "lille", "--dataset", "ds", "--revision", "rev1"
+        "g5k",
+        "cpu-job",
+        "replan",
+        "--site",
+        "lille",
+        "--dataset",
+        "osm-polygon-description-tag",
+        "--revision",
+        "rev1",
     )
     assert result.exit_code == 1
     assert "would start late" in result.output
@@ -280,9 +307,18 @@ def test_cpu_job_that_would_start_late_is_cancelled(remote, monkeypatch):
 
 def test_cpu_job_rejects_an_unknown_mode(remote):
     result = invoke(
-        "g5k", "cpu-job", "explode", "--site", "lille", "--dataset", "d", "--revision", "r"
+        "g5k",
+        "cpu-job",
+        "explode",
+        "--site",
+        "lille",
+        "--dataset",
+        "osm-polygon-description-tag",
+        "--revision",
+        "r",
     )
     assert result.exit_code == 2
+    assert "replan" in result.output  # Typer lists the valid modes
     assert remote.submitted == []
 
 
@@ -380,11 +416,20 @@ def test_node_publish_passes_dataset_revision_bucket(monkeypatch, tmp_path):
     monkeypatch.setattr("signal.signal", lambda *_: None)
     monkeypatch.setattr(remote_publish, "run_publish", fake)
     monkeypatch.setattr("dataclasses.asdict", lambda r: {"new_files": r.new_files})
-    result = invoke("node", "publish", "--dataset", "d", "--revision", "r", "--bucket", "x/y")
+    result = invoke(
+        "node",
+        "publish",
+        "--dataset",
+        "osm-polygon-description-tag",
+        "--revision",
+        "r",
+        "--bucket",
+        "x/y",
+    )
     assert result.exit_code == 0, result.output
     assert seen == {
         "rem": ("remote", "x/y"),
-        "dataset": "d",
+        "dataset": "osm-polygon-description-tag",
         "revision": "r",
         "fp": config.GENERATION_FP,
     }
@@ -414,13 +459,27 @@ def test_node_plan_and_replan_use_the_default_bucket_and_chunk_size(monkeypatch,
     monkeypatch.setattr(remote_plan, "run_plan", fake_plan)
     monkeypatch.setattr(remote_plan, "run_replan", fake_replan)
     monkeypatch.setattr(locate, "locator", lambda dataset, fetch, cell_of: ("loc", dataset, fetch))
-    out = invoke("node", "plan", "--dataset", "d", "--revision", "r")
+    out = invoke("node", "plan", "--dataset", "osm-polygon-description-tag", "--revision", "r")
     assert out.exit_code == 0, out.output
     assert json.loads(out.output) == {"ok": "plan"}
-    assert seen["plan"] == (("remote", OPS.bucket), "d", 2000, "r", False)
-    out = invoke("node", "replan", "--dataset", "d", "--revision", "r", "--chunk-size", 50)
+    assert seen["plan"] == (("remote", OPS.bucket), "osm-polygon-description-tag", 2000, "r", False)
+    out = invoke(
+        "node",
+        "replan",
+        "--dataset",
+        "osm-polygon-description-tag",
+        "--revision",
+        "r",
+        "--chunk-size",
+        50,
+    )
     assert out.exit_code == 0, out.output
-    assert seen["replan"] == (("remote", OPS.bucket), "d", 50, ("loc", "d", "F"))
+    assert seen["replan"] == (
+        ("remote", OPS.bucket),
+        "osm-polygon-description-tag",
+        50,
+        ("loc", "osm-polygon-description-tag", "F"),
+    )
 
 
 def test_node_repair_dedupes_and_resets_the_card_cache(monkeypatch, tmp_path):
@@ -445,13 +504,13 @@ def test_node_repair_dedupes_and_resets_the_card_cache(monkeypatch, tmp_path):
     monkeypatch.setattr(
         remote_publish, "reset_card_cache", lambda rem, scratch, d: calls.update(reset=(rem, d))
     )
-    result = invoke("node", "repair", "--dataset", "ds")
+    result = invoke("node", "repair", "--dataset", "osm-polygon-description-tag")
     assert result.exit_code == 0, result.output
     assert json.loads(result.output) == {"rewritten": 1, "deleted": 1}
-    assert calls["up"][0] == "out/ds"
+    assert calls["up"][0] == "out/osm-polygon-description-tag"
     assert calls["up"][1][0][1] == "generations/a.parquet"
-    assert calls["rm"] == ("out/ds", ["generations/b.parquet"])
-    assert calls["reset"] == (("remote", OPS.bucket), "ds")
+    assert calls["rm"] == ("out/osm-polygon-description-tag", ["generations/b.parquet"])
+    assert calls["reset"] == (("remote", OPS.bucket), "osm-polygon-description-tag")
 
 
 # --- bench ---------------------------------------------------------------------------
@@ -552,6 +611,13 @@ def test_plan_rejects_an_unknown_dataset(tmp_path):
     assert result.exit_code == 2
 
 
+def test_dataset_choices_match_the_readers():
+    from landuse_filter.adapters.readers import SOURCES
+    from landuse_filter.cli import DatasetName
+
+    assert {name.value for name in DatasetName} == set(SOURCES)
+
+
 def test_publish_exit_4_when_nothing_new(monkeypatch, tmp_path):
     seen = {}
     monkeypatch.setattr(
@@ -562,9 +628,18 @@ def test_publish_exit_4_when_nothing_new(monkeypatch, tmp_path):
         ),
     )
     monkeypatch.setattr("dataclasses.asdict", lambda r: {"new_files": r.new_files})
-    result = invoke("publish", "--dataset", "d", "--revision", "r", "--work", tmp_path, "--dry-run")
+    result = invoke(
+        "publish",
+        "--dataset",
+        "osm-polygon-description-tag",
+        "--revision",
+        "r",
+        "--work",
+        tmp_path,
+        "--dry-run",
+    )
     assert result.exit_code == 4
-    assert seen["a"] == ("d", "r", True)
+    assert seen["a"] == ("osm-polygon-description-tag", "r", True)
 
 
 def test_node_publish_card_only_runs_the_card_job(monkeypatch, tmp_path):
@@ -578,9 +653,17 @@ def test_node_publish_card_only_runs_the_card_job(monkeypatch, tmp_path):
 
     monkeypatch.setattr(remote_publish, "run_card_only", fake)
     monkeypatch.setattr("dataclasses.asdict", lambda r: {"new_files": r.new_files})
-    result = invoke("node", "publish", "--card-only", "--dataset", "d", "--revision", "r")
+    result = invoke(
+        "node",
+        "publish",
+        "--card-only",
+        "--dataset",
+        "osm-polygon-description-tag",
+        "--revision",
+        "r",
+    )
     assert result.exit_code == 0, result.output
-    assert seen["dataset"] == "d"
+    assert seen["dataset"] == "osm-polygon-description-tag"
 
 
 def test_stop_watch_reports_signals_and_the_deadline(monkeypatch):
@@ -605,10 +688,30 @@ def test_stop_watch_reports_signals_and_the_deadline(monkeypatch):
 
 
 def test_publish_jobs_have_their_own_oar_name(remote):
-    invoke("g5k", "cpu-job", "publish", "--site", "lille", "--dataset", "ds", "--revision", "r")
-    invoke("g5k", "cpu-job", "plan", "--site", "lille", "--dataset", "ds", "--revision", "r")
+    invoke(
+        "g5k",
+        "cpu-job",
+        "publish",
+        "--site",
+        "lille",
+        "--dataset",
+        "osm-polygon-description-tag",
+        "--revision",
+        "r",
+    )
+    invoke(
+        "g5k",
+        "cpu-job",
+        "plan",
+        "--site",
+        "lille",
+        "--dataset",
+        "osm-polygon-description-tag",
+        "--revision",
+        "r",
+    )
     names = [args[args.index("-n") + 1] for _, args in remote.submitted]
-    assert names == ["luf-publish-ds", "luf-plan-ds"]
+    assert names == ["luf-publish-osm-polygon-descript", "luf-plan-osm-polygon-descript"]
 
 
 def test_publish_loop_submits_until_the_status_says_done(remote, monkeypatch):
@@ -622,11 +725,22 @@ def test_publish_loop_submits_until_the_status_says_done(remote, monkeypatch):
     monkeypatch.setattr("landuse_filter.application.publish_loop.read_status", read)
     monkeypatch.setattr(remote_mod, "BucketRemote", lambda b: object())
     monkeypatch.setattr(
-        g5k_adapter, "our_jobs", lambda site: [SimpleNamespace(name="luf-plan-ds")]
+        g5k_adapter,
+        "our_jobs",
+        lambda site: [SimpleNamespace(name="luf-plan-osm-polygon-descript")],
     )  # a planning job is live, not a publish job
     monkeypatch.setattr("time.sleep", lambda s: None)
-    result = invoke("g5k", "publish-loop", "--site", "lille", "--dataset", "ds", "--revision", "r1")
+    result = invoke(
+        "g5k",
+        "publish-loop",
+        "--site",
+        "lille",
+        "--dataset",
+        "osm-polygon-description-tag",
+        "--revision",
+        "r1",
+    )
     assert result.exit_code == 0, result.output
     assert len(remote.submitted) == 2  # polls 1 and 2: nothing live under its own name
-    assert remote.submitted[0][1][-1].endswith("publish ds r1")
+    assert remote.submitted[0][1][-1].endswith("publish osm-polygon-description-tag r1")
     assert result.output.strip().endswith("finished")

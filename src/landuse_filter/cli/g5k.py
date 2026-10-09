@@ -3,15 +3,18 @@
 import hashlib
 import time
 from datetime import timedelta
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
 import typer
 
 from landuse_filter.cli import (
-    OPS,
-    SITES,
     WORK,
+    DatasetName,
+    _bucket_default,
+    _ops,
+    _sites_default,
     _store,
     g5k_app,
 )
@@ -42,55 +45,10 @@ PUBLISH_MAX_POLL_SECONDS = 1800
 WalltimeMinutes = Annotated[
     int, typer.Option(help="Walltime asked for each job (policy permitting).")
 ]
-DatasetOption = Annotated[str, typer.Option(help="Dataset id (Hub repository name).")]
+DatasetOption = Annotated[DatasetName, typer.Option(help="Input dataset to process.")]
 RevisionOption = Annotated[str, typer.Option(help="Dataset revision (commit) to process.")]
 BesteffortOption = Annotated[
     bool, typer.Option(help="Submit besteffort jobs (preemptible) instead of default-queue jobs.")
-]
-BucketOption = Annotated[str, typer.Option(help="Hub bucket holding the shared run state.")]
-DayWalltimeMinutes = Annotated[
-    int | None,
-    typer.Option(
-        help="Preferred (long) day walltime, retried with --walltime-minutes if it cannot "
-        "start (default: --walltime-minutes).",
-    ),
-]
-DayLongMaxFailures = Annotated[
-    int,
-    typer.Option(help="Consecutive failed long day attempts on a cluster before a 1 h pause."),
-]
-ChunkOverflow = Annotated[
-    float,
-    typer.Option(
-        min=1.0,
-        help="Work given to a job = expected capacity x this (>= 1.0); unfinished chunks "
-        "return to the pool at the checkpoint signal.",
-    ),
-]
-SubmitWorkers = Annotated[
-    int,
-    typer.Option(
-        min=1,
-        help="Sites submitted to in parallel (one worker per site; 1 = one job after "
-        "another). See ADR-0020.",
-    ),
-]
-PolicyCheckOption = Annotated[
-    PolicyCheck,
-    typer.Option(
-        help="usagepolicycheck cadence: per-job (before and after every submission) or "
-        "per-batch (once per site before its first submission of a cycle and once after "
-        "its last; see ADR-0019).",
-    ),
-]
-NightWalltimeMinutes = Annotated[
-    int, typer.Option(help="Preferred (long) walltime for night/weekend jobs.")
-]
-NightFallbackWalltimeMinutes = Annotated[
-    int,
-    typer.Option(
-        help="Shorter night walltime retried in the same slot if the long job cannot start."
-    ),
 ]
 NightMaxQueuedPerSite = Annotated[
     int | None,
@@ -178,21 +136,50 @@ def g5k_run(
         ..., help="Comma-separated, in priority order (benchmark first for parity)."
     ),
     work: Path = WORK,
-    sites: str = typer.Option(SITES),
+    sites: str = typer.Option(default_factory=_sites_default),
     gpu_models: str = typer.Option(
         "", help="Comma-separated gpu keys to allow (default: admitted models)."
     ),
-    max_jobs: int = typer.Option(OPS.max_jobs),
-    max_jobs_per_site: int = typer.Option(OPS.max_jobs_per_site),
-    walltime_minutes: WalltimeMinutes = OPS.walltime_minutes,
-    day_walltime_minutes: DayWalltimeMinutes = OPS.day_walltime_minutes,
-    day_long_max_failures: DayLongMaxFailures = OPS.day_long_max_failures,
-    chunk_overflow: ChunkOverflow = OPS.chunk_overflow,
-    submit_workers: SubmitWorkers = OPS.submit_workers,
-    policy_check: PolicyCheckOption = PolicyCheck(OPS.policy_check),
-    night_walltime_minutes: NightWalltimeMinutes = OPS.night_walltime_minutes,
-    night_fallback_walltime_minutes: NightFallbackWalltimeMinutes = (
-        OPS.night_fallback_walltime_minutes
+    max_jobs: int = typer.Option(default_factory=lambda: _ops().max_jobs),
+    max_jobs_per_site: int = typer.Option(default_factory=lambda: _ops().max_jobs_per_site),
+    walltime_minutes: int = typer.Option(
+        default_factory=lambda: _ops().walltime_minutes,
+        help="Walltime asked for each job (policy permitting).",
+    ),
+    day_walltime_minutes: int | None = typer.Option(
+        default_factory=lambda: _ops().day_walltime_minutes,
+        help="Preferred (long) day walltime, retried with --walltime-minutes if it cannot "
+        "start (default: --walltime-minutes).",
+    ),
+    day_long_max_failures: int = typer.Option(
+        default_factory=lambda: _ops().day_long_max_failures,
+        help="Consecutive failed long day attempts on a cluster before a 1 h pause.",
+    ),
+    chunk_overflow: float = typer.Option(
+        default_factory=lambda: _ops().chunk_overflow,
+        min=1.0,
+        help="Work given to a job = expected capacity x this (>= 1.0); unfinished chunks "
+        "return to the pool at the checkpoint signal.",
+    ),
+    submit_workers: int = typer.Option(
+        default_factory=lambda: _ops().submit_workers,
+        min=1,
+        help="Sites submitted to in parallel (one worker per site; 1 = one job after "
+        "another). See ADR-0020.",
+    ),
+    policy_check: PolicyCheck = typer.Option(
+        default_factory=lambda: PolicyCheck(_ops().policy_check),
+        help="usagepolicycheck cadence: per-job (before and after every submission) or "
+        "per-batch (once per site before its first submission of a cycle and once after "
+        "its last; see ADR-0019).",
+    ),
+    night_walltime_minutes: int = typer.Option(
+        default_factory=lambda: _ops().night_walltime_minutes,
+        help="Preferred (long) walltime for night/weekend jobs.",
+    ),
+    night_fallback_walltime_minutes: int = typer.Option(
+        default_factory=lambda: _ops().night_fallback_walltime_minutes,
+        help="Shorter night walltime retried in the same slot if the long job cannot start.",
     ),
     besteffort: BesteffortOption = False,
     stale_besteffort_minutes: int = typer.Option(
@@ -217,8 +204,12 @@ def g5k_run(
     namespace: str | None = typer.Option(
         None, help="Store a candidate config's results under <fp>-<namespace>."
     ),
-    bucket: str = typer.Option(OPS.bucket, help="Private HF Bucket for chunks and parts."),
-    interval: int = typer.Option(OPS.interval_seconds, help="Seconds between cycles."),
+    bucket: str = typer.Option(
+        default_factory=_bucket_default, help="Private HF Bucket for chunks and parts."
+    ),
+    interval: int = typer.Option(
+        default_factory=lambda: _ops().interval_seconds, help="Seconds between cycles."
+    ),
     once: bool = typer.Option(False, help="Run a single cycle and exit."),
 ) -> None:
     """The controller loop: reconcile, pull results, submit where GPUs are free now."""
@@ -255,18 +246,47 @@ def g5k_run(
 def g5k_run_admission(
     gpus: str = typer.Option(..., help="Comma-separated GPU keys to admit (full benchmark each)."),
     work: Path = WORK,
-    sites: str = typer.Option(SITES),
+    sites: str = typer.Option(default_factory=_sites_default),
     max_jobs: int = typer.Option(ADMISSION_MAX_JOBS, help="Per GPU type."),
     max_jobs_per_site: int = typer.Option(ADMISSION_MAX_JOBS_PER_SITE),
-    walltime_minutes: WalltimeMinutes = OPS.walltime_minutes,
-    day_walltime_minutes: DayWalltimeMinutes = OPS.day_walltime_minutes,
-    day_long_max_failures: DayLongMaxFailures = OPS.day_long_max_failures,
-    chunk_overflow: ChunkOverflow = OPS.chunk_overflow,
-    submit_workers: SubmitWorkers = OPS.submit_workers,
-    policy_check: PolicyCheckOption = PolicyCheck(OPS.policy_check),
-    night_walltime_minutes: NightWalltimeMinutes = OPS.night_walltime_minutes,
-    night_fallback_walltime_minutes: NightFallbackWalltimeMinutes = (
-        OPS.night_fallback_walltime_minutes
+    walltime_minutes: int = typer.Option(
+        default_factory=lambda: _ops().walltime_minutes,
+        help="Walltime asked for each job (policy permitting).",
+    ),
+    day_walltime_minutes: int | None = typer.Option(
+        default_factory=lambda: _ops().day_walltime_minutes,
+        help="Preferred (long) day walltime, retried with --walltime-minutes if it cannot "
+        "start (default: --walltime-minutes).",
+    ),
+    day_long_max_failures: int = typer.Option(
+        default_factory=lambda: _ops().day_long_max_failures,
+        help="Consecutive failed long day attempts on a cluster before a 1 h pause.",
+    ),
+    chunk_overflow: float = typer.Option(
+        default_factory=lambda: _ops().chunk_overflow,
+        min=1.0,
+        help="Work given to a job = expected capacity x this (>= 1.0); unfinished chunks "
+        "return to the pool at the checkpoint signal.",
+    ),
+    submit_workers: int = typer.Option(
+        default_factory=lambda: _ops().submit_workers,
+        min=1,
+        help="Sites submitted to in parallel (one worker per site; 1 = one job after "
+        "another). See ADR-0020.",
+    ),
+    policy_check: PolicyCheck = typer.Option(
+        default_factory=lambda: PolicyCheck(_ops().policy_check),
+        help="usagepolicycheck cadence: per-job (before and after every submission) or "
+        "per-batch (once per site before its first submission of a cycle and once after "
+        "its last; see ADR-0019).",
+    ),
+    night_walltime_minutes: int = typer.Option(
+        default_factory=lambda: _ops().night_walltime_minutes,
+        help="Preferred (long) walltime for night/weekend jobs.",
+    ),
+    night_fallback_walltime_minutes: int = typer.Option(
+        default_factory=lambda: _ops().night_fallback_walltime_minutes,
+        help="Shorter night walltime retried in the same slot if the long job cannot start.",
     ),
     stale_besteffort_minutes: int = typer.Option(
         STALE_BESTEFFORT_MINUTES,
@@ -278,7 +298,7 @@ def g5k_run_admission(
         help="Waiting jobs allowed per site when nothing is free (night/weekend).",
     ),
     night_max_queued_per_site: NightMaxQueuedPerSite = None,
-    interval: int = typer.Option(OPS.interval_seconds),
+    interval: int = typer.Option(default_factory=lambda: _ops().interval_seconds),
 ) -> None:
     """One process for every GPU-type admission run (namespace gpu-<key>), sharing one
     view of each site per cycle; afterwards run `luf bench admit --gpu <key>`."""
@@ -309,7 +329,7 @@ def g5k_run_admission(
                 stale_besteffort_minutes=stale_besteffort_minutes,
                 gpu_models=[g],
                 namespace=f"gpu-{g}",
-                bucket=OPS.bucket,
+                bucket=_ops().bucket,
             ),
             log=lambda m: typer.echo(m, err=True),
             sites=cache,
@@ -325,9 +345,17 @@ LOCKFILE = Path(__file__).resolve().parents[3] / "uv.lock"
 CPU_JOB_PROPERTY = "gpu_count = 0 AND cluster != 'sagittaire'"
 
 
+class CpuJobMode(StrEnum):
+    PLAN = "plan"
+    REPLAN = "replan"
+    PUBLISH = "publish"
+    CARD = "card"
+    REPAIR = "repair"
+
+
 @g5k_app.command("cpu-job")
 def g5k_cpu_job(
-    mode: str = typer.Argument(..., help="plan, replan, publish, card or repair"),
+    mode: CpuJobMode = typer.Argument(..., help="plan, replan, publish, card or repair"),
     *,
     site: str = typer.Option(..., help="Site to run the CPU job on."),
     dataset: DatasetOption,
@@ -346,11 +374,9 @@ def g5k_cpu_job(
 
 
 def _submit_cpu_job(
-    mode: str, site: str, dataset: str, revision: str, minutes: int
+    mode: CpuJobMode, site: str, dataset: str, revision: str, minutes: int
 ) -> tuple[str, str]:
     """Deploy the code and submit one CPU job; returns (job id, walltime text)."""
-    if mode not in ("plan", "replan", "publish", "card", "repair"):
-        raise typer.BadParameter("mode must be plan, replan, publish, card or repair")
     from datetime import datetime
 
     from landuse_filter.adapters import g5k
@@ -415,7 +441,9 @@ def g5k_publish_loop(
         min=1,
         help="Longest pause after repeated failures (slow frontend, timeouts).",
     ),
-    bucket: BucketOption = OPS.bucket,
+    bucket: str = typer.Option(
+        default_factory=_bucket_default, help="Hub bucket holding the shared run state."
+    ),
 ) -> None:
     """Resubmit `cpu-job publish` whenever none is live, until the bucket status says done."""
     from datetime import datetime
@@ -440,7 +468,9 @@ def g5k_publish_loop(
             cancel=lambda j: g5k.cancel(site, j),
             log=lambda m: typer.echo(m, err=True),
         ),
-        submit=lambda: _submit_cpu_job("publish", site, dataset, revision, walltime_minutes)[0],
+        submit=lambda: _submit_cpu_job(
+            CpuJobMode.PUBLISH, site, dataset, revision, walltime_minutes
+        )[0],
         sleep=time.sleep,
         log=lambda m: typer.echo(m, err=True),
     )
@@ -454,7 +484,9 @@ def g5k_publish_loop(
 def g5k_publish_status(
     *,
     dataset: DatasetOption,
-    bucket: BucketOption = OPS.bucket,
+    bucket: str = typer.Option(
+        default_factory=_bucket_default, help="Hub bucket holding the shared run state."
+    ),
 ) -> None:
     """Print the live phase of the running publish/card job (one small bucket download)."""
     from landuse_filter.adapters.remote import BucketRemote
@@ -520,7 +552,7 @@ def g5k_pause(
     if cancel:
         from landuse_filter.application.controller import Settings
 
-        sites = [str(s) for s in SITES.split(",")]
+        sites = [str(s) for s in _ops().sites]
         ctl = _controller(work, Settings(datasets=[], sites=sites))
         typer.echo("\n".join(ctl.cancel_all()) or "no live jobs")
 
@@ -532,7 +564,7 @@ def g5k_resume(work: Path = WORK) -> None:
 
 
 @g5k_app.command("storage")
-def g5k_storage(sites: str = typer.Option(SITES)) -> None:
+def g5k_storage(sites: str = typer.Option(default_factory=_sites_default)) -> None:
     """Home quota usage per site and size of the project's ~/luf tree."""
     from landuse_filter.adapters import g5k
 
@@ -570,7 +602,7 @@ def _live_commits(store: "WorkStore") -> set[str]:
 
 @g5k_app.command("clean")
 def g5k_clean(
-    sites: str = typer.Option(SITES),
+    sites: str = typer.Option(default_factory=_sites_default),
     work: Path = WORK,
     apply: bool = typer.Option(False, help="Actually delete (default: dry run)."),
 ) -> None:

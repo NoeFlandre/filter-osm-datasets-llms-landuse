@@ -146,6 +146,7 @@ class Settings:
 
 
 DEPLOY_REF = "origin/main"
+FETCH_TIMEOUT_SECONDS = 60
 # Absolute: a controller's working directory can vanish when the volume remounts
 # (regression: every controller died on `git rev-parse` with status 128).
 REPO = Path(__file__).resolve().parents[3]
@@ -158,7 +159,23 @@ def commit(ref: str = DEPLOY_REF) -> str:
     HEAD would ship unreviewed code to Grid'5000.
     """
     git = ["git", "-C", str(REPO)]
-    subprocess.run([*git, "fetch", "-q", "origin", "main"], capture_output=True, check=False)
+    try:
+        fetched = subprocess.run(
+            [*git, "fetch", "-q", "origin", "main"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=FETCH_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"git fetch origin main timed out after {FETCH_TIMEOUT_SECONDS}s"
+        ) from exc
+    if fetched.returncode != 0:  # never deploy a possibly stale origin/main
+        raise RuntimeError(
+            f"git fetch origin main failed (exit {fetched.returncode}): "
+            f"{fetched.stderr.strip()[-500:]}"
+        )
 
     def rev_parse() -> str:
         return subprocess.run(
