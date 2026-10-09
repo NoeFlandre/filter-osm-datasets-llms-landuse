@@ -12,12 +12,18 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from landuse_filter.adapters.settings_file import DEFAULT, load
 from landuse_filter.domain.prompting import PROMPT_SHA256
 
 PACKAGE = Path(__file__).parents[2] / "src" / "landuse_filter"
+# Under mutmut the tests run beside its instrumented ``mutants/`` copy. Copying that copy would
+# import trampolined code outside mutmut's config, so this layout check runs only on the checkout.
+UNDER_MUTMUT = "mutants" in PACKAGE.parts
 
 
+@pytest.mark.skipif(UNDER_MUTMUT, reason="packages the source tree; mutmut instruments a copy")
 def test_installed_package_reads_its_prompt_and_settings_without_a_checkout(tmp_path):
     site = tmp_path / "site-packages"
     shutil.copytree(PACKAGE, site / "landuse_filter", ignore=shutil.ignore_patterns("__pycache__"))
