@@ -7,8 +7,8 @@ import typer
 
 from landuse_filter.cli import (
     JSON_OUT,
-    OPS,
     WORK,
+    _bucket_default,
     _emit,
     _store,
     _template,
@@ -67,7 +67,7 @@ def bench_admit(
     store = _store(work)
     item_sha = store.read_json(f"plans/benchmark/{config.GENERATION_FP}/items.json")
     by_sha = gathered_decisions(
-        store, BucketRemote(OPS.bucket), f"{config.GENERATION_FP}-gpu-{gpu}"
+        store, BucketRemote(_bucket_default()), f"{config.GENERATION_FP}-gpu-{gpu}"
     )
     candidate = {i: by_sha[s] for i, s in item_sha.items() if s in by_sha}
     if len(candidate) < len(item_sha):
@@ -77,7 +77,7 @@ def bench_admit(
     gate = compare(reference, candidate, resamples)
     status = "admitted" if gate.passed else "rejected"
     store.write_json(f"gates/admission/{gpu}.json", {"status": status, "gate": asdict(gate)})
-    upload_gate(BucketRemote(OPS.bucket), store, gpu)
+    upload_gate(BucketRemote(_bucket_default()), store, gpu)
     _emit({"gpu": gpu, "status": status, **asdict(gate)}, as_json)
     if not gate.passed:
         raise typer.Exit(3)
@@ -125,7 +125,7 @@ def bench_compare(
     reference = list(read_reference(_bench_root(work)))
     item_sha = store.read_json(f"plans/benchmark/{config.GENERATION_FP}/items.json")
     fp = f"{config.GENERATION_FP}-{namespace}" if namespace else config.GENERATION_FP
-    by_sha = gathered_decisions(store, BucketRemote(OPS.bucket), fp)
+    by_sha = gathered_decisions(store, BucketRemote(_bucket_default()), fp)
     candidate = {item: by_sha[sha] for item, sha in item_sha.items() if sha in by_sha}
     if len(candidate) < len(item_sha):
         typer.echo(f"incomplete: {len(candidate)}/{len(item_sha)} items generated", err=True)

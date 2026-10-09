@@ -34,11 +34,12 @@ def test_installed_package_reads_its_prompt_and_settings_without_a_checkout(tmp_
         import hashlib
 
         import landuse_filter
-        from landuse_filter.cli import OPS, PROMPT
+        from landuse_filter.adapters.settings_file import load
+        from landuse_filter.cli import PROMPT
 
         print(landuse_filter.__file__)
         print(hashlib.sha256(PROMPT.read_bytes()).hexdigest())
-        print(OPS.sites[0])
+        print(load().sites[0])
         """
     )
     env = {key: value for key, value in os.environ.items() if not key.startswith("LUF_")}
