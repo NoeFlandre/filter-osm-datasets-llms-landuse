@@ -35,6 +35,8 @@ GATED = [
     "src/landuse_filter/application/results.py",
     "src/landuse_filter/application/status.py",
     "src/landuse_filter/application/plan.py",
+    "src/landuse_filter/application/published_stats.py",
+    "src/landuse_filter/application/resolution_sync.py",
 ]
 
 

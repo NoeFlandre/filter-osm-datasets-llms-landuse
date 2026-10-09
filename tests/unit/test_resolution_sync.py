@@ -1,3 +1,5 @@
+import hashlib
+
 import pyarrow as pa
 import pytest
 
@@ -9,7 +11,7 @@ from landuse_filter.adapters.store import WorkStore
 from landuse_filter.application import resolution_sync as rs
 from landuse_filter.application.results import canonical_generations
 from landuse_filter.application.sync import upload_part
-from landuse_filter.domain.parsing import PARSER_VERSION
+from landuse_filter.domain.parsing import PARSER_VERSION, THINK_CLOSE
 from landuse_filter.domain.records import Generation
 
 FP = config.GENERATION_FP
@@ -228,3 +230,28 @@ def test_a_failing_download_still_uploads_the_snapshot_and_propagates(tmp_path, 
     with pytest.raises(OSError, match="boom"):
         rs.restore_resolution(remote, WorkStore(tmp_path / "n"), FP, workers=1)
     assert remote.puts == [rs.snapshot_path(FP)]
+
+
+def test_read_verdicts_keeps_the_first_row_per_hash_and_parses_it(tmp_path):
+    store = WorkStore(tmp_path / "s")
+    rows = [
+        ("h1", f"{THINK_CLOSE}\nyes"),
+        ("h1", f"{THINK_CLOSE}\nno"),
+        ("h2", f"{THINK_CLOSE}\nno"),
+    ]
+    part = store.write_part(FP, "c", _table(rows))
+    verdicts = rs.read_verdicts(str(store.path(rs.part_path(FP, f"c/{part}"))))
+    assert [(sha, decision) for sha, decision, *_ in verdicts] == [("h1", "yes"), ("h2", "no")]
+
+
+def test_read_verdicts_rejects_a_part_whose_bytes_do_not_match_its_name(tmp_path):
+    part = tmp_path / ("0" * 64 + ".parquet")
+    part.write_bytes(b"not parquet")
+    assert rs.read_verdicts(str(part)) is None
+
+
+def test_read_verdicts_rejects_an_unreadable_part_with_a_matching_name(tmp_path):
+    data = b"not parquet"
+    part = tmp_path / (hashlib.sha256(data).hexdigest() + ".parquet")
+    part.write_bytes(data)
+    assert rs.read_verdicts(str(part)) is None

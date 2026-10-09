@@ -56,16 +56,15 @@ def read_verdicts(path: str) -> Verdicts | None:
         rows = pq.read_table(pa.BufferReader(data)).to_pylist()
     except (pa.ArrowException, OSError):
         return None
-    seen: set[str] = set()
-    out: Verdicts = []
+    first: dict[str, dict] = {}
     for row in rows:
-        sha = row["text_sha256"]
-        if sha in seen:
-            continue
-        seen.add(sha)
-        v = parse_generation(row["raw_output"], truncated=bool(row["truncated"]))
-        out.append((sha, v.decision.value, v.mode and v.mode.value, v.failure and v.failure.value))
-    return out
+        first.setdefault(row["text_sha256"], row)
+    return [_verdict(sha, row) for sha, row in first.items()]
+
+
+def _verdict(sha: str, row: dict) -> tuple[str, str, str | None, str | None]:
+    v = parse_generation(row["raw_output"], truncated=bool(row["truncated"]))
+    return (sha, v.decision.value, v.mode and v.mode.value, v.failure and v.failure.value)
 
 
 def _restore_snapshot(
@@ -178,37 +177,58 @@ def restore_resolution(
     index = _restore_snapshot(remote, scratch, fp, progress)
     new = _new_part_keys(remote, index, fp)
     progress.event("parts_listed", seen=len(index.parts()), new=len(new))
-    t0, rows, done = time.monotonic(), 0, 0
-    batches = [new[i : i + BATCH] for i in range(0, len(new), BATCH)]
     checkpoint = _Checkpointer(
         lambda: _save(remote, scratch, index, fp, progress), checkpoint_seconds
     )
     try:
-        with (
-            ProcessPoolExecutor(
-                workers or min(16, os.cpu_count() or 1),
-                mp_context=multiprocessing.get_context("spawn"),
-            ) as procs,
-            ThreadPoolExecutor(1) as io,
-            closing(
-                _prefetched(batches, lambda ks: _download(remote, scratch, fp, ks), io, should_stop)
-            ) as downloaded,
-        ):
-            for keys, paths in downloaded:
-                rows += _index_batch(index, keys, paths, procs)
-                done += len(keys)
-                progress.tick(
-                    "parts_read",
-                    read=done,
-                    total=len(new),
-                    rows_per_s=round(rows / max(time.monotonic() - t0, 1e-9)),
-                )
-                checkpoint.batch_indexed()
+        done, rows = _catch_up(
+            lambda ks: _download(remote, scratch, fp, ks),
+            index,
+            new,
+            should_stop=should_stop,
+            workers=workers,
+            checkpoint=checkpoint,
+            progress=progress,
+        )
     finally:
         if checkpoint.dirty or not _on_bucket(remote, fp):
             checkpoint.flush()
     progress.event("resolution_ready", parts_read=done, rows=rows)
     return index
+
+
+def _catch_up(
+    download: Callable[[list[str]], list[Path]],
+    index: ResolutionIndex,
+    new: list[str],
+    *,
+    should_stop: Callable[[], bool],
+    workers: int | None,
+    checkpoint: _Checkpointer,
+    progress: Progress,
+) -> tuple[int, int]:
+    """Index the new parts batch by batch; returns (parts read, verdict rows added)."""
+    t0, rows, done = time.monotonic(), 0, 0
+    batches = [new[i : i + BATCH] for i in range(0, len(new), BATCH)]
+    with (
+        ProcessPoolExecutor(
+            workers or min(16, os.cpu_count() or 1),
+            mp_context=multiprocessing.get_context("spawn"),
+        ) as procs,
+        ThreadPoolExecutor(1) as io,
+        closing(_prefetched(batches, download, io, should_stop)) as downloaded,
+    ):
+        for keys, paths in downloaded:
+            rows += _index_batch(index, keys, paths, procs)
+            done += len(keys)
+            progress.tick(
+                "parts_read",
+                read=done,
+                total=len(new),
+                rows_per_s=round(rows / max(time.monotonic() - t0, 1e-9)),
+            )
+            checkpoint.batch_indexed()
+    return done, rows
 
 
 def _on_bucket(remote: Remote, fp: str) -> bool:

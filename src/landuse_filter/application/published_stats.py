@@ -9,13 +9,14 @@ from the Hub, so the card is always a function of the published data.
 
 import logging
 from collections import Counter
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Any
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 
 from landuse_filter.adapters.store import WorkStore
@@ -98,32 +99,35 @@ class PublishedStats:
 
 def file_stats(path: str, source: Source, locate: Locator | None = None) -> FileStats:
     """Counts of one published parquet file (``source``: local path or file object)."""
-    if path.startswith("labels/"):
-        table = pq.read_table(source, columns=["decision", "failure_reason"])
-        decisions = Counter(table.column("decision").to_pylist())
-        failures = Counter(
-            r
-            for d, r in zip(
-                table.column("decision").to_pylist(),
-                table.column("failure_reason").to_pylist(),
-                strict=True,
-            )
-            if d == "failed" and r
-        )
-        if locate is None:
-            return FileStats(path, decisions=dict(decisions), failures=dict(failures))
-        if not isinstance(source, Path):
-            source.seek(0)  # the decision columns above already consumed a Hub stream
-        where = locate(path, source)
-        return FileStats(
-            path,
-            decisions=dict(decisions),
-            failures=dict(failures),
-            cells=where.cells,
-            labelled=where.labelled,
-            located=where.located,
-        )
-    table = pq.read_table(source, columns=["gpu"])
+    if not path.startswith("labels/"):
+        return _generation_stats(path, pq.read_table(source, columns=["gpu"]))
+    decisions, failures = _label_counts(
+        pq.read_table(source, columns=["decision", "failure_reason"])
+    )
+    if locate is None:
+        return FileStats(path, decisions=decisions, failures=failures)
+    if not isinstance(source, Path):
+        source.seek(0)  # the decision columns above already consumed a Hub stream
+    where = locate(path, source)
+    return FileStats(
+        path,
+        decisions=decisions,
+        failures=failures,
+        cells=where.cells,
+        labelled=where.labelled,
+        located=where.located,
+    )
+
+
+def _label_counts(table: pa.Table) -> tuple[dict[str, int], dict[str, int]]:
+    """Decision counts, and failure-reason counts of the failed rows that give a reason."""
+    decisions = table.column("decision").to_pylist()
+    reasons = table.column("failure_reason").to_pylist()
+    failures = Counter(r for d, r in zip(decisions, reasons, strict=True) if d == "failed" and r)
+    return dict(Counter(decisions)), dict(failures)
+
+
+def _generation_stats(path: str, table: pa.Table) -> FileStats:
     gpus = Counter(gpu_key(g) for g in table.column("gpu").to_pylist())
     return FileStats(path, rows=table.num_rows, gpus=dict(gpus))
 
@@ -150,15 +154,27 @@ def complete(
     midway keeps what it counted; superseded ledger lines are compacted away.
     """
     have = {r["path"]: FileStats.from_json(r) for r in store.compact_jsonl(ledger(dataset))}
-    wanted = sorted(p for p in published if p.startswith(("labels/", "generations/")))
-    missing = [p for p in wanted if _needs_count(p, have, refresh, locate)]
+    wanted = _wanted(published)
     _count_missing(
-        missing,
+        _missing(wanted, have, refresh, locate),
         lambda p: _count(opener, p, locate),
         lambda fresh: _record(store, dataset, have, fresh),
         on_progress,
     )
     return [have[p] for p in wanted if p in have]
+
+
+def _wanted(published: set[str]) -> list[str]:
+    return sorted(p for p in published if p.startswith(("labels/", "generations/")))
+
+
+def _missing(
+    wanted: list[str],
+    have: dict[str, FileStats],
+    refresh: set[str] | frozenset[str],
+    locate: Locator | None,
+) -> list[str]:
+    return [p for p in wanted if _needs_count(p, have, refresh, locate)]
 
 
 def _count_missing(
@@ -217,19 +233,19 @@ def _count(opener: Opener, path: str, locate: Locator | None) -> FileStats | Non
 
 
 def totals(records: list[FileStats]) -> PublishedStats:
-    decisions: Counter[str] = Counter()
-    failures: Counter[str] = Counter()
-    gpus: Counter[str] = Counter()
-    for r in records:
-        decisions.update(r.decisions)
-        failures.update(r.failures)
-        gpus.update(r.gpus)
     return PublishedStats(
-        decisions=dict(decisions),
-        failures=dict(failures),
-        gpus=dict(gpus),
+        decisions=_sum_counts(r.decisions for r in records),
+        failures=_sum_counts(r.failures for r in records),
+        gpus=_sum_counts(r.gpus for r in records),
         unique_texts=sum(r.rows for r in records),
         cells=geomap.merge([r.cells or {} for r in records]),
         labelled=sum(r.labelled for r in records),
         located=sum(r.located for r in records),
     )
+
+
+def _sum_counts(parts: Iterable[dict[str, int]]) -> dict[str, int]:
+    total: Counter[str] = Counter()
+    for part in parts:
+        total.update(part)
+    return dict(total)
