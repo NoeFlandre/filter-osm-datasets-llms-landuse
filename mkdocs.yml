@@ -44,6 +44,13 @@ nav:
       - adr/0025-stale-besteffort-reaper.md
       - adr/0026-resolution-snapshot.md
       - adr/0027-planner-fingerprint-binding.md
+      - adr/0028-hub-rate-limit-retry.md
+      - adr/0029-incremental-ingest.md
+      - adr/0030-fewer-larger-part-uploads.md
+      - adr/0031-ingest-never-starves-submission.md
+      - adr/0032-observable-publish-jobs.md
+      - adr/0033-cpu-jobs-never-cross-boundaries.md
+      - adr/0034-immediate-jobs-in-the-night-window.md
 markdown_extensions:
   - pymdownx.superfences:
       custom_fences:

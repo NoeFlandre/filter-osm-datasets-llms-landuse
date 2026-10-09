@@ -42,7 +42,7 @@ See [ADR-0016](adr/0016-night-walltime-fallback.md).
 `--immediate-in-night / --no-immediate-in-night` (`luf g5k run`; default on) makes the controller
 also submit immediate-start jobs (no `-t night`, at most 1 h, only where GPUs are free now) at night
 and on weekends, in addition to the queued night jobs. See
-[ADR-0027](adr/0027-immediate-jobs-in-the-night-window.md).
+[ADR-0034](adr/0034-immediate-jobs-in-the-night-window.md).
 
 ## Day jobs: long walltime with a fallback and a self-throttle
 

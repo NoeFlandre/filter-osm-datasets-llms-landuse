@@ -121,7 +121,7 @@ def test_easter_matches_independent_algorithm():
     assert all(easter(y) == knuth_easter(y) for y in range(1583, 4100))
 
 
-# --- immediate-start window inside nights and weekends (ADR-0027) ---
+# --- immediate-start window inside nights and weekends (ADR-0034) ---
 
 PARIS = ZoneInfo("Europe/Paris")
 

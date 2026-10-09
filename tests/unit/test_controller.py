@@ -685,12 +685,42 @@ def test_commit_gives_up_when_the_ref_stays_unreadable(monkeypatch):
 
     def broken(cmd, **kwargs):
         if cmd[3] == "fetch":
-            return subprocess.CompletedProcess(cmd, 1)
+            return subprocess.CompletedProcess(cmd, 0)
         raise subprocess.CalledProcessError(128, cmd)
 
     monkeypatch.setattr(ctl_mod.subprocess, "run", broken)
     monkeypatch.setattr(ctl_mod.time, "sleep", lambda s: None)
     with pytest.raises(subprocess.CalledProcessError):
+        ctl_mod.commit("origin/main")
+
+
+def test_commit_refuses_to_deploy_when_the_fetch_fails(monkeypatch):
+    """Regression (#234): a failed `git fetch` was ignored and the stale origin/main deployed."""
+    import subprocess
+
+    calls = []
+
+    def failing_fetch(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[3] == "fetch":
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="fatal: unable to access")
+        return subprocess.CompletedProcess(cmd, 0, stdout="stale000\n")
+
+    monkeypatch.setattr(ctl_mod.subprocess, "run", failing_fetch)
+    with pytest.raises(RuntimeError, match=r"git fetch origin main failed.*unable to access"):
+        ctl_mod.commit("origin/main")
+    assert [c[3] for c in calls] == ["fetch"]  # the stale ref is never resolved
+
+
+def test_commit_refuses_to_deploy_when_the_fetch_times_out(monkeypatch):
+    import subprocess
+
+    def hanging_fetch(cmd, **kwargs):
+        assert kwargs["timeout"] == ctl_mod.FETCH_TIMEOUT_SECONDS
+        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+    monkeypatch.setattr(ctl_mod.subprocess, "run", hanging_fetch)
+    with pytest.raises(RuntimeError, match="timed out"):
         ctl_mod.commit("origin/main")
 
 
@@ -1018,7 +1048,7 @@ def test_recent_besteffort_and_other_queues_are_left_alone(world):
     assert not fake.cancelled
 
 
-# --- immediate-start jobs in the night window (ADR-0027) ------------------------------
+# --- immediate-start jobs in the night window (ADR-0034) ------------------------------
 
 
 def _types(fake):

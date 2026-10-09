@@ -211,7 +211,7 @@ def _count(opener: Opener, path: str, locate: Locator | None) -> FileStats | Non
     try:
         with _opened(opener, path) as source:
             return file_stats(path, source, locate)
-    except Exception:
+    except Exception:  # broad on purpose: one unreadable file must not stop the count
         log.exception("counting %s failed; skipped until the next run", path)
         return None
 
