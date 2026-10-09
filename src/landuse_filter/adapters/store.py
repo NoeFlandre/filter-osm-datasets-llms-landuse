@@ -39,8 +39,12 @@ def write_atomic(path: Path, data: bytes) -> None:
             f.flush()
             os.fsync(f.fileno())
         tmp.replace(path)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
+    except BaseException as error:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError as cleanup_error:
+            # The write error is the failure callers classify; a failed cleanup is only a note.
+            error.add_note(f"could not remove temp file {tmp}: {cleanup_error!r}")
         raise
 
 

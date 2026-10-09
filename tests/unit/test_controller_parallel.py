@@ -288,7 +288,7 @@ def test_unreachable_site_is_skipped_for_the_rest_of_the_cycle(tmp_path, monkeyp
         if site != "nancy":
             return real(site, args)
         calls.append(site)
-        raise g5k.RemoteError(f"{site}: exit 255: Connection timed out during banner exchange")
+        raise g5k.TransportError(f"{site}: exit 255: Connection timed out during banner exchange")
 
     monkeypatch.setattr(g5k, "submit", submit)
     report = c.cycle(NOW)
@@ -298,6 +298,8 @@ def test_unreachable_site_is_skipped_for_the_rest_of_the_cycle(tmp_path, monkeyp
 
 
 def test_transport_failure_is_told_from_a_refusal():
-    assert g5k.is_transport_failure(g5k.RemoteError("x: timed out: oarstat -u -J"))
-    assert g5k.is_transport_failure(g5k.RemoteError("x: exit 255: Broken pipe"))
+    assert g5k.is_transport_failure(g5k.TransportError("x: timed out: oarstat -u -J"))
+    assert g5k.is_transport_failure(g5k.TransportError("x: exit 255: Broken pipe"))
     assert not g5k.is_transport_failure(g5k.RemoteError("x: exit 1: bad request"))
+    # The type decides, not the wording: a plain RemoteError is a refusal even if it reads like ssh.
+    assert not g5k.is_transport_failure(g5k.RemoteError("x: exit 255: Broken pipe"))

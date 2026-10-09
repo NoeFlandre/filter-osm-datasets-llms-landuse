@@ -28,6 +28,19 @@ def fake(monkeypatch, *responses):
     return run
 
 
+def test_ssh_raises_transport_error_only_when_the_site_is_unreachable(monkeypatch):
+    fake(monkeypatch, (255, "", "Connection refused"))
+    with pytest.raises(g5k.TransportError, match="Connection refused"):
+        g5k.ssh("nancy", "true")
+    fake(monkeypatch, (subprocess.TimeoutExpired("ssh", 1), "", ""))
+    with pytest.raises(g5k.TransportError, match="timed out"):
+        g5k.ssh("nancy", "sleep 9")
+    fake(monkeypatch, (1, "", "bad request"))
+    with pytest.raises(g5k.RemoteError, match="bad request") as refused:
+        g5k.ssh("nancy", "true")
+    assert not isinstance(refused.value, g5k.TransportError)
+
+
 def test_ssh_returns_stdout_and_raises_on_failure_or_timeout(monkeypatch):
     fake(monkeypatch, (0, "ok\n", ""))
     assert g5k.ssh("nancy", "true") == "ok\n"
