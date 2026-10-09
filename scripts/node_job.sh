@@ -59,12 +59,13 @@ fi
 # `luf node ...` flushes gracefully, then wait for the child's real exit code (regression: bash
 # died with 12 on the unhandled USR2 and python never saw the signal).
 run_forwarding() {
-  local child rc=0
+  local child="" rc=0 pending="" sig
+  trap 'if [[ -n "$child" ]]; then kill -USR2 "$child" 2>/dev/null || true; else pending+=" USR2"; fi' USR2
+  trap 'if [[ -n "$child" ]]; then kill -TERM "$child" 2>/dev/null || true; else pending+=" TERM"; fi' TERM
+  trap 'if [[ -n "$child" ]]; then kill -INT "$child" 2>/dev/null || true; else pending+=" INT"; fi' INT
   "$@" &
   child=$!
-  trap 'kill -USR2 "$child" 2>/dev/null || true' USR2
-  trap 'kill -TERM "$child" 2>/dev/null || true' TERM
-  trap 'kill -INT "$child" 2>/dev/null || true' INT
+  for sig in $pending; do kill -"$sig" "$child" 2>/dev/null || true; done
   wait "$child" || rc=$?
   while kill -0 "$child" 2>/dev/null; do
     wait "$child" || rc=$?
@@ -98,7 +99,7 @@ export PATH="$venv/bin:$PATH"
 # ran stale code without `node plan`).
 export PYTHONPATH="$CODE/src${PYTHONPATH:+:$PYTHONPATH}"
 # shellcheck disable=SC2317,SC2329  # invoked indirectly through run_forwarding
-luf() { "$venv/bin/python" -c 'import sys; from landuse_filter.cli import app; sys.exit(app())' "$@"; }
+luf() { exec "$venv/bin/python" -c 'import sys; from landuse_filter.cli import app; sys.exit(app())' "$@"; }
 env_seconds=$(( $(date +%s) - t0 ))
 export LUF_ENV_READY_SECONDS="$env_seconds"  # recorded in the job timeline (luf node run)
 echo "luf: env ready in ${env_seconds}s ($venv)"

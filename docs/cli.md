@@ -56,7 +56,7 @@ Usage: root bench admit [OPTIONS]
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
 │ *  --gpu              <str>   GPU key, e.g. l40s (see `luf g5k inventory`). [required]           │
-│    --work             <path>  Local work tree. [default: work]                                   │
+│    --work             <path>  Local work tree. [default: (dynamic)]                              │
 │    --resamples        <int>   [default: 10000]                                                   │
 │    --json                     Machine-readable output.                                           │
 │    --help                     Show this message and exit.                                        │
@@ -71,7 +71,7 @@ Usage: root bench budget [OPTIONS]
  Offline max_new_tokens simulation on the reference run, through the full gate.                     
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ --work             <path>  Local work tree. [default: work]                                      │
+│ --work             <path>  Local work tree. [default: (dynamic)]                                 │
 │ --caps             <str>   [default: 1024,1536,2048,2560,3072,3584,3840,4000]                    │
 │ --resamples        <int>   [default: 10000]                                                      │
 │ --json                     Machine-readable output.                                              │
@@ -87,7 +87,7 @@ Usage: root bench compare [OPTIONS]
  Gate our benchmark generations against the published reference run.                                
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ --work             <path>  Local work tree. [default: work]                                      │
+│ --work             <path>  Local work tree. [default: (dynamic)]                                 │
 │ --resamples        <int>   [default: 10000]                                                      │
 │ --label            <str>   Name of the gate file to write. [default: reference-config]           │
 │ --namespace        <str>   Gate a candidate namespace instead of production.                     │
@@ -104,7 +104,7 @@ Usage: root bench plan [OPTIONS]
  Turn the 25,500-item benchmark into work chunks (production path).                                 
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ --work              <path>              Local work tree. [default: work]                         │
+│ --work              <path>              Local work tree. [default: (dynamic)]                    │
 │ --chunk-size        <int range> [x>=1]  [default: 500]                                           │
 │ --help                                  Show this message and exit.                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
@@ -163,7 +163,7 @@ Usage: root g5k calibrate-job [OPTIONS]
 │ *  --site           <str>   [required]                                                           │
 │ *  --cluster        <str>   [required]                                                           │
 │ *  --chunk          <str>   A benchmark chunk id (prompts for the sweep). [required]             │
-│    --work           <path>  Local work tree. [default: work]                                     │
+│    --work           <path>  Local work tree. [default: (dynamic)]                                │
 │    --help                   Show this message and exit.                                          │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
@@ -176,9 +176,8 @@ Usage: root g5k clean [OPTIONS]
  Delete stale project files under ~/luf on each site (old code, envs, logs, synced parts).          
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ --sites                  <str>   [default:                                                       │
-│                                  grenoble,lille,lyon,nancy,rennes,sophia,toulouse,luxembourg]    │
-│ --work                   <path>  Local work tree. [default: work]                                │
+│ --sites                  <str>   [default: (dynamic)]                                            │
+│ --work                   <path>  Local work tree. [default: (dynamic)]                           │
 │ --apply    --no-apply            Actually delete (default: dry run). [default: no-apply]         │
 │ --help                           Show this message and exit.                                     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
@@ -196,12 +195,18 @@ Usage: root g5k cpu-job [OPTIONS] {mode}:<plan|replan|publish|card|repair>
 │                                                   [required]                                     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --site                    <str>  Site to run the CPU job on. [required]                       │
-│ *  --dataset                 <str>  Dataset id (Hub repository name). [required]                 │
-│ *  --revision                <str>  Dataset revision (commit) to process. [required]             │
-│    --walltime-minutes        <int>  Walltime asked for each job (policy permitting).             │
-│                                     [default: 60]                                                │
-│    --help                           Show this message and exit.                                  │
+│ *  --site                    <str>                             Site to run the CPU job on.       │
+│                                                                [required]                        │
+│ *  --dataset                 <osm-polygon-description-tag|osm  Input dataset to process.         │
+│                              -polygon-wikidata-and-wikipedia|  [required]                        │
+│                              osm-polygon-website-tag>                                            │
+│ *  --revision                <str>                             Dataset revision (commit) to      │
+│                                                                process.                          │
+│                                                                [required]                        │
+│    --walltime-minutes        <int>                             Walltime asked for each job       │
+│                                                                (policy permitting).              │
+│                                                                [default: 60]                     │
+│    --help                                                      Show this message and exit.       │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -213,7 +218,7 @@ Usage: root g5k inventory [OPTIONS]
  Refresh the GPU cluster inventory of all sites (Reference API).                                    
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ --work        <path>  Local work tree. [default: work]                                           │
+│ --work        <path>  Local work tree. [default: (dynamic)]                                      │
 │ --site        <str>   Frontend to query from. [default: nancy]                                   │
 │ --help                Show this message and exit.                                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
@@ -227,7 +232,7 @@ Usage: root g5k pause [OPTIONS]
  Stop submitting new jobs (running jobs drain unless --cancel).                                     
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ --work                     <path>  Local work tree. [default: work]                              │
+│ --work                     <path>  Local work tree. [default: (dynamic)]                         │
 │ --cancel    --no-cancel            Also oardel our live jobs. [default: no-cancel]               │
 │ --help                             Show this message and exit.                                   │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
@@ -241,22 +246,28 @@ Usage: root g5k publish-loop [OPTIONS]
  Resubmit `cpu-job publish` whenever none is live, until the bucket status says done.               
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --dataset                     <str>               Dataset id (Hub repository name).           │
-│                                                      [required]                                  │
-│ *  --revision                    <str>               Dataset revision (commit) to process.       │
-│                                                      [required]                                  │
-│ *  --site                        <str>               Site to submit the publish jobs on.         │
-│                                                      [required]                                  │
-│    --walltime-minutes            <int>               Walltime asked for each job (policy         │
-│                                                      permitting).                                │
-│                                                      [default: 60]                               │
-│    --interval-seconds            <int range> [x>=1]  Pause between two checks. [default: 300]    │
-│    --max-interval-seconds        <int range> [x>=1]  Longest pause after repeated failures (slow │
-│                                                      frontend, timeouts).                        │
-│                                                      [default: 1800]                             │
-│    --bucket                      <str>               Hub bucket holding the shared run state.    │
-│                                                      [default: NoeFlandre/landuse-filter-work]   │
-│    --help                                            Show this message and exit.                 │
+│ *  --dataset                     <osm-polygon-description-tag|o  Input dataset to process.       │
+│                                  sm-polygon-wikidata-and-wikipe  [required]                      │
+│                                  dia|osm-polygon-website-tag>                                    │
+│ *  --revision                    <str>                           Dataset revision (commit) to    │
+│                                                                  process.                        │
+│                                                                  [required]                      │
+│ *  --site                        <str>                           Site to submit the publish jobs │
+│                                                                  on.                             │
+│                                                                  [required]                      │
+│    --walltime-minutes            <int>                           Walltime asked for each job     │
+│                                                                  (policy permitting).            │
+│                                                                  [default: 60]                   │
+│    --interval-seconds            <int range> [x>=1]              Pause between two checks.       │
+│                                                                  [default: 300]                  │
+│    --max-interval-seconds        <int range> [x>=1]              Longest pause after repeated    │
+│                                                                  failures (slow frontend,        │
+│                                                                  timeouts).                      │
+│                                                                  [default: 1800]                 │
+│    --bucket                      <str>                           Hub bucket holding the shared   │
+│                                                                  run state.                      │
+│                                                                  [default: (dynamic)]            │
+│    --help                                                        Show this message and exit.     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -268,10 +279,13 @@ Usage: root g5k publish-status [OPTIONS]
  Print the live phase of the running publish/card job (one small bucket download).                  
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --dataset        <str>  Dataset id (Hub repository name). [required]                          │
-│    --bucket         <str>  Hub bucket holding the shared run state.                              │
-│                            [default: NoeFlandre/landuse-filter-work]                             │
-│    --help                  Show this message and exit.                                           │
+│ *  --dataset        <osm-polygon-description-tag|osm-pol  Input dataset to process. [required]   │
+│                     ygon-wikidata-and-wikipedia|osm-poly                                         │
+│                     gon-website-tag>                                                             │
+│    --bucket         <str>                                 Hub bucket holding the shared run      │
+│                                                           state.                                 │
+│                                                           [default: (dynamic)]                   │
+│    --help                                                 Show this message and exit.            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -283,7 +297,7 @@ Usage: root g5k resume [OPTIONS]
  Allow the controller to submit again.                                                              
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ --work        <path>  Local work tree. [default: work]                                           │
+│ --work        <path>  Local work tree. [default: (dynamic)]                                      │
 │ --help                Show this message and exit.                                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
@@ -302,43 +316,43 @@ Usage: root g5k run [OPTIONS]
 │                                                                           parity).               │
 │                                                                           [required]             │
 │    --work                                           <path>                Local work tree.       │
-│                                                                           [default: work]        │
-│    --sites                                          <str>                 [default:              │
-│                                                                           grenoble,lille,lyon,n… │
+│                                                                           [default: (dynamic)]   │
+│    --sites                                          <str>                 [default: (dynamic)]   │
 │    --gpu-models                                     <str>                 Comma-separated gpu    │
 │                                                                           keys to allow          │
 │                                                                           (default: admitted     │
 │                                                                           models).               │
-│    --max-jobs                                       <int>                 [default: 12]          │
-│    --max-jobs-per-site                              <int>                 [default: 4]           │
+│    --max-jobs                                       <int>                 [default: (dynamic)]   │
+│    --max-jobs-per-site                              <int>                 [default: (dynamic)]   │
 │    --walltime-minutes                               <int>                 Walltime asked for     │
 │                                                                           each job (policy       │
 │                                                                           permitting).           │
-│                                                                           [default: 60]          │
+│                                                                           [default: (dynamic)]   │
 │    --day-walltime-minu…                             <int>                 Preferred (long) day   │
 │                                                                           walltime, retried with │
 │                                                                           --walltime-minutes if  │
 │                                                                           it cannot start        │
 │                                                                           (default:              │
 │                                                                           --walltime-minutes).   │
+│                                                                           [default: (dynamic)]   │
 │    --day-long-max-fail…                             <int>                 Consecutive failed     │
 │                                                                           long day attempts on a │
 │                                                                           cluster before a 1 h   │
 │                                                                           pause.                 │
-│                                                                           [default: 3]           │
+│                                                                           [default: (dynamic)]   │
 │    --chunk-overflow                                 <float range>         Work given to a job =  │
 │                                                     [x>=1.0]              expected capacity x    │
 │                                                                           this (>= 1.0);         │
 │                                                                           unfinished chunks      │
 │                                                                           return to the pool at  │
 │                                                                           the checkpoint signal. │
-│                                                                           [default: 1.2]         │
+│                                                                           [default: (dynamic)]   │
 │    --submit-workers                                 <int range> [x>=1]    Sites submitted to in  │
 │                                                                           parallel (one worker   │
 │                                                                           per site; 1 = one job  │
 │                                                                           after another). See    │
 │                                                                           ADR-0020.              │
-│                                                                           [default: 1]           │
+│                                                                           [default: (dynamic)]   │
 │    --policy-check                                   <per-job|per-batch>   usagepolicycheck       │
 │                                                                           cadence: per-job       │
 │                                                                           (before and after      │
@@ -348,16 +362,16 @@ Usage: root g5k run [OPTIONS]
 │                                                                           submission of a cycle  │
 │                                                                           and once after its     │
 │                                                                           last; see ADR-0019).   │
-│                                                                           [default: per-job]     │
+│                                                                           [default: (dynamic)]   │
 │    --night-walltime-mi…                             <int>                 Preferred (long)       │
 │                                                                           walltime for           │
 │                                                                           night/weekend jobs.    │
-│                                                                           [default: 120]         │
+│                                                                           [default: (dynamic)]   │
 │    --night-fallback-wa…                             <int>                 Shorter night walltime │
 │                                                                           retried in the same    │
 │                                                                           slot if the long job   │
 │                                                                           cannot start.          │
-│                                                                           [default: 30]          │
+│                                                                           [default: (dynamic)]   │
 │    --besteffort            --no-besteffort                                Submit besteffort jobs │
 │                                                                           (preemptible) instead  │
 │                                                                           of default-queue jobs. │
@@ -398,11 +412,10 @@ Usage: root g5k run [OPTIONS]
 │                                                                           <fp>-<namespace>.      │
 │    --bucket                                         <str>                 Private HF Bucket for  │
 │                                                                           chunks and parts.      │
-│                                                                           [default:              │
-│                                                                           NoeFlandre/landuse-fi… │
+│                                                                           [default: (dynamic)]   │
 │    --interval                                       <int>                 Seconds between        │
 │                                                                           cycles.                │
-│                                                                           [default: 300]         │
+│                                                                           [default: (dynamic)]   │
 │    --once                  --no-once                                      Run a single cycle and │
 │                                                                           exit.                  │
 │                                                                           [default: no-once]     │
@@ -424,46 +437,46 @@ Usage: root g5k run-admission [OPTIONS]
 │                                                                  admit (full benchmark each).    │
 │                                                                  [required]                      │
 │    --work                                <path>                  Local work tree.                │
-│                                                                  [default: work]                 │
-│    --sites                               <str>                   [default:                       │
-│                                                                  grenoble,lille,lyon,nancy,renn… │
+│                                                                  [default: (dynamic)]            │
+│    --sites                               <str>                   [default: (dynamic)]            │
 │    --max-jobs                            <int>                   Per GPU type. [default: 5]      │
 │    --max-jobs-per-site                   <int>                   [default: 3]                    │
 │    --walltime-minutes                    <int>                   Walltime asked for each job     │
 │                                                                  (policy permitting).            │
-│                                                                  [default: 60]                   │
+│                                                                  [default: (dynamic)]            │
 │    --day-walltime-minutes                <int>                   Preferred (long) day walltime,  │
 │                                                                  retried with --walltime-minutes │
 │                                                                  if it cannot start (default:    │
 │                                                                  --walltime-minutes).            │
+│                                                                  [default: (dynamic)]            │
 │    --day-long-max-failures               <int>                   Consecutive failed long day     │
 │                                                                  attempts on a cluster before a  │
 │                                                                  1 h pause.                      │
-│                                                                  [default: 3]                    │
+│                                                                  [default: (dynamic)]            │
 │    --chunk-overflow                      <float range> [x>=1.0]  Work given to a job = expected  │
 │                                                                  capacity x this (>= 1.0);       │
 │                                                                  unfinished chunks return to the │
 │                                                                  pool at the checkpoint signal.  │
-│                                                                  [default: 1.2]                  │
+│                                                                  [default: (dynamic)]            │
 │    --submit-workers                      <int range> [x>=1]      Sites submitted to in parallel  │
 │                                                                  (one worker per site; 1 = one   │
 │                                                                  job after another). See         │
 │                                                                  ADR-0020.                       │
-│                                                                  [default: 1]                    │
+│                                                                  [default: (dynamic)]            │
 │    --policy-check                        <per-job|per-batch>     usagepolicycheck cadence:       │
 │                                                                  per-job (before and after every │
 │                                                                  submission) or per-batch (once  │
 │                                                                  per site before its first       │
 │                                                                  submission of a cycle and once  │
 │                                                                  after its last; see ADR-0019).  │
-│                                                                  [default: per-job]              │
+│                                                                  [default: (dynamic)]            │
 │    --night-walltime-minutes              <int>                   Preferred (long) walltime for   │
 │                                                                  night/weekend jobs.             │
-│                                                                  [default: 120]                  │
+│                                                                  [default: (dynamic)]            │
 │    --night-fallback-walltime-min…        <int>                   Shorter night walltime retried  │
 │                                                                  in the same slot if the long    │
 │                                                                  job cannot start.               │
-│                                                                  [default: 30]                   │
+│                                                                  [default: (dynamic)]            │
 │    --stale-besteffort-minutes            <int range> [x>=1]      Cancel besteffort jobs still    │
 │                                                                  waiting this long (ADR-0025).   │
 │                                                                  [default: 20]                   │
@@ -474,7 +487,7 @@ Usage: root g5k run-admission [OPTIONS]
 │    --night-max-queued-per-site           <int>                   Waiting jobs per site at        │
 │                                                                  night/weekend (default:         │
 │                                                                  --max-queued-per-site).         │
-│    --interval                            <int>                   [default: 300]                  │
+│    --interval                            <int>                   [default: (dynamic)]            │
 │    --help                                                        Show this message and exit.     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
@@ -487,7 +500,7 @@ Usage: root g5k storage [OPTIONS]
  Home quota usage per site and size of the project's ~/luf tree.                                    
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ --sites        <str>  [default: grenoble,lille,lyon,nancy,rennes,sophia,toulouse,luxembourg]     │
+│ --sites        <str>  [default: (dynamic)]                                                       │
 │ --help                Show this message and exit.                                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
@@ -524,7 +537,7 @@ Usage: root node calibrate [OPTIONS]
 │ *  --chunk              <str>  Chunk id whose prompts drive the sweep. [required]                │
 │    --windows            <str>  [default: 16,32,64,128]                                           │
 │    --max-prompts        <int>  Prompts per level (keeps a sweep well inside 1 h). [default: 300] │
-│    --bucket             <str>  [default: NoeFlandre/landuse-filter-work]                         │
+│    --bucket             <str>  [default: (dynamic)]                                              │
 │    --help                      Show this message and exit.                                       │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
@@ -537,11 +550,13 @@ Usage: root node plan [OPTIONS]
  Scan a dataset on this node's scratch and publish chunks to the bucket.                            
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --dataset           <str>               [required]                                            │
-│ *  --revision          <str>               [required]                                            │
-│    --bucket            <str>               [default: NoeFlandre/landuse-filter-work]             │
-│    --chunk-size        <int range> [x>=1]  [default: 2000]                                       │
-│    --help                                  Show this message and exit.                           │
+│ *  --dataset           <osm-polygon-description-tag|osm-po  [required]                           │
+│                        lygon-wikidata-and-wikipedia|osm-po                                       │
+│                        lygon-website-tag>                                                        │
+│ *  --revision          <str>                                [required]                           │
+│    --bucket            <str>                                [default: (dynamic)]                 │
+│    --chunk-size        <int range> [x>=1]                   [default: 2000]                      │
+│    --help                                                   Show this message and exit.          │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -553,11 +568,14 @@ Usage: root node publish [OPTIONS]
  Build and upload the -landuse dataset on this node's scratch.                                      
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --dataset          <str>  [required]                                                          │
-│ *  --revision         <str>  [required]                                                          │
-│    --bucket           <str>  [default: NoeFlandre/landuse-filter-work]                           │
-│    --card-only               Only refresh the dataset card from the bucket's ledgers.            │
-│    --help                    Show this message and exit.                                         │
+│ *  --dataset          <osm-polygon-description-tag|osm-pol  [required]                           │
+│                       ygon-wikidata-and-wikipedia|osm-poly                                       │
+│                       gon-website-tag>                                                           │
+│ *  --revision         <str>                                 [required]                           │
+│    --bucket           <str>                                 [default: (dynamic)]                 │
+│    --card-only                                              Only refresh the dataset card from   │
+│                                                             the bucket's ledgers.                │
+│    --help                                                   Show this message and exit.          │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -569,9 +587,11 @@ Usage: root node repair [OPTIONS]
  Remove duplicate rows from the published generations/ tables, then reset the card cache.           
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --dataset        <str>  [required]                                                            │
-│    --bucket         <str>  [default: NoeFlandre/landuse-filter-work]                             │
-│    --help                  Show this message and exit.                                           │
+│ *  --dataset        <osm-polygon-description-tag|osm-pol  [required]                             │
+│                     ygon-wikidata-and-wikipedia|osm-poly                                         │
+│                     gon-website-tag>                                                             │
+│    --bucket         <str>                                 [default: (dynamic)]                   │
+│    --help                                                 Show this message and exit.            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -583,11 +603,13 @@ Usage: root node replan [OPTIONS]
  Plan every not-yet-generated text again, round-robin over H3 cells (ADR-0014).                     
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --dataset           <str>               [required]                                            │
-│ *  --revision          <str>               [required]                                            │
-│    --bucket            <str>               [default: NoeFlandre/landuse-filter-work]             │
-│    --chunk-size        <int range> [x>=1]  [default: 2000]                                       │
-│    --help                                  Show this message and exit.                           │
+│ *  --dataset           <osm-polygon-description-tag|osm-po  [required]                           │
+│                        lygon-wikidata-and-wikipedia|osm-po                                       │
+│                        lygon-website-tag>                                                        │
+│ *  --revision          <str>                                [required]                           │
+│    --bucket            <str>                                [default: (dynamic)]                 │
+│    --chunk-size        <int range> [x>=1]                   [default: 2000]                      │
+│    --help                                                   Show this message and exit.          │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -612,20 +634,26 @@ Usage: root plan [OPTIONS]
  Scan input files (resumable) and emit work chunks.                                                 
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --dataset                          <str>               Input dataset name, e.g.               │
-│                                                           osm-polygon-description-tag.           │
-│                                                           [required]                             │
-│ *  --revision                         <str>               Pinned input dataset commit sha.       │
-│                                                           [required]                             │
-│    --work                             <path>              Local work tree. [default: work]       │
-│    --chunk-size                       <int range> [x>=1]  [default: 2000]                        │
-│    --limit-files                      <int>               Scan at most N more files this run.    │
-│    --final          --no-final                            Also emit the last partial chunk.      │
-│                                                           [default: no-final]                    │
-│    --scan-only      --no-scan-only                        Only scan (sizing); emit no chunks.    │
-│                                                           [default: no-scan-only]                │
-│    --json                                                 Machine-readable output.               │
-│    --help                                                 Show this message and exit.            │
+│ *  --dataset                          <osm-polygon-description-tag  Input dataset to plan.       │
+│                                       |osm-polygon-wikidata-and-wi  [required]                   │
+│                                       kipedia|osm-polygon-website-                               │
+│                                       tag>                                                       │
+│ *  --revision                         <str>                         Pinned input dataset commit  │
+│                                                                     sha.                         │
+│                                                                     [required]                   │
+│    --work                             <path>                        Local work tree.             │
+│                                                                     [default: (dynamic)]         │
+│    --chunk-size                       <int range> [x>=1]            [default: 2000]              │
+│    --limit-files                      <int>                         Scan at most N more files    │
+│                                                                     this run.                    │
+│    --final          --no-final                                      Also emit the last partial   │
+│                                                                     chunk.                       │
+│                                                                     [default: no-final]          │
+│    --scan-only      --no-scan-only                                  Only scan (sizing); emit no  │
+│                                                                     chunks.                      │
+│                                                                     [default: no-scan-only]      │
+│    --json                                                           Machine-readable output.     │
+│    --help                                                           Show this message and exit.  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -637,13 +665,19 @@ Usage: root publish [OPTIONS]
  Mirror the input and upload labels/generations for every fully generated file.                     
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ *  --dataset                     <str>   Input dataset name. [required]                          │
-│ *  --revision                    <str>   Pinned input revision (same as planning). [required]    │
-│    --work                        <path>  Local work tree. [default: work]                        │
-│    --dry-run     --no-dry-run            Build labels locally; upload nothing.                   │
-│                                          [default: no-dry-run]                                   │
-│    --json                                Machine-readable output.                                │
-│    --help                                Show this message and exit.                             │
+│ *  --dataset                     <osm-polygon-description-tag|o  Input dataset to publish.       │
+│                                  sm-polygon-wikidata-and-wikipe  [required]                      │
+│                                  dia|osm-polygon-website-tag>                                    │
+│ *  --revision                    <str>                           Pinned input revision (same as  │
+│                                                                  planning).                      │
+│                                                                  [required]                      │
+│    --work                        <path>                          Local work tree.                │
+│                                                                  [default: (dynamic)]            │
+│    --dry-run     --no-dry-run                                    Build labels locally; upload    │
+│                                                                  nothing.                        │
+│                                                                  [default: no-dry-run]           │
+│    --json                                                        Machine-readable output.        │
+│    --help                                                        Show this message and exit.     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -655,7 +689,7 @@ Usage: root status [OPTIONS]
  Progress per dataset: chunks complete / pending, live assignments, throughput.                     
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
-│ --work            <path>  Local work tree. [default: work]                                       │
+│ --work            <path>  Local work tree. [default: (dynamic)]                                  │
 │ --datasets        <str>   [default: benchmark]                                                   │
 │ --json                    Machine-readable output.                                               │
 │ --help                    Show this message and exit.                                            │
