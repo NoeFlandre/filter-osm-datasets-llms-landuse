@@ -539,7 +539,16 @@ def test_cpu_jobs_avoid_the_sagittaire_cluster(monkeypatch, tmp_path):
     monkeypatch.setattr(ctl_mod, "git_archive", lambda ref: b"")
     result = CliRunner().invoke(
         cli.g5k_app,
-        ["cpu-job", "plan", "--site", "lyon", "--dataset", "d", "--revision", "r"],
+        [
+            "cpu-job",
+            "plan",
+            "--site",
+            "lyon",
+            "--dataset",
+            "osm-polygon-description-tag",
+            "--revision",
+            "r",
+        ],
     )
     assert result.exit_code == 0, result.output
     prop = submitted[0][submitted[0].index("-p") + 1]
@@ -685,12 +694,42 @@ def test_commit_gives_up_when_the_ref_stays_unreadable(monkeypatch):
 
     def broken(cmd, **kwargs):
         if cmd[3] == "fetch":
-            return subprocess.CompletedProcess(cmd, 1)
+            return subprocess.CompletedProcess(cmd, 0)
         raise subprocess.CalledProcessError(128, cmd)
 
     monkeypatch.setattr(ctl_mod.subprocess, "run", broken)
     monkeypatch.setattr(ctl_mod.time, "sleep", lambda s: None)
     with pytest.raises(subprocess.CalledProcessError):
+        ctl_mod.commit("origin/main")
+
+
+def test_commit_refuses_to_deploy_when_the_fetch_fails(monkeypatch):
+    """Regression (#234): a failed `git fetch` was ignored and the stale origin/main deployed."""
+    import subprocess
+
+    calls = []
+
+    def failing_fetch(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[3] == "fetch":
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="fatal: unable to access")
+        return subprocess.CompletedProcess(cmd, 0, stdout="stale000\n")
+
+    monkeypatch.setattr(ctl_mod.subprocess, "run", failing_fetch)
+    with pytest.raises(RuntimeError, match=r"git fetch origin main failed.*unable to access"):
+        ctl_mod.commit("origin/main")
+    assert [c[3] for c in calls] == ["fetch"]  # the stale ref is never resolved
+
+
+def test_commit_refuses_to_deploy_when_the_fetch_times_out(monkeypatch):
+    import subprocess
+
+    def hanging_fetch(cmd, **kwargs):
+        assert kwargs["timeout"] == ctl_mod.FETCH_TIMEOUT_SECONDS
+        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+    monkeypatch.setattr(ctl_mod.subprocess, "run", hanging_fetch)
+    with pytest.raises(RuntimeError, match="timed out"):
         ctl_mod.commit("origin/main")
 
 
