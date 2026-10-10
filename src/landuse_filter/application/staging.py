@@ -21,7 +21,7 @@ from landuse_filter.application.work_progress import WorkProgress
 
 RECONCILE_INTERVAL = 3600.0  # seconds between full ``parts/<fp>/`` listings (the safety net)
 LIVE_INTERVAL = 900.0  # seconds between listings of the chunks of live assignments
-PULL_BUDGET = 240.0  # seconds after which a pull starts no new listing (ADR-0031)
+PULL_BUDGET = 900.0  # seconds after which a pull starts no new listing (ADR-0031, amended)
 
 
 @dataclass

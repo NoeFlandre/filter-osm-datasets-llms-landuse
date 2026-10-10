@@ -126,6 +126,29 @@ def test_a_pull_starts_no_listing_after_its_time_budget(tmp_path):
     assert transport.pull(progress, set()).manifests == 1  # the deferred chunk was still owed
 
 
+def test_a_default_pull_lists_all_chunks_when_each_listing_is_slow(tmp_path):
+    # Regression: a 240 s PULL_BUDGET deferred most per-chunk listings on a slow link (ADR-0031).
+    from landuse_filter.application.staging import PULL_BUDGET
+
+    transport, progress, remote, clock = setup(tmp_path)
+    chunks = {f"c{i}" for i in range(5)}
+    transport.pull(progress, set())
+    for c in sorted(chunks):
+        upload(remote, c, "p1", [c])
+    real = remote.ls
+
+    def slow(prefix):
+        clock.now += 100  # each listing takes 100 s
+        return real(prefix)
+
+    remote.ls = slow
+    clock.now += 4000  # past the live interval, so the live chunks are due
+    report = transport.pull(progress, chunks)
+    assert PULL_BUDGET >= 900
+    assert report.deferred == 0
+    assert report.manifests == 5
+
+
 def test_the_pull_line_reports_counts_and_seconds():
     line = PullReport(listings=4, manifests=7, failed=1, deferred=2, seconds=12.4).line()
     assert line == (
