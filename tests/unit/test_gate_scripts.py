@@ -92,3 +92,43 @@ def test_an_empty_or_missing_scope_fails_the_helper_and_so_the_crap_gate(tmp_pat
     )
     assert failing.returncode != 0
     assert "ran" not in failing.stdout
+
+
+@pytest.fixture
+def crap(monkeypatch):
+    """scripts/crap.py as ``python scripts/crap.py`` loads it: its directory is on sys.path."""
+    import importlib.util
+
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    spec = importlib.util.spec_from_file_location("crap", SCRIPTS / "crap.py")
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _limits_for(crap, *argv):
+    parser = crap._argument_parser()
+    return crap._limits(parser.parse_args(list(argv)), parser)
+
+
+def test_crap_explicit_limits_are_used_as_given(crap):
+    assert _limits_for(crap, "--limit", "src/a=3", "--limit", "src/b=4.5") == [
+        ("src/a", 3.0),
+        ("src/b", 4.5),
+    ]
+
+
+def test_crap_legacy_target_is_gated_alone_at_its_max(crap):
+    assert _limits_for(crap, "--target", "src/landuse_filter/domain", "--max", "5") == [
+        ("src/landuse_filter/domain", 5.0)
+    ]
+
+
+def test_crap_without_arguments_gates_every_mutation_scope_path(crap):
+    assert _limits_for(crap) == [(path, 6.0) for path in GATED]
+
+
+def test_crap_script_names_no_scope_of_its_own():
+    assert "src/landuse_filter" not in (SCRIPTS / "crap.py").read_text()

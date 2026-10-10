@@ -1,4 +1,4 @@
-"""Report the CRAP score of every domain function and fail if any exceeds a limit.
+"""Report the CRAP score of every gated function and fail if any exceeds a limit.
 
 CRAP(m) = complexity(m)^2 * (1 - coverage(m))^3 + complexity(m)
 
@@ -14,8 +14,9 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from quality_scope import gated_paths
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_TARGET = "src/landuse_filter/domain"
 FULL_COVERAGE_PERCENT = 100.0
 
 
@@ -174,7 +175,11 @@ def _argument_parser() -> argparse.ArgumentParser:
         help="Gate a target at a maximum CRAP score; repeat for multiple layers.",
     )
     parser.add_argument("--max", type=float, default=6.0, help="Legacy single-target CRAP limit.")
-    parser.add_argument("--target", help="Legacy single target [default: domain].")
+    parser.add_argument(
+        "--target",
+        help="Legacy single target. Without --limit or --target, every [tool.mutmut] "
+        "source_paths entry is gated.",
+    )
     parser.add_argument(
         "--full-coverage",
         action="append",
@@ -196,7 +201,11 @@ def _limits(args: argparse.Namespace, parser: argparse.ArgumentParser) -> list[t
         parser.error(str(exc))
     if args.limit and args.target:
         parser.error("use either --limit or --target, not both")
-    return limits or [(args.target or DEFAULT_TARGET, args.max)]
+    if limits:
+        return limits
+    if args.target:
+        return [(args.target, args.max)]
+    return [(path, args.max) for path in gated_paths()]
 
 
 def _print_scores(
