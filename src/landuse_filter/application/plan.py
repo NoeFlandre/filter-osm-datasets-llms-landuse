@@ -1,7 +1,7 @@
 """Incremental, resumable planning of one input dataset into work chunks.
 
 A crash between writing a chunk and recording it re-emits the *same* chunk id on the
-next run (grouping is deterministic), so ``chunks.jsonl`` readers dedupe by id.
+next run (grouping is deterministic), and the plan line of a chunk is appended only once.
 
 State lives in ``index/<dataset>.sqlite``: which input files were scanned, every
 unique sentence text seen (first file index, chunk id once emitted) and per-file
@@ -10,6 +10,7 @@ counts. Re-running continues where it stopped; emitted chunks never change.
 
 import fnmatch
 import hashlib
+import math
 import sqlite3
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -26,6 +27,9 @@ from landuse_filter.domain.prompting import render_prompt
 
 # Batch tokeniser: prompts -> token ids, same order (fast path, see adapters.tokenizer).
 Encode = Callable[[list[str]], list[list[int]]]
+
+EMIT_BATCH = 5  # chunks a geographic replan emits between two publishes
+REPLAN_MARKER = "replan_released"  # planner_meta: chunks released by a replan not yet finished
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (idx INTEGER PRIMARY KEY, path TEXT UNIQUE, done INTEGER DEFAULT 0,
@@ -127,6 +131,8 @@ def _plan_line(chunk: Chunk, texts: list[UniqueText]) -> dict:
 
 
 class Planner:
+    _plan_ids: set[str] | None = None  # chunk ids of the plan file, read on first use
+
     def __init__(self, store: WorkStore, dataset: str, config_fp: str) -> None:
         self.store = store
         self.source = SOURCES[dataset]
@@ -204,34 +210,95 @@ class Planner:
     def plan_path(self) -> str:
         return f"plans/{self.source.dataset}/{self.fp}/chunks.jsonl"
 
+    def _plan_chunk_ids(self) -> set[str]:
+        if self._plan_ids is None:
+            self._plan_ids = {row["chunk_id"] for row in self.store.read_jsonl(self.plan_path)}
+        return self._plan_ids
+
+    def _append_plan(self, lines: list[dict]) -> None:
+        """Append the plan lines of chunks the plan does not have yet: a chunk emitted again
+        (after a crash between its upload and the index checkpoint) is planned once."""
+        known = self._plan_chunk_ids()
+        fresh = [line for line in lines if line["chunk_id"] not in known]
+        if fresh:
+            self.store.append_jsonl(self.plan_path, fresh)
+            known.update(line["chunk_id"] for line in fresh)
+
     def mark_done(self, shas: Iterable[str]) -> None:
         """Record texts that already have a generation (they are never planned again)."""
         with self.db:
             self.db.executemany("UPDATE texts SET done = 1 WHERE sha = ?", ((s,) for s in shas))
 
+    def mark_located(self, path: str) -> None:
+        """Record that the cells of one input file are in the index (a resumed replan skips it)."""
+        with self.db:
+            self.db.execute(
+                "INSERT OR REPLACE INTO planner_meta (name, value) VALUES (?, '1')",
+                (f"located:{path}",),
+            )
+
+    def located_paths(self) -> set[str]:
+        rows = self.db.execute("SELECT name FROM planner_meta WHERE name LIKE 'located:%'")
+        return {name.removeprefix("located:") for (name,) in rows}
+
     def release_unfinished(self) -> set[str]:
         """Take every chunk with an ungenerated text out of the plan and free its texts.
 
         Finished chunks keep their plan line; the others are returned (their chunk files
-        stay in the bucket, unused) so the texts can be planned again in a new order.
+        stay in the bucket, unused) so the texts can be planned again in a new order. The
+        release is recorded with ``REPLAN_MARKER`` in the same transaction: a resumed replan
+        does not release again, so it keeps the chunks an interrupted run emitted since.
         """
-        released = {
+        if self._meta(REPLAN_MARKER) is not None:
+            return set()
+        released = self._open_chunks()
+        if released:
+            self._drop_from_plan(released)
+        with self.db:
+            self.db.executemany(
+                "UPDATE texts SET chunk_id = NULL WHERE chunk_id = ?", ((c,) for c in released)
+            )
+            self.db.execute(
+                "INSERT OR REPLACE INTO planner_meta (name, value) VALUES (?, ?)",
+                (REPLAN_MARKER, str(len(released))),
+            )
+        return released
+
+    def _open_chunks(self) -> set[str]:
+        """Chunks with at least one text not yet generated."""
+        return {
             cid
             for (cid,) in self.db.execute(
                 "SELECT chunk_id FROM texts WHERE chunk_id IS NOT NULL "
                 "GROUP BY chunk_id HAVING MIN(done) = 0"
             )
         }
-        if not released:
-            return released
+
+    def _drop_from_plan(self, released: set[str]) -> None:
         kept = [r for r in self.store.read_jsonl(self.plan_path) if r["chunk_id"] not in released]
         self.store.path(self.plan_path).unlink(missing_ok=True)
         self.store.append_jsonl(self.plan_path, kept)
+        self._plan_ids = None
+
+    def replan_released(self) -> int:
+        """Chunks the geographic replan released, while it runs or after it was interrupted."""
+        value = self._meta(REPLAN_MARKER)
+        return int(value) if value is not None else 0
+
+    def finish_replan(self) -> None:
+        """Forget the release once every text is planned again (a later replan releases anew)."""
         with self.db:
-            self.db.executemany(
-                "UPDATE texts SET chunk_id = NULL WHERE chunk_id = ?", ((c,) for c in released)
-            )
-        return released
+            self.db.execute("DELETE FROM planner_meta WHERE name = ?", (REPLAN_MARKER,))
+
+    def pending(self) -> tuple[int, int]:
+        """Texts still waiting for a chunk, and how many of them have a map cell."""
+        return self.db.execute(
+            "SELECT COUNT(*), COUNT(cell) FROM texts WHERE chunk_id IS NULL AND done = 0"
+        ).fetchone()
+
+    def _meta(self, name: str) -> str | None:
+        row = self.db.execute("SELECT value FROM planner_meta WHERE name = ?", (name,)).fetchone()
+        return row[0] if row else None
 
     def set_cells(self, cells: Iterable[tuple[str, str]]) -> None:
         """Give texts their map cell (first location wins; texts may repeat across places)."""
@@ -241,16 +308,40 @@ class Planner:
                 ((cell, sha) for sha, cell in cells),
             )
 
-    def emit_uniform(self, encode: Encode, template: str, chunk_size: int) -> int:
+    def emit_uniform(
+        self,
+        encode: Encode,
+        template: str,
+        chunk_size: int,
+        *,
+        on_batch: Callable[[int], None] = lambda _emitted: None,
+        should_stop: Callable[[], bool] = lambda: False,
+    ) -> int:
         """Plan every pending text in a geographically uniform order.
 
         Round ``j`` holds the ``j``-th text (by hash) of every cell, so any prefix of the plan
         takes an equal share from each cell still holding texts. Texts without a location get
         a hash-derived round, which spreads them evenly through the whole order.
+
+        Chunks are emitted in batches of ``EMIT_BATCH``; after each one ``on_batch`` receives
+        the number emitted so far (the caller publishes them). No batch starts once
+        ``should_stop`` is true, so a stopped run leaves the rest of the order pending. The
+        loop has one turn per batch of the pending texts, so it always ends.
         """
         order = self._uniform_order()
         emitted = 0
-        while rows := order.fetchmany(chunk_size):
+        for _ in range(math.ceil(self.pending()[0] / (chunk_size * EMIT_BATCH))):
+            if should_stop():
+                break
+            emitted += self._emit_batch(order, encode, template, chunk_size)
+            on_batch(emitted)
+        return emitted
+
+    def _emit_batch(
+        self, order: sqlite3.Cursor, encode: Encode, template: str, chunk_size: int
+    ) -> int:
+        emitted = 0
+        while emitted < EMIT_BATCH and (rows := order.fetchmany(chunk_size)):
             emitted += self._emit_group(rows, encode, template, chunk_size)
         return emitted
 
@@ -286,10 +377,7 @@ class Planner:
         (chunk,) = plan_chunks(texts, self.fp, chunk_size)
         table = _chunk_table(chunk, ids, {sha: text for sha, text, _ in rows})
         self.store.write_chunk(chunk.chunk_id, table)
-        self.store.append_jsonl(
-            f"plans/{self.source.dataset}/{self.fp}/chunks.jsonl",
-            [_plan_line(chunk, texts)],
-        )
+        self._append_plan([_plan_line(chunk, texts)])
         with self.db:
             self.db.executemany(
                 "UPDATE texts SET chunk_id = ? WHERE sha = ?",
@@ -303,8 +391,8 @@ class Planner:
         The order key is the chunk's earliest input file (priority only); prompt_tokens is
         not recoverable from the index and nothing downstream reads it.
         """
-        path = f"plans/{self.source.dataset}/{self.fp}/chunks.jsonl"
-        known = {row["chunk_id"] for row in self.store.read_jsonl(path)}
+        self._plan_ids = {row["chunk_id"] for row in self.store.read_jsonl(self.plan_path)}
+        known = self._plan_ids
         rank = DATASET_RANK[self.source.dataset]
         rows = self.db.execute(
             "SELECT chunk_id, COUNT(*), MIN(file_idx) FROM texts "
@@ -315,7 +403,7 @@ class Planner:
             for cid, n, first in rows
             if cid not in known
         ]
-        self.store.append_jsonl(path, lost)
+        self._append_plan(lost)
         return len(lost)
 
     def report(self) -> PlanReport:

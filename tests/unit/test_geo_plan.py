@@ -186,3 +186,75 @@ def test_locator_refuses_a_dataset_without_coordinates():
 
     with pytest.raises(ValueError, match="no coordinates"):
         locator("osm-polygon-description-tag", fetch=lambda _p: Path(), cell_of=lambda *_: "x")
+
+
+def test_uniform_emission_publishes_in_batches_and_stops_between_them(tmp_path):
+    p, _ = seeded(tmp_path, {"A": 60})
+    batches: list[int] = []
+    assert p.emit_uniform(encode, "S: {}", chunk_size=10, on_batch=batches.append) == 6
+    assert batches == [5, 6]  # EMIT_BATCH (5) chunks, then the rest
+
+    stopping, _ = seeded(tmp_path / "stopping", {"A": 60})
+    done: list[int] = []
+    emitted = stopping.emit_uniform(
+        encode, "S: {}", chunk_size=10, on_batch=done.append, should_stop=lambda: bool(done)
+    )
+    assert emitted == 5
+    assert done == [5]
+    assert stopping.pending() == (10, 10)  # the rest of the order waits for the next run
+
+    idle, _ = seeded(tmp_path / "idle", {"A": 10})
+    assert idle.emit_uniform(encode, "S: {}", chunk_size=10, should_stop=lambda: True) == 0
+    assert idle.pending() == (10, 10)
+
+
+def test_unlocated_texts_are_batched_like_the_rest(tmp_path):
+    p, where = seeded(tmp_path, {"A": 10}, unlocated=60)
+    batches: list[int] = []
+    p.emit_uniform(encode, "S: {}", chunk_size=10, on_batch=batches.append)
+    assert batches == [5, 7]  # 70 texts in chunks of 10: a batch of 5 chunks, then the rest
+    assert sorted(s for c in chunks_in_plan_order(tmp_path) for s in c) == sorted(where)
+
+
+def test_a_replan_releases_once_until_it_finishes(tmp_path):
+    p, _ = seeded(tmp_path, {"A": 4, "B": 4})
+    p.emit_uniform(encode, "S: {}", chunk_size=4)
+    assert p.replan_released() == 0
+    assert len(p.release_unfinished()) == 2  # nothing generated: both chunks are open
+    assert p.replan_released() == 2
+    p.emit_uniform(encode, "S: {}", chunk_size=4)
+    assert p.release_unfinished() == set()  # an interrupted replan resumed: nothing again
+    p.finish_replan()
+    assert p.replan_released() == 0
+    assert len(p.release_unfinished()) == 2  # a finished replan may release anew
+
+
+def test_an_empty_release_still_marks_the_replan(tmp_path):
+    p, _ = seeded(tmp_path, {"A": 2})
+    assert p.release_unfinished() == set()
+    p.emit_uniform(encode, "S: {}", chunk_size=2)
+    assert p.release_unfinished() == set()  # the marker holds even though nothing was released
+    assert len(chunks_in_plan_order(tmp_path)) == 1  # the chunk emitted since survives
+
+
+def test_a_chunk_emitted_again_is_planned_once(tmp_path):
+    p, _ = seeded(tmp_path, {"A": 4})
+    p.emit_uniform(encode, "S: {}", chunk_size=4)
+    # a crash after the upload but before the index checkpoint: the next run emits it again
+    with p.db:
+        p.db.execute("UPDATE texts SET chunk_id = NULL")
+    p.emit_uniform(encode, "S: {}", chunk_size=4)
+    assert len(chunks_in_plan_order(tmp_path)) == 1
+    fresh = Planner(WorkStore(tmp_path), WEBSITE, "fp")  # a new process reads the plan itself
+    with fresh.db:
+        fresh.db.execute("UPDATE texts SET chunk_id = NULL")
+    fresh.emit_uniform(encode, "S: {}", chunk_size=4)
+    assert len(chunks_in_plan_order(tmp_path)) == 1
+
+
+def test_located_files_are_remembered_by_the_index(tmp_path):
+    p, _ = seeded(tmp_path, {"A": 2})
+    assert p.located_paths() == set()
+    p.mark_located("polygons/a.parquet")
+    assert p.located_paths() == {"polygons/a.parquet"}
+    assert Planner(WorkStore(tmp_path), WEBSITE, "fp").located_paths() == {"polygons/a.parquet"}
