@@ -60,14 +60,34 @@ def rule_decided_no(text_sha256: str, prompt_tokens: int) -> Generation:
     )
 
 
-def input_too_long_failure(text_sha256: str, input_tokens: int, context_limit: int) -> Generation:
-    """A terminal failed result for one request rejected by the configured model context."""
-    if not 0 < context_limit <= input_tokens <= MAX_RECORDED_TOKEN_COUNT:
-        raise ValueError("input token count must meet or exceed a positive context limit")
-    operator = ">=" if input_tokens == context_limit else ">"
+def input_too_long_failure(
+    text_sha256: str,
+    input_tokens: int,
+    context_limit: int,
+    max_new_tokens: int | None = None,
+) -> Generation:
+    """Record a terminal failure when the prompt or requested completion will not fit."""
+    if not 0 < context_limit <= MAX_RECORDED_TOKEN_COUNT:
+        raise ValueError("context limit must be positive")
+    if not 0 < input_tokens <= MAX_RECORDED_TOKEN_COUNT:
+        raise ValueError("input token count must be positive and recordable")
+    if max_new_tokens is None:
+        if input_tokens < context_limit:
+            raise ValueError("input token count must meet or exceed the context limit")
+        operator = ">=" if input_tokens == context_limit else ">"
+        failure = f"{input_tokens}{operator}{context_limit}"
+    else:
+        requested_tokens = input_tokens + max_new_tokens
+        if (
+            input_tokens >= context_limit
+            or not 0 < max_new_tokens <= MAX_RECORDED_TOKEN_COUNT
+            or not context_limit < requested_tokens <= MAX_RECORDED_TOKEN_COUNT
+        ):
+            raise ValueError("requested token count must exceed a positive context limit")
+        failure = f"{input_tokens}+{max_new_tokens}>{context_limit}"
     return Generation(
         text_sha256=text_sha256,
-        raw_output=f"luf_failure:input_too_long:{input_tokens}{operator}{context_limit}",
+        raw_output=f"luf_failure:input_too_long:{failure}",
         prompt_tokens=input_tokens,
         generated_tokens=0,
         finish_reason="input_too_long",

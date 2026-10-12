@@ -92,6 +92,7 @@ def test_v1_snapshot_is_rebuilt_for_input_too_long_verdict(tmp_path):
         "c1",
         [
             ("overflow", "luf_failure:input_too_long:330533>131072"),
+            ("budget-overflow", "luf_failure:input_too_long:127000+4096>131072"),
             ("historical-yes", "x</think>yes"),
             ("historical-failed", "x</think>maybe"),
         ],
@@ -110,6 +111,7 @@ def test_v1_snapshot_is_rebuilt_for_input_too_long_verdict(tmp_path):
     assert PARSER_VERSION == "2"
     assert index.meta("parser") == PARSER_VERSION
     assert index.get("overflow") == ("failed", None, "input_too_long")
+    assert index.get("budget-overflow") == ("failed", None, "input_too_long")
     assert index.get("historical-yes") == ("yes", "exact", None)
     assert index.get("historical-failed") == ("failed", None, "no_label")
     assert _parts_fetched(remote) == [f"parts/{FP}/{part}.parquet"]

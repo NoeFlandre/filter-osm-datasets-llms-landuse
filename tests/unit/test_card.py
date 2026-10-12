@@ -85,7 +85,7 @@ def test_card_explains_terminal_context_length_failures():
     from dataclasses import replace
 
     card = render_card(replace(facts(), failures={"input_too_long": 2}))
-    assert "exceeded the model context length before generating an answer" in card
+    assert "request did not fit the model context budget before generating an answer" in card
 
 
 def test_card_is_deterministic():

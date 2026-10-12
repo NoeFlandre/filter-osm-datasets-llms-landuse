@@ -153,7 +153,9 @@ class Runner:
         try:
             output = await self.engine.generate(ids)
         except ContextLengthExceededError as exc:
-            return input_too_long_failure(sha, exc.input_tokens, exc.context_limit)
+            return input_too_long_failure(
+                sha, exc.input_tokens, exc.context_limit, exc.max_new_tokens
+            )
         return from_sglang(sha, output, len(ids))
 
     def _flush(self, chunk_id: str, rows: list[Generation]) -> None:

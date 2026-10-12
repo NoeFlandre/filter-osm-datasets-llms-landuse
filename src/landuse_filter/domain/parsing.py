@@ -17,7 +17,7 @@ THINK_CLOSE = "</think>"
 _LABEL = re.compile(r"\b(yes|no)\b", re.IGNORECASE)
 _EXACT = re.compile(r"^\W*(yes|no)\W*$", re.IGNORECASE)
 _LEADING = re.compile(r"^\W*(yes|no)\b", re.IGNORECASE)
-_INPUT_TOO_LONG = re.compile(r"^luf_failure:input_too_long:(\d+)(>=|>)(\d+)$")
+_INPUT_TOO_LONG = re.compile(r"^luf_failure:input_too_long:(\d+)(?:\+(\d+))?(>=|>)(\d+)$")
 # Answers in the sentence's language instead of English; counted, never mapped.
 _FOREIGN = re.compile(
     r"^\W*(oui|non|ja|nein|nee|sí|si|não|nao|sim|да|нет|是|否|はい|いいえ|evet|hayır|tak|nie)\W*$",  # noqa: RUF001 - Turkish word
@@ -57,10 +57,12 @@ def parse_generation(raw: str, *, truncated: bool) -> Verdict:
     context_overflow = _INPUT_TOO_LONG.fullmatch(raw)
     if context_overflow:
         input_tokens = int(context_overflow.group(1))
-        operator = context_overflow.group(2)
-        context_limit = int(context_overflow.group(3))
-        if (operator == ">" and input_tokens > context_limit) or (
-            operator == ">=" and input_tokens >= context_limit
+        max_new_tokens = context_overflow.group(2)
+        requested_tokens = input_tokens + int(max_new_tokens or 0)
+        operator = context_overflow.group(3)
+        context_limit = int(context_overflow.group(4))
+        if (operator == ">" and requested_tokens > context_limit) or (
+            operator == ">=" and max_new_tokens is None and requested_tokens >= context_limit
         ):
             return _failed(Failure.INPUT_TOO_LONG)
     if truncated:
