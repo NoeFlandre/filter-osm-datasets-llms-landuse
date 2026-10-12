@@ -60,6 +60,35 @@ def rule_decided_no(text_sha256: str, prompt_tokens: int) -> Generation:
     )
 
 
+def _is_recordable_token_count(token_count: int) -> bool:
+    return 0 < token_count <= MAX_RECORDED_TOKEN_COUNT
+
+
+def _input_overflow_marker(input_tokens: int, context_limit: int) -> str:
+    if input_tokens < context_limit:
+        raise ValueError("input token count must meet or exceed the context limit")
+    operator = ">=" if input_tokens == context_limit else ">"
+    return f"{input_tokens}{operator}{context_limit}"
+
+
+def _budget_overflow_marker(input_tokens: int, context_limit: int, max_new_tokens: int) -> str:
+    requested_tokens = input_tokens + max_new_tokens
+    if (
+        input_tokens >= context_limit
+        or not context_limit < requested_tokens <= MAX_RECORDED_TOKEN_COUNT
+    ):
+        raise ValueError("requested token count must exceed a positive context limit")
+    return f"{input_tokens}+{max_new_tokens}>{context_limit}"
+
+
+def _context_overflow_marker(
+    input_tokens: int, context_limit: int, max_new_tokens: int | None
+) -> str:
+    if max_new_tokens is None:
+        return _input_overflow_marker(input_tokens, context_limit)
+    return _budget_overflow_marker(input_tokens, context_limit, max_new_tokens)
+
+
 def input_too_long_failure(
     text_sha256: str,
     input_tokens: int,
@@ -67,24 +96,11 @@ def input_too_long_failure(
     max_new_tokens: int | None = None,
 ) -> Generation:
     """Record a terminal failure when the prompt or requested completion will not fit."""
-    if not 0 < context_limit <= MAX_RECORDED_TOKEN_COUNT:
+    if not _is_recordable_token_count(context_limit):
         raise ValueError("context limit must be positive")
-    if not 0 < input_tokens <= MAX_RECORDED_TOKEN_COUNT:
+    if not _is_recordable_token_count(input_tokens):
         raise ValueError("input token count must be positive and recordable")
-    if max_new_tokens is None:
-        if input_tokens < context_limit:
-            raise ValueError("input token count must meet or exceed the context limit")
-        operator = ">=" if input_tokens == context_limit else ">"
-        failure = f"{input_tokens}{operator}{context_limit}"
-    else:
-        requested_tokens = input_tokens + max_new_tokens
-        if (
-            input_tokens >= context_limit
-            or not 0 < max_new_tokens <= MAX_RECORDED_TOKEN_COUNT
-            or not context_limit < requested_tokens <= MAX_RECORDED_TOKEN_COUNT
-        ):
-            raise ValueError("requested token count must exceed a positive context limit")
-        failure = f"{input_tokens}+{max_new_tokens}>{context_limit}"
+    failure = _context_overflow_marker(input_tokens, context_limit, max_new_tokens)
     return Generation(
         text_sha256=text_sha256,
         raw_output=f"luf_failure:input_too_long:{failure}",

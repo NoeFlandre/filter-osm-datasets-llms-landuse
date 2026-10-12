@@ -52,19 +52,24 @@ def _failed(reason: Failure) -> Verdict:
     return Verdict(Decision.FAILED, failure=reason)
 
 
+def _is_input_too_long(raw: str) -> bool:
+    match = _INPUT_TOO_LONG.fullmatch(raw)
+    if match is None:
+        return False
+    input_tokens = int(match.group(1))
+    max_new_tokens = match.group(2)
+    requested_tokens = input_tokens + int(max_new_tokens or 0)
+    operator = match.group(3)
+    context_limit = int(match.group(4))
+    if operator == ">":
+        return requested_tokens > context_limit
+    return max_new_tokens is None and requested_tokens >= context_limit
+
+
 def parse_generation(raw: str, *, truncated: bool) -> Verdict:
     """Recover ``yes``/``no`` from a thinking-mode generation, or say why not."""
-    context_overflow = _INPUT_TOO_LONG.fullmatch(raw)
-    if context_overflow:
-        input_tokens = int(context_overflow.group(1))
-        max_new_tokens = context_overflow.group(2)
-        requested_tokens = input_tokens + int(max_new_tokens or 0)
-        operator = context_overflow.group(3)
-        context_limit = int(context_overflow.group(4))
-        if (operator == ">" and requested_tokens > context_limit) or (
-            operator == ">=" and max_new_tokens is None and requested_tokens >= context_limit
-        ):
-            return _failed(Failure.INPUT_TOO_LONG)
+    if _is_input_too_long(raw):
+        return _failed(Failure.INPUT_TOO_LONG)
     if truncated:
         return _failed(Failure.TRUNCATED)
     if THINK_CLOSE not in raw:
