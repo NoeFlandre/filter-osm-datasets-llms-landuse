@@ -38,6 +38,18 @@ jobs:
       - run: make crap -o test
       - run: make smoke
 
+  # Required check. The matrix names its legs "Deterministic quality gates (3.11)" and
+  # "(3.12)", so this job keeps the exact name branch protection requires and fails unless
+  # every leg succeeded.
+  gate:
+    name: Deterministic quality gates
+    if: always()
+    needs: gauntlet
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: test "${{ needs.gauntlet.result }}" = "success"
+
   mutation:
     name: Mutation gate
     runs-on: ubuntu-latest
