@@ -2,10 +2,14 @@ import asyncio
 
 import pyarrow as pa
 
+from landuse_filter.adapters.engine import SGLangEngine
+from landuse_filter.adapters.remote import DirRemote
 from landuse_filter.adapters.schema import CHUNK, PROVENANCE
 from landuse_filter.adapters.store import WorkStore
 from landuse_filter.application.node import Runner
 from landuse_filter.application.results import decisions_by_sha
+from landuse_filter.application.sync import fetch, fetch_manifests, prune_local_part, upload_part
+from landuse_filter.domain.parsing import Failure, parse_generation
 
 PROV = {name: "x" for name, _ in PROVENANCE if name != "created_at"}
 
@@ -46,6 +50,37 @@ class MappedEngine:
         return {
             "text": raw_output,
             "meta_info": {"completion_tokens": token_count, "finish_reason": {"type": "stop"}},
+        }
+
+
+class ContextAwareEngine(SGLangEngine):
+    """Drive the real SGLangEngine error translation through the Runner."""
+
+    def __init__(self):
+        self._engine = self
+        self._sampling = {"max_new_tokens": 4_096}
+        self.received_lengths = []
+
+    async def async_generate(self, input_ids, sampling_params):
+        self.received_lengths.append(len(input_ids))
+        if len(input_ids) >= 131_072:
+            raise ValueError(
+                f"The input ({len(input_ids)} tokens) is longer than the model's "
+                "context length (131072 tokens)"
+            )
+        max_new_tokens = sampling_params["max_new_tokens"]
+        if len(input_ids) + max_new_tokens > 131_072:
+            total_tokens = len(input_ids) + max_new_tokens
+            raise ValueError(
+                "Requested token count exceeds the model's maximum context length "
+                f"of 131072 tokens. You requested a total of {total_tokens} tokens: "
+                f"{len(input_ids)} tokens from the input messages and "
+                f"{max_new_tokens} tokens for the completion. Please reduce the number "
+                "of tokens in the input messages or the completion to fit within the limit."
+            )
+        return {
+            "text": "think</think>yes",
+            "meta_info": {"completion_tokens": 5, "finish_reason": {"type": "stop"}},
         }
 
 
@@ -133,6 +168,104 @@ def test_decisions_from_parts(tmp_path):
     chunk(store, n=3)
     asyncio.run(runner(store, FakeEngine()).run(["c1"]))
     assert set(decisions_by_sha(store, "fp").values()) == {"yes"}
+
+
+def test_context_rejected_requests_are_manifested_while_other_rows_continue(tmp_path):
+    store = WorkStore(tmp_path / "first")
+    store.write_chunk(
+        "oversized",
+        pa.table(
+            {
+                "text_sha256": [
+                    "too-long",
+                    "at-limit",
+                    "budget-too-long",
+                    "ordinary-1",
+                    "ordinary-2",
+                ],
+                "text": [
+                    "long request",
+                    "limit request",
+                    "budget request",
+                    "ordinary one",
+                    "ordinary two",
+                ],
+                "input_ids": [
+                    [1] * 330_533,
+                    [5] * 131_072,
+                    [6] * 127_000,
+                    [2, 3],
+                    [4, 5],
+                ],
+            },
+            schema=CHUNK,
+        ),
+    )
+    remote = DirRemote(tmp_path / "bucket")
+    remote.put([(store.path("chunks/oversized.parquet"), "chunks/oversized.parquet")])
+    engine = ContextAwareEngine()
+
+    def persist_part(chunk_id, part_id, shas):
+        upload_part(remote, store, "fp", chunk_id, part_id=part_id, shas=shas)
+        prune_local_part(store, "fp", chunk_id, part_id)
+
+    stats = asyncio.run(
+        runner(store, engine, on_part=persist_part, flush_every=10).run(["oversized"])
+    )
+
+    assert sorted(engine.received_lengths) == [2, 2, 127_000, 131_072, 330_533]
+    assert stats.completed == 5
+    assert stats.failed == 3
+    assert stats.chunks_done == ["oversized"]
+
+    remote_parts = remote.ls("parts/fp/oversized/")
+    assert len([p for p in remote_parts if p.endswith(".parquet")]) == 1
+    assert len([p for p in remote_parts if p.endswith(".json")]) == 1
+    verification = WorkStore(tmp_path / "verification")
+    parquet_path = next(p for p in remote_parts if p.endswith(".parquet"))
+    remote.get([(parquet_path, verification.path(parquet_path))])
+    rows = {
+        row["text_sha256"]: row
+        for row in verification.read_part(verification.path(parquet_path)).to_pylist()
+    }
+    failure = rows["too-long"]
+    assert failure["prompt_tokens"] == 330_533
+    assert failure["generated_tokens"] == 0
+    assert failure["finish_reason"] == "input_too_long"
+    assert failure["truncated"] is False
+    assert (
+        parse_generation(failure["raw_output"], truncated=False).failure is Failure.INPUT_TOO_LONG
+    )
+    limit_failure = rows["at-limit"]
+    assert limit_failure["prompt_tokens"] == 131_072
+    assert limit_failure["raw_output"] == "luf_failure:input_too_long:131072>=131072"
+    assert (
+        parse_generation(limit_failure["raw_output"], truncated=False).failure
+        is Failure.INPUT_TOO_LONG
+    )
+    budget_failure = rows["budget-too-long"]
+    assert budget_failure["prompt_tokens"] == 127_000
+    assert budget_failure["raw_output"] == "luf_failure:input_too_long:127000+4096>131072"
+    assert (
+        parse_generation(budget_failure["raw_output"], truncated=False).failure
+        is Failure.INPUT_TOO_LONG
+    )
+    assert decisions_by_sha(verification, "fp") == {
+        "too-long": None,
+        "at-limit": None,
+        "budget-too-long": None,
+        "ordinary-1": "yes",
+        "ordinary-2": "yes",
+    }
+
+    restarted = WorkStore(tmp_path / "restart")
+    fetch(remote, restarted, ["chunks/oversized.parquet"])
+    manifests = fetch_manifests(remote, restarted, "parts/fp/oversized/")
+    assert len(manifests) == 1
+    retry_engine = FakeEngine()
+    resumed = asyncio.run(runner(restarted, retry_engine).run(["oversized"]))
+    assert retry_engine.calls == 0
+    assert resumed.chunks_done == ["oversized"]
 
 
 def test_prompt_results_match_literal_map_after_out_of_order_and_resume(tmp_path):

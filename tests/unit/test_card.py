@@ -81,6 +81,13 @@ def test_card_lists_only_gpu_types_that_generated_rows():
     assert "`a40`" not in card
 
 
+def test_card_explains_terminal_context_length_failures():
+    from dataclasses import replace
+
+    card = render_card(replace(facts(), failures={"input_too_long": 2}))
+    assert "request did not fit the model context budget before generating an answer" in card
+
+
 def test_card_is_deterministic():
     assert render_card(facts()) == render_card(facts())
 

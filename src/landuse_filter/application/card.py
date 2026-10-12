@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from landuse_filter.application.datasets import SPECS
 
 FAILURES = {
+    "input_too_long": "request did not fit the model context budget before generating an answer",
     "truncated": "hit the token limit before answering",
     "unclosed_think": "never closed its reasoning block",
     "empty": "nothing after the reasoning",

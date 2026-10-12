@@ -1,0 +1,118 @@
+import asyncio
+import re
+
+import pytest
+
+from landuse_filter.adapters.engine import (
+    ContextLengthExceededError,
+    SGLangEngine,
+    context_length_overflow,
+)
+
+
+def context_error(input_tokens, context_limit):
+    return (
+        f"The input ({input_tokens} tokens) is longer than the model's context length "
+        f"({context_limit} tokens)."
+    )
+
+
+def context_budget_error(input_tokens, max_new_tokens, context_limit, *, total_tokens=None):
+    total_tokens = input_tokens + max_new_tokens if total_tokens is None else total_tokens
+    return (
+        "Requested token count exceeds the model's maximum context length "
+        f"of {context_limit} tokens. You requested a total of {total_tokens} "
+        f"tokens: {input_tokens} tokens from the input messages and "
+        f"{max_new_tokens} tokens for the completion. Please reduce the number "
+        "of tokens in the input messages or the completion to fit within the limit."
+    )
+
+
+@pytest.mark.parametrize(
+    ("input_tokens", "context_limit", "expected"),
+    [
+        (330_533, 131_072, (330_533, 131_072, None)),
+        (131_073, 131_072, (131_073, 131_072, None)),
+        (131_072, 131_072, (131_072, 131_072, None)),
+        (131_071, 131_072, None),
+    ],
+)
+def test_context_error_classifier_matches_sglang_context_rejections(
+    input_tokens, context_limit, expected
+):
+    assert context_length_overflow(context_error(input_tokens, context_limit)) == expected
+
+
+def test_context_error_classifier_ignores_unrelated_or_unstorable_errors():
+    assert context_length_overflow("CUDA out of memory") is None
+    assert context_length_overflow(context_error(2_147_483_648, 131_072)) is None
+
+
+def test_context_error_classifier_handles_requested_completion_budget():
+    assert context_length_overflow(context_budget_error(127_000, 4_096, 131_072)) == (
+        127_000,
+        131_072,
+        4_096,
+    )
+    assert context_length_overflow(context_budget_error(126_976, 4_096, 131_072)) is None
+    assert (
+        context_length_overflow(context_budget_error(127_000, 4_096, 131_072, total_tokens=131_097))
+        is None
+    )
+
+
+class FailingBackend:
+    def __init__(self, message):
+        self.message = message
+
+    async def async_generate(self, **_kwargs):
+        raise ValueError(self.message)
+
+
+def engine_with_backend(backend):
+    engine = object.__new__(SGLangEngine)
+    engine._engine = backend
+    engine._sampling = {}
+    return engine
+
+
+def test_engine_translates_the_synthetic_330533_token_error():
+    engine = engine_with_backend(FailingBackend(context_error(330_533, 131_072)))
+
+    with pytest.raises(ContextLengthExceededError) as raised:
+        asyncio.run(engine.generate([1]))
+
+    assert (
+        raised.value.input_tokens,
+        raised.value.context_limit,
+        raised.value.max_new_tokens,
+    ) == (330_533, 131_072, None)
+
+
+def test_engine_translates_the_requested_completion_budget_error():
+    engine = engine_with_backend(FailingBackend(context_budget_error(127_000, 4_096, 131_072)))
+
+    with pytest.raises(ContextLengthExceededError) as raised:
+        asyncio.run(engine.generate([1]))
+
+    assert (
+        raised.value.input_tokens,
+        raised.value.context_limit,
+        raised.value.max_new_tokens,
+    ) == (127_000, 131_072, 4_096)
+
+
+def test_engine_preserves_other_value_errors_but_translates_the_exact_limit_boundary():
+    message = "CUDA out of memory"
+    engine = engine_with_backend(FailingBackend(message))
+    with pytest.raises(ValueError, match=re.escape(message)):
+        asyncio.run(engine.generate([1]))
+
+    engine = engine_with_backend(FailingBackend(context_error(131_072, 131_072)))
+    with pytest.raises(ContextLengthExceededError) as raised:
+        asyncio.run(engine.generate([1]))
+    assert (
+        raised.value.input_tokens,
+        raised.value.context_limit,
+        raised.value.max_new_tokens,
+    ) == (131_072, 131_072, None)
