@@ -61,6 +61,7 @@ def test_from_sglang_zero_latency_is_kept_and_zero_steps_dropped():
 @pytest.mark.parametrize(
     ("input_tokens", "context_limit", "expected"),
     [
+        (1, 1, "luf_failure:input_too_long:1>=1"),
         (330_533, 131_072, "luf_failure:input_too_long:330533>131072"),
         (131_072, 131_072, "luf_failure:input_too_long:131072>=131072"),
         (
@@ -80,18 +81,21 @@ def test_input_too_long_failure_records_prompt_overflow_without_truncating(
 
 @pytest.mark.parametrize("context_limit", [0, -1, MAX_RECORDED_TOKEN_COUNT + 1])
 def test_input_too_long_failure_rejects_unrecordable_context_limits(context_limit):
-    with pytest.raises(ValueError, match="context limit must be positive"):
+    with pytest.raises(ValueError, match=r"\Acontext limit must be positive\Z"):
         input_too_long_failure("sha", 1, context_limit)
 
 
 @pytest.mark.parametrize("input_tokens", [0, -1, MAX_RECORDED_TOKEN_COUNT + 1])
 def test_input_too_long_failure_rejects_unrecordable_prompt_counts(input_tokens):
-    with pytest.raises(ValueError, match="input token count must be positive and recordable"):
+    with pytest.raises(ValueError, match=r"\Ainput token count must be positive and recordable\Z"):
         input_too_long_failure("sha", input_tokens, 2)
 
 
 def test_input_too_long_failure_requires_prompt_overflow_without_completion_budget():
-    with pytest.raises(ValueError, match="input token count must meet or exceed the context limit"):
+    with pytest.raises(
+        ValueError,
+        match=r"\Ainput token count must meet or exceed the context limit\Z",
+    ):
         input_too_long_failure("sha", 4, 5)
 
 
@@ -107,7 +111,8 @@ def test_input_too_long_failure_rejects_invalid_completion_budget_overflow(
     input_tokens, context_limit, max_new_tokens
 ):
     with pytest.raises(
-        ValueError, match="requested token count must exceed a positive context limit"
+        ValueError,
+        match=r"\Arequested token count must exceed a positive context limit\Z",
     ):
         input_too_long_failure("sha", input_tokens, context_limit, max_new_tokens)
 
