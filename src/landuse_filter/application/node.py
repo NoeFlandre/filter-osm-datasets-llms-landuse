@@ -15,11 +15,18 @@ from typing import Protocol
 
 import pyarrow as pa
 
+from landuse_filter.adapters.engine import ContextLengthExceededError
 from landuse_filter.adapters.schema import generation_table
 from landuse_filter.adapters.store import CorruptPartError, WorkStore
 from landuse_filter.domain.completion import Part
 from landuse_filter.domain.parsing import parse_generation
-from landuse_filter.domain.records import RULE_NO_LETTERS, Generation, from_sglang, rule_decided_no
+from landuse_filter.domain.records import (
+    RULE_NO_LETTERS,
+    Generation,
+    from_sglang,
+    input_too_long_failure,
+    rule_decided_no,
+)
 from landuse_filter.domain.sentences import Decision, has_no_letters
 
 # One part upload costs ~2 Hub API requests (ADR-0030); big parts keep ~35 GPUs well under the
@@ -143,7 +150,10 @@ class Runner:
         sha = table.column("text_sha256")[i].as_py()
         if has_no_letters(table.column("text")[i].as_py()):
             return rule_decided_no(sha, len(ids))
-        output = await self.engine.generate(ids)
+        try:
+            output = await self.engine.generate(ids)
+        except ContextLengthExceededError as exc:
+            return input_too_long_failure(sha, exc.input_tokens, exc.context_limit)
         return from_sglang(sha, output, len(ids))
 
     def _flush(self, chunk_id: str, rows: list[Generation]) -> None:

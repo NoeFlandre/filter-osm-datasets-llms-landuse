@@ -5,11 +5,39 @@ applies: GPU memory is released only when the spawned scheduler exits.
 """
 
 import multiprocessing
+import re
 import time
 from collections.abc import Mapping
 from typing import Any
 
+from landuse_filter.domain.records import MAX_RECORDED_TOKEN_COUNT
+
 SHUTDOWN_TIMEOUT = 120.0
+_CONTEXT_LENGTH_OVERFLOW = re.compile(
+    r"The input \((?P<input_tokens>\d+) tokens\) is longer than the model's context length "
+    r"\((?P<context_limit>\d+) tokens\)",
+    re.IGNORECASE,
+)
+
+
+class ContextLengthExceededError(RuntimeError):
+    """One request exceeded SGLang's configured context limit."""
+
+    def __init__(self, input_tokens: int, context_limit: int) -> None:
+        self.input_tokens = input_tokens
+        self.context_limit = context_limit
+        super().__init__(f"input has {input_tokens} tokens; context limit is {context_limit}")
+
+
+def context_length_overflow(message: str) -> tuple[int, int] | None:
+    """Return SGLang's request and context token counts for a genuine overflow only."""
+    match = _CONTEXT_LENGTH_OVERFLOW.search(message)
+    if match is None:
+        return None
+    input_tokens, context_limit = (int(match[name]) for name in ("input_tokens", "context_limit"))
+    if not 0 < context_limit < input_tokens <= MAX_RECORDED_TOKEN_COUNT:
+        return None
+    return input_tokens, context_limit
 
 
 class SGLangEngine:
@@ -21,9 +49,15 @@ class SGLangEngine:
         self.version = str(getattr(sglang, "__version__", "unknown"))
 
     async def generate(self, input_ids: list[int]) -> dict:
-        return await self._engine.async_generate(
-            input_ids=input_ids, sampling_params=self._sampling
-        )
+        try:
+            return await self._engine.async_generate(
+                input_ids=input_ids, sampling_params=self._sampling
+            )
+        except ValueError as exc:
+            overflow = context_length_overflow(str(exc))
+            if overflow is None:
+                raise
+            raise ContextLengthExceededError(*overflow) from exc
 
     def shutdown(self) -> None:
         self._engine.shutdown()

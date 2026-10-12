@@ -11,12 +11,13 @@ from enum import StrEnum
 
 from landuse_filter.domain.sentences import Decision
 
-PARSER_VERSION = "1"
+PARSER_VERSION = "2"
 THINK_CLOSE = "</think>"
 
 _LABEL = re.compile(r"\b(yes|no)\b", re.IGNORECASE)
 _EXACT = re.compile(r"^\W*(yes|no)\W*$", re.IGNORECASE)
 _LEADING = re.compile(r"^\W*(yes|no)\b", re.IGNORECASE)
+_INPUT_TOO_LONG = re.compile(r"^luf_failure:input_too_long:(\d+)>(\d+)$")
 # Answers in the sentence's language instead of English; counted, never mapped.
 _FOREIGN = re.compile(
     r"^\W*(oui|non|ja|nein|nee|sí|si|não|nao|sim|да|нет|是|否|はい|いいえ|evet|hayır|tak|nie)\W*$",  # noqa: RUF001 - Turkish word
@@ -31,6 +32,7 @@ class ParseMode(StrEnum):
 
 
 class Failure(StrEnum):
+    INPUT_TOO_LONG = "input_too_long"
     TRUNCATED = "truncated"
     UNCLOSED_THINK = "unclosed_think"
     EMPTY = "empty"
@@ -52,6 +54,9 @@ def _failed(reason: Failure) -> Verdict:
 
 def parse_generation(raw: str, *, truncated: bool) -> Verdict:
     """Recover ``yes``/``no`` from a thinking-mode generation, or say why not."""
+    context_overflow = _INPUT_TOO_LONG.fullmatch(raw)
+    if context_overflow and int(context_overflow.group(1)) > int(context_overflow.group(2)):
+        return _failed(Failure.INPUT_TOO_LONG)
     if truncated:
         return _failed(Failure.TRUNCATED)
     if THINK_CLOSE not in raw:

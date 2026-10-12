@@ -84,17 +84,35 @@ def test_smallest_part_wins_whatever_the_order(tmp_path):
     assert index.parts_of(["a"])["a"].startswith("c1/")
 
 
-def test_a_snapshot_from_another_parser_is_rebuilt(tmp_path):
+def test_v1_snapshot_is_rebuilt_for_input_too_long_verdict(tmp_path):
     remote = CountingRemote(tmp_path / "bucket")
-    _part(WorkStore(tmp_path / "src"), remote, "c1", [("a", "x</think>yes")])
+    part = _part(
+        WorkStore(tmp_path / "src"),
+        remote,
+        "c1",
+        [
+            ("overflow", "luf_failure:input_too_long:330533>131072"),
+            ("historical-yes", "x</think>yes"),
+            ("historical-failed", "x</think>maybe"),
+        ],
+    )
     rs.restore_resolution(remote, WorkStore(tmp_path / "n1"), FP, workers=1)
+
+    # Parser v1 treated this sentinel as an unclosed-think failure. A v1 snapshot must be
+    # rebuilt so the new input-too-long verdict and failure counter are visible.
     stale = ResolutionIndex(remote.root / rs.snapshot_path(FP))
-    stale.set_meta("parser", PARSER_VERSION + "-old")
+    stale.db.execute("UPDATE verdict SET failure = ? WHERE sha = ?", ("unclosed_think", "overflow"))
+    stale.set_meta("parser", "1")
     stale.db.close()
     remote.fetched.clear()
+
     index = rs.restore_resolution(remote, WorkStore(tmp_path / "n2"), FP, workers=1)
+    assert PARSER_VERSION == "2"
     assert index.meta("parser") == PARSER_VERSION
-    assert len(_parts_fetched(remote)) == 1  # read again
+    assert index.get("overflow") == ("failed", None, "input_too_long")
+    assert index.get("historical-yes") == ("yes", "exact", None)
+    assert index.get("historical-failed") == ("failed", None, "no_label")
+    assert _parts_fetched(remote) == [f"parts/{FP}/{part}.parquet"]
 
 
 def test_a_corrupt_part_is_skipped_and_not_recorded(tmp_path):

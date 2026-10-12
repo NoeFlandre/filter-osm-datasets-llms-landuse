@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+MAX_RECORDED_TOKEN_COUNT = 2_147_483_647
+
 
 @dataclass(frozen=True, slots=True)
 class Generation:
@@ -50,6 +52,24 @@ def rule_decided_no(text_sha256: str, prompt_tokens: int) -> Generation:
         prompt_tokens=prompt_tokens,
         generated_tokens=0,
         finish_reason=RULE_NO_LETTERS,
+        truncated=False,
+        verify_steps=None,
+        accepted_drafts=None,
+        proposed_drafts=None,
+        latency_s=None,
+    )
+
+
+def input_too_long_failure(text_sha256: str, input_tokens: int, context_limit: int) -> Generation:
+    """A terminal failed result for one request beyond the configured model context."""
+    if not 0 < context_limit < input_tokens <= MAX_RECORDED_TOKEN_COUNT:
+        raise ValueError("input token count must exceed a positive context limit")
+    return Generation(
+        text_sha256=text_sha256,
+        raw_output=f"luf_failure:input_too_long:{input_tokens}>{context_limit}",
+        prompt_tokens=input_tokens,
+        generated_tokens=0,
+        finish_reason="input_too_long",
         truncated=False,
         verify_steps=None,
         accepted_drafts=None,
