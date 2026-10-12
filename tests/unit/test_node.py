@@ -63,7 +63,7 @@ class ContextAwareEngine(SGLangEngine):
 
     async def async_generate(self, input_ids, sampling_params):
         self.received_lengths.append(len(input_ids))
-        if len(input_ids) > 131_072:
+        if len(input_ids) >= 131_072:
             raise ValueError(
                 f"The input ({len(input_ids)} tokens) is longer than the model's "
                 "context length (131072 tokens)"
@@ -160,15 +160,15 @@ def test_decisions_from_parts(tmp_path):
     assert set(decisions_by_sha(store, "fp").values()) == {"yes"}
 
 
-def test_overlong_request_is_manifested_once_while_other_rows_continue(tmp_path):
+def test_context_rejected_requests_are_manifested_while_other_rows_continue(tmp_path):
     store = WorkStore(tmp_path / "first")
     store.write_chunk(
         "oversized",
         pa.table(
             {
-                "text_sha256": ["too-long", "ordinary-1", "ordinary-2"],
-                "text": ["long request", "ordinary one", "ordinary two"],
-                "input_ids": [[1] * 330_533, [2, 3], [4, 5]],
+                "text_sha256": ["too-long", "at-limit", "ordinary-1", "ordinary-2"],
+                "text": ["long request", "limit request", "ordinary one", "ordinary two"],
+                "input_ids": [[1] * 330_533, [5] * 131_072, [2, 3], [4, 5]],
             },
             schema=CHUNK,
         ),
@@ -183,9 +183,9 @@ def test_overlong_request_is_manifested_once_while_other_rows_continue(tmp_path)
 
     stats = asyncio.run(runner(store, engine, on_part=persist_part).run(["oversized"]))
 
-    assert sorted(engine.received_lengths) == [2, 2, 330_533]
-    assert stats.completed == 3
-    assert stats.failed == 1
+    assert sorted(engine.received_lengths) == [2, 2, 131_072, 330_533]
+    assert stats.completed == 4
+    assert stats.failed == 2
     assert stats.chunks_done == ["oversized"]
 
     remote_parts = remote.ls("parts/fp/oversized/")
@@ -206,8 +206,16 @@ def test_overlong_request_is_manifested_once_while_other_rows_continue(tmp_path)
     assert (
         parse_generation(failure["raw_output"], truncated=False).failure is Failure.INPUT_TOO_LONG
     )
+    limit_failure = rows["at-limit"]
+    assert limit_failure["prompt_tokens"] == 131_072
+    assert limit_failure["raw_output"] == "luf_failure:input_too_long:131072>=131072"
+    assert (
+        parse_generation(limit_failure["raw_output"], truncated=False).failure
+        is Failure.INPUT_TOO_LONG
+    )
     assert decisions_by_sha(verification, "fp") == {
         "too-long": None,
+        "at-limit": None,
         "ordinary-1": "yes",
         "ordinary-2": "yes",
     }

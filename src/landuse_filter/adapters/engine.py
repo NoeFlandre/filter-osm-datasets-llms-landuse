@@ -21,7 +21,7 @@ _CONTEXT_LENGTH_OVERFLOW = re.compile(
 
 
 class ContextLengthExceededError(RuntimeError):
-    """One request exceeded SGLang's configured context limit."""
+    """One request was rejected at SGLang's configured context limit."""
 
     def __init__(self, input_tokens: int, context_limit: int) -> None:
         self.input_tokens = input_tokens
@@ -30,12 +30,12 @@ class ContextLengthExceededError(RuntimeError):
 
 
 def context_length_overflow(message: str) -> tuple[int, int] | None:
-    """Return SGLang's request and context token counts for a genuine overflow only."""
+    """Return token counts for a request rejected at or beyond the context limit."""
     match = _CONTEXT_LENGTH_OVERFLOW.search(message)
     if match is None:
         return None
     input_tokens, context_limit = (int(match[name]) for name in ("input_tokens", "context_limit"))
-    if not 0 < context_limit < input_tokens <= MAX_RECORDED_TOKEN_COUNT:
+    if not 0 < context_limit <= input_tokens <= MAX_RECORDED_TOKEN_COUNT:
         return None
     return input_tokens, context_limit
 

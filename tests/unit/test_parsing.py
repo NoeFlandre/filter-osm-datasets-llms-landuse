@@ -30,6 +30,9 @@ def test_parses_answer_after_last_think_close(raw, decision, mode):
         ("x</think>The answer is yes or no.", False, Failure.AMBIGUOUS),
         ("x</think>oui", False, Failure.NON_ENGLISH_TOKEN),
         ("x</think>maybe", False, Failure.NO_LABEL),
+        ("luf_failure:input_too_long:131072>=131072", False, Failure.INPUT_TOO_LONG),
+        ("luf_failure:input_too_long:131073>131072", False, Failure.INPUT_TOO_LONG),
+        ("luf_failure:input_too_long:131072>131072", False, Failure.UNCLOSED_THINK),
     ],
 )
 def test_failures_are_explicit(raw, truncated, failure):

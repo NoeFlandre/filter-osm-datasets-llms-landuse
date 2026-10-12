@@ -61,12 +61,13 @@ def rule_decided_no(text_sha256: str, prompt_tokens: int) -> Generation:
 
 
 def input_too_long_failure(text_sha256: str, input_tokens: int, context_limit: int) -> Generation:
-    """A terminal failed result for one request beyond the configured model context."""
-    if not 0 < context_limit < input_tokens <= MAX_RECORDED_TOKEN_COUNT:
-        raise ValueError("input token count must exceed a positive context limit")
+    """A terminal failed result for one request rejected by the configured model context."""
+    if not 0 < context_limit <= input_tokens <= MAX_RECORDED_TOKEN_COUNT:
+        raise ValueError("input token count must meet or exceed a positive context limit")
+    operator = ">=" if input_tokens == context_limit else ">"
     return Generation(
         text_sha256=text_sha256,
-        raw_output=f"luf_failure:input_too_long:{input_tokens}>{context_limit}",
+        raw_output=f"luf_failure:input_too_long:{input_tokens}{operator}{context_limit}",
         prompt_tokens=input_tokens,
         generated_tokens=0,
         finish_reason="input_too_long",

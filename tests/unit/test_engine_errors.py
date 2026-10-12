@@ -22,11 +22,13 @@ def context_error(input_tokens, context_limit):
     [
         (330_533, 131_072, (330_533, 131_072)),
         (131_073, 131_072, (131_073, 131_072)),
-        (131_072, 131_072, None),
+        (131_072, 131_072, (131_072, 131_072)),
         (131_071, 131_072, None),
     ],
 )
-def test_context_error_classifier_requires_a_strict_overflow(input_tokens, context_limit, expected):
+def test_context_error_classifier_matches_sglang_context_rejections(
+    input_tokens, context_limit, expected
+):
     assert context_length_overflow(context_error(input_tokens, context_limit)) == expected
 
 
@@ -59,8 +61,13 @@ def test_engine_translates_the_synthetic_330533_token_error():
     assert (raised.value.input_tokens, raised.value.context_limit) == (330_533, 131_072)
 
 
-def test_engine_preserves_other_value_errors_and_exact_limit_boundary():
-    for message in ("CUDA out of memory", context_error(131_072, 131_072)):
-        engine = engine_with_backend(FailingBackend(message))
-        with pytest.raises(ValueError, match=re.escape(message)):
-            asyncio.run(engine.generate([1]))
+def test_engine_preserves_other_value_errors_but_translates_the_exact_limit_boundary():
+    message = "CUDA out of memory"
+    engine = engine_with_backend(FailingBackend(message))
+    with pytest.raises(ValueError, match=re.escape(message)):
+        asyncio.run(engine.generate([1]))
+
+    engine = engine_with_backend(FailingBackend(context_error(131_072, 131_072)))
+    with pytest.raises(ContextLengthExceededError) as raised:
+        asyncio.run(engine.generate([1]))
+    assert (raised.value.input_tokens, raised.value.context_limit) == (131_072, 131_072)
