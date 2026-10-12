@@ -482,6 +482,40 @@ def test_node_plan_and_replan_use_the_default_bucket_and_chunk_size(monkeypatch,
     )
 
 
+def test_node_replan_asks_to_stop_once_a_stop_signal_arrives(monkeypatch, tmp_path):
+    import os
+    import signal
+
+    monkeypatch.setattr(config, "scratch_dir", lambda: tmp_path)
+    monkeypatch.setattr(remote_mod, "BucketRemote", lambda bucket: ("remote", bucket))
+    monkeypatch.setattr(
+        node_cli,
+        "_plan_inputs",
+        lambda dataset, revision, chunk_size: SimpleNamespace(chunk_size=chunk_size, fetch="F"),
+    )
+    monkeypatch.setattr(locate, "locator", lambda dataset, fetch, cell_of: "L")
+    seen = {}
+
+    def fake_replan(rem, scratch, dataset, fp, inputs, **kw):
+        seen["before"] = kw["should_stop"]()
+        os.kill(os.getpid(), signal.SIGUSR2)
+        seen["after"] = kw["should_stop"]()
+        return {"ok": "replan"}
+
+    monkeypatch.setattr(remote_plan, "run_replan", fake_replan)
+    old = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGUSR2)}
+    try:
+        out = invoke(
+            "node", "replan", "--dataset", "osm-polygon-description-tag", "--revision", "r"
+        )
+    finally:
+        for sig, handler in old.items():
+            signal.signal(sig, handler)
+    assert out.exit_code == 0, out.output
+    assert seen == {"before": False, "after": True}
+    assert json.loads(out.output) == {"ok": "replan"}
+
+
 def test_node_repair_dedupes_and_resets_the_card_cache(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "scratch_dir", lambda: tmp_path)
     monkeypatch.setattr(remote_mod, "BucketRemote", lambda bucket: ("remote", bucket))

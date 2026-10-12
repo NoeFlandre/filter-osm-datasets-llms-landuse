@@ -85,20 +85,29 @@ def node_replan(
     chunk_size: int = typer.Option(2000, min=1),
 ) -> None:
     """Plan every not-yet-generated text again, round-robin over H3 cells (ADR-0014)."""
+    import signal
+
     from landuse_filter.adapters.hexmap import cell_of
     from landuse_filter.adapters.remote import BucketRemote
+    from landuse_filter.application.job_progress import bucket_progress
     from landuse_filter.application.locate import locator
     from landuse_filter.application.remote_plan import run_replan
 
+    stop = {"requested": False}
+    for sig in (signal.SIGTERM, signal.SIGUSR2):
+        signal.signal(sig, lambda *_: stop.update(requested=True))
     inputs = _plan_inputs(dataset, revision, chunk_size)
     scratch = _store(config.scratch_dir())
+    remote = BucketRemote(bucket)
     report = run_replan(
-        BucketRemote(bucket),
+        remote,
         scratch,
         dataset,
         config.GENERATION_FP,
         inputs,
         locate=locator(dataset, inputs.fetch, cell_of),
+        should_stop=lambda: stop["requested"],
+        progress=bucket_progress(remote, dataset, os.environ.get("OAR_JOB_ID", "")),
     )
     typer.echo(json.dumps(report))
 
